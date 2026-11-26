@@ -51,4 +51,14 @@ function bundledAssets(): Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), bundledAssets()],
   worker: { format: 'es' },
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep the local PDF intake engine identifiable when workbench features share its chunk.
+        chunkFileNames: (chunk) => chunk.moduleIds.some((id) => id.endsWith('/src/core/pdf/template.ts'))
+          ? 'assets/pdf-[hash].js'
+          : 'assets/[name]-[hash].js',
+      },
+    },
+  },
 });
