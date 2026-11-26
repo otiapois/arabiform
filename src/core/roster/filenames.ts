@@ -2,6 +2,7 @@ import type { RosterRow } from './index';
 
 const illegal = /[\\/:*?"<>|\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
 const reserved = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)$/;
+const defaultPattern = '{{ID}}-{{Name}}.pdf';
 const encoder = new TextEncoder();
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
@@ -20,12 +21,18 @@ export function isSafePdfFilename(filename: string): boolean {
   return !!comparable && !illegal.test(comparable) && !/^[.\s]|[.\s]$/u.test(comparable) && !reservedStem(comparable);
 }
 
-export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = '{{ID}}-{{Name}}.pdf'): string[] {
+export type FilenamePlan = { filename: string } & (
+  | { filenameAdjusted: false; filenameAdjustReason?: never }
+  | { filenameAdjusted: true; filenameAdjustReason: 'sanitized' | 'reserved-name' | 'collision-dedup' }
+);
+
+export function planFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern): FilenamePlan[] {
   const seen = new Set<string>();
   return rows.map((row, index) => {
     const values = Array.isArray(row.warnings) ? (row as RosterRow).values : row as Record<string, string>;
-    const raw = pattern.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, token: string) => Object.hasOwn(values, token) ? values[token] ?? '' : '')
-      .trimEnd().replace(/\.pdf$/i, '');
+    const requested = pattern.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, token: string) => Object.hasOwn(values, token) ? values[token] ?? '' : '');
+    const trimmed = requested.trimEnd();
+    const raw = trimmed.replace(/\.pdf$/i, '');
     const characters = Array.from(raw, (character) => illegal.test(character) || illegal.test(character.normalize('NFKC')) ? '' : character);
     const stem = characters.join('').normalize('NFC').replace(/^[.\s-]+|[.\s-]+$/gu, '');
     let base = '';
@@ -36,12 +43,21 @@ export function makeFilenames(rows: readonly (Record<string, string> | RosterRow
       base += segment;
     }
     base = base.replace(/[.\s]+$/u, '');
-    if (reservedStem(base)) base = `_${base}`;
+    const reservedName = reservedStem(base);
+    if (reservedName) base = `_${base}`;
     if (!isSafePdfFilename(`${base}.pdf`)) base = `row-${index + 1}`;
-    let filename = `${base}.pdf`;
+    const candidate = `${base}.pdf`;
+    let filename = candidate;
     let suffix = 2;
     while (seen.has(filenameKey(filename))) filename = `${base}-${suffix++}.pdf`;
     seen.add(filenameKey(filename));
-    return filename;
+    if (filename !== candidate) return { filename, filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' };
+    if (reservedName) return { filename, filenameAdjusted: true, filenameAdjustReason: 'reserved-name' };
+    if (base !== raw || trimmed !== requested) return { filename, filenameAdjusted: true, filenameAdjustReason: 'sanitized' };
+    return { filename, filenameAdjusted: false };
   });
+}
+
+export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern): string[] {
+  return planFilenames(rows, pattern).map(({ filename }) => filename);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
-import { autoMap, makeFilenames, readRoster } from '../../src/core/roster';
+import { autoMap, makeFilenames, planFilenames, readRoster } from '../../src/core/roster';
 
 describe('roster ingest', () => {
   it('keeps every cell as text, including Arabic marks, leading zeros and line breaks', async () => {
@@ -68,5 +68,24 @@ describe('mapping and filenames', () => {
   it('emits root-safe unique Unicode filenames and reserves Windows device names', () => {
     expect(makeFilenames([{ ID: '00123', Name: 'ليلى/حسن' }, { ID: '00123', Name: 'ليلىحسن' }])).toEqual(['00123-ليلىحسن.pdf', '00123-ليلىحسن-2.pdf']);
     expect(makeFilenames([{ ID: 'CON' }, { ID: 'con' }, { ID: '..' }], '{{ID}}.pdf')).toEqual(['_CON.pdf', '_con-2.pdf', 'row-3.pdf']);
+  });
+
+  it('reports the action that changed each name without treating the PDF extension as an adjustment', () => {
+    const rows = ['Regular', 'Already.PDF', 'C/ON', 'ＣＯＮ', '../ab', 'Ab', 'Cafe\u0301', '..', 'ending.pdf ']
+      .map((ID) => ({ values: { ID }, warnings: [] }));
+    const pattern = '{{ID}}';
+    const expected = [
+      { filename: 'Regular.pdf', filenameAdjusted: false },
+      { filename: 'Already.pdf', filenameAdjusted: false },
+      { filename: '_CON.pdf', filenameAdjusted: true, filenameAdjustReason: 'reserved-name' },
+      { filename: '_ＣＯＮ-2.pdf', filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' },
+      { filename: 'ab.pdf', filenameAdjusted: true, filenameAdjustReason: 'sanitized' },
+      { filename: 'Ab-2.pdf', filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' },
+      { filename: 'Café.pdf', filenameAdjusted: true, filenameAdjustReason: 'sanitized' },
+      { filename: 'row-8.pdf', filenameAdjusted: true, filenameAdjustReason: 'sanitized' },
+      { filename: 'ending.pdf', filenameAdjusted: true, filenameAdjustReason: 'sanitized' },
+    ];
+    expect(planFilenames(rows, pattern)).toEqual(expected);
+    expect(makeFilenames(rows, pattern)).toEqual(expected.map(({ filename }) => filename));
   });
 });

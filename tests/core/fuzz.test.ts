@@ -5,14 +5,16 @@ import fc, { type IAsyncProperty } from 'fast-check';
 import { unzipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow } from '../../src/core/pdf';
-import { makeFilenames, readRoster } from '../../src/core/roster';
+import { makeFilenames, planFilenames, readRoster } from '../../src/core/roster';
 
 const seed = 0x4a216d32;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const key = PDFName.of;
+let acceptedCases = 0;
+let discardedCases = 0;
 
 const mixedText = fc.oneof(
   fc.array(fc.constantFrom('ن', 'ى', 'م', 'ي', 'ق', 'ب', 'أ', 'َ', 'ِ', 'ُ', 'ْ', 'ّ', 'ً', '١', '٢', '٠',
@@ -26,10 +28,14 @@ const mixedText = fc.oneof(
 
 async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns: number) {
   const details = await fc.check(property, { seed, numRuns });
+  discardedCases += details.numSkips;
   if (details.failed) throw new Error(`Replay seed ${details.seed}, path ${details.counterexamplePath}: ${JSON.stringify(details.counterexample)}`, { cause: details.errorInstance });
   expect(details.numRuns).toBe(numRuns);
   expect(details.numSkips).toBe(0);
+  acceptedCases += details.numRuns;
 }
+
+afterAll(() => console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded.`));
 
 describe('seeded adversarial files and PDF geometry', () => {
   it('roundtrips 320 generated CSV records with exact strings and leading zeros', async () => {
@@ -168,7 +174,7 @@ describe('seeded adversarial files and PDF geometry', () => {
     }), 280);
     expect(passed).toBeGreaterThan(40);
     expect(flagged).toBeGreaterThan(40);
-    console.info(`fast-check seed ${seed}: 1160 M1/M2 cases, 0 discarded, 280 PDF fills (${passed} passed, ${flagged} flagged).`);
+    console.info(`fast-check: 280 PDF fills (${passed} passed, ${flagged} flagged).`);
   }, 90_000);
 
   it('rejects 460 malformed custom font containers', async () => {
@@ -225,7 +231,6 @@ describe('seeded adversarial files and PDF geometry', () => {
       expect(result.diagnostics).toEqual([{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0, pageNumbers: [1] }]);
       expect(result.pdfBytes).toBeUndefined();
     }), 420);
-    console.info(`fast-check seed ${seed}: 1400 M3 font and checkbox cases, 2560 total cases, 0 discarded.`);
   }, 60_000);
 });
 
@@ -361,6 +366,109 @@ describe('seeded choice fields and individual print ZIPs', () => {
         expect(doc.getPage(0).node.Resources()?.lookup(key('XObject'))).toBeInstanceOf(PDFDict);
       }
     }), 240);
-    console.info(`fast-check seed ${seed}: 1540 M4 cases, 4100 total cases, 0 discarded.`);
+  }, 120_000);
+});
+
+describe('seeded filename plans and mixed-direction choices', () => {
+  it('checks 720 filename batches including suffix gaps, compatibility device names and grapheme truncation', async () => {
+    const devices = fc.constantFrom<readonly [string, string]>(
+      ['CON', 'ｃｏｎ'], ['PRN', 'prn'], ['AUX', 'ＡＵＸ'], ['NUL', 'nul'], ['ＣＯＮＯＵＴ＄', 'conout$'], ['COM²', 'com2'], ['LPT¹', 'lpt1'],
+    );
+    const stems = fc.record({
+      title: fc.constantFrom('Case', 'Résumé', 'محضر', 'Note'),
+      id: fc.integer({ min: 0, max: 9999 }),
+      unsafe: fc.constantFrom('../', '／', '\u200f', '\x00', '\u2067'),
+      device: devices,
+      extension: fc.constantFrom('', '.draft', '.00123', '.con.txt'),
+      cluster: fc.constantFrom('é', 'نَ', '🙂', '漢'),
+    });
+    await verify(fc.asyncProperty(stems, async ({ title, id, unsafe, device: [firstDevice, secondDevice], extension, cluster }) => {
+      const stem = `${title}-${String(id).padStart(5, '0')}`;
+      const long = cluster.repeat(200);
+      const shortened = cluster.repeat(Math.floor(180 / encoder.encode(cluster).length));
+      const rows = [stem, `${stem}-2`, `${unsafe}${stem.toUpperCase()}`, stem.normalize('NFD'),
+        `${unsafe}${firstDevice}${extension}`, `${secondDevice}${extension}`, long.normalize('NFD'), long].map((ID) => ({ ID }));
+      const plan = planFilenames(rows, '{{ID}}');
+      expect(plan).toEqual([
+        { filename: `${stem}.pdf`, filenameAdjusted: false },
+        { filename: `${stem}-2.pdf`, filenameAdjusted: false },
+        { filename: `${stem.toUpperCase()}-3.pdf`, filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' },
+        { filename: `${stem}-4.pdf`, filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' },
+        { filename: `_${firstDevice}${extension}.pdf`, filenameAdjusted: true, filenameAdjustReason: 'reserved-name' },
+        { filename: `_${secondDevice}${extension}-2.pdf`, filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' },
+        { filename: `${shortened}.pdf`, filenameAdjusted: true, filenameAdjustReason: 'sanitized' },
+        { filename: `${shortened}-2.pdf`, filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' },
+      ]);
+      const content = Uint8Array.of(37, 80, 68, 70);
+      const members = unzipSync(createZip(plan.map(({ filename }) => ({ filename, pdfBytes: content }))));
+      expect(Object.keys(members)).toEqual(plan.map(({ filename }) => filename));
+      expect(Object.values(members)).toEqual(plan.map(() => content));
+    }), 720);
+  });
+
+  it('runs 240 serialized mixed-direction choices through bundled and loaded custom faces', async () => {
+    const assets = process.env.ARABIFORM_ASSET_ROOT ?? '.';
+    const fonts = {
+      arabic: await readFile(resolve(assets, 'public/fonts/NotoNaskhArabic-Regular.ttf')),
+      latin: await readFile(resolve(assets, 'public/fonts/NotoSans-Regular.ttf')),
+    };
+    const source = await PDFDocument.create();
+    const field = source.getForm().createDropdown('Clinic');
+    field.addOptions(['Default']);
+    field.addToPage(source.addPage(), { x: 40, y: 90, width: 300, height: 30 });
+    source.getForm().updateFieldAppearances();
+    const variants = fc.record({
+      arabic: fc.constantFrom('عِيَادَةُ', 'الرِّيَاضِ', 'بَنِي يَمَن', 'يُسْرَى مُؤْمِن', 'مُحَمَّد سَالِم'),
+      id: fc.integer({ min: 0, max: 9999 }),
+      leftToRightFirst: fc.boolean(),
+      useLabel: fc.boolean(),
+      padding: fc.constantFrom('', ' ', '\t', '\u00a0'),
+      font: fc.constantFrom('bundled', 'naskh-with-digits', 'naskh-with-latin', 'sans-with-arabic'),
+    });
+    const checkedFonts = new Set<string>();
+    await verify(fc.asyncProperty(variants, async ({ arabic, id, leftToRightFirst, useLabel, padding, font }) => {
+      const digits = String(id).padStart(5, '0');
+      const leftToRight = font === 'naskh-with-digits' ? digits : `Clinic (#${digits})`;
+      const display = leftToRightFirst ? `${leftToRight} ${arabic}` : `${arabic} ${leftToRight}`;
+      const choice = `ID-${digits}`;
+      field.acroField.dict.set(key('Opt'), source.context.obj([
+        [PDFString.of(choice), PDFHexString.fromText(display)], PDFString.of('Default'),
+      ]));
+      const template = await source.save({ updateFieldAppearances: false });
+      const customFont = font === 'bundled' ? undefined : font === 'sans-with-arabic' ? fonts.latin : fonts.arabic;
+      const result = await preflightRow(template, { Clinic: padding + (useLabel ? display : choice) + padding }, { fonts, customFont });
+      checkedFonts.add(font);
+      if (font === 'naskh-with-latin' || font === 'sans-with-arabic') {
+        expect(result.status).toBe('flagged');
+        expect(result.diagnostics).toEqual([{ field: 'Clinic', code: 'missing-glyphs', widgetIndex: 0, pageNumbers: [1] }]);
+        expect(result.pdfBytes).toBeUndefined();
+        return;
+      }
+      expect(result.status).toBe('pass');
+      expect(result.diagnostics).toEqual([]);
+      const document = await PDFDocument.load(result.pdfBytes!);
+      const dropdown = document.getForm().getDropdown('Clinic').acroField;
+      expect(dropdown.dict.lookup(key('V'), PDFString).decodeText()).toBe(choice);
+      const normal = document.context.lookup(dropdown.getWidgets()[0]!.getNormalAppearance());
+      if (!(normal instanceof PDFRawStream)) throw new Error('Missing dropdown appearance');
+      const stream = decoder.decode(decodePDFRawStream(normal).decode());
+      expect(stream).toContain(`/ActualText ${PDFHexString.fromText(display).toString()}`);
+      expect(stream).toMatch(/<[0-9A-F]{4}> Tj/);
+      const faces = normal.dict.lookup(key('Resources'), PDFDict).lookup(key('Font'), PDFDict);
+      if (!customFont) {
+        expect(faces.keys().map(String)).toEqual(expect.arrayContaining([
+          expect.stringMatching(/^\/ArabiFormNaskh-/), expect.stringMatching(/^\/ArabiFormSans-/),
+        ]));
+        return;
+      }
+      const keys = faces.keys();
+      expect(keys.map(String)).toEqual([expect.stringMatching(/^\/ArabiFormCustom-/)]);
+      const descriptor = faces.lookup(keys[0]!, PDFDict).lookup(key('DescendantFonts'), PDFArray)
+        .lookup(0, PDFDict).lookup(key('FontDescriptor'), PDFDict);
+      const subset = descriptor.lookup(key('FontFile2'));
+      if (!(subset instanceof PDFRawStream)) throw new Error('Missing embedded custom TrueType subset');
+      expect(decodePDFRawStream(subset).decode().length).toBeLessThan(customFont.length);
+    }), 240);
+    expect(checkedFonts).toEqual(new Set(['bundled', 'naskh-with-digits', 'naskh-with-latin', 'sans-with-arabic']));
   }, 120_000);
 });
