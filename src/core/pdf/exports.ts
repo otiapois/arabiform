@@ -1,6 +1,7 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFWidgetAnnotation } from 'pdf-lib';
 import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
+import { sha256, type CustodyEntry } from '../audit/custody';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
 import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
@@ -106,13 +107,16 @@ export async function createFlattenedZip(
 
 export async function createGeneratedZip(
   rows: readonly GeneratedPdfExportRow[], onProgress?: ExportProgress, flatten = false, watermark?: PrintWatermarkOptions,
-): Promise<Uint8Array> {
+) {
   const zip = openZip(rows, onProgress, true);
   const stamp = flatten ? await getPrintStamp(watermark) : undefined;
+  const entries: CustodyEntry[] = [];
   for (const row of rows) {
-    zip.add(row.filename, await (flatten ? buildMergedPdf([row], undefined, undefined, stamp) : row.getPdfBytes()));
+    const bytes = await (flatten ? buildMergedPdf([row], undefined, undefined, stamp) : row.getPdfBytes());
+    entries.push({ filename: row.filename, sha256: await sha256(bytes), bytes: bytes.byteLength });
+    zip.add(row.filename, bytes);
   }
-  return zip.finish();
+  return { bytes: zip.finish(), entries };
 }
 
 function activeAppearance(widget: PDFDict) {

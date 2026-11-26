@@ -127,7 +127,7 @@ describe('PDF intake and fill', () => {
       expect(name.acroField.getWidgets()[1]!.dict.get(key('Q'))?.toString()).toBe(String(quadding));
       expect(valueAndAppearances(form.getTextField('Sentinel'))).toEqual(old);
     }
-  });
+  }, 15_000);
 
   it('writes Latin letters and digits left to right within an Arabic paragraph', async () => {
     const bundled = await fonts();

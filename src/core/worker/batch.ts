@@ -1,11 +1,14 @@
+import { hashCustodySources, sha256 } from '../audit/custody';
 import { createMergedPdf, preflightRow, prepareRowPreflight } from '../pdf';
 import { createGeneratedZip } from '../pdf/exports';
-import type { BatchCommand, BatchInput, BatchProgress, BatchResult, BatchRowResult } from './protocol';
+import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 
 export const BATCH_CHUNK_SIZE = 25;
 type ProgressListener = (progress: BatchProgress) => void;
 
-async function preflightBatch(input: BatchInput, progress: (completed: number, total: number) => void) {
+type RowInputs = Omit<BatchInput, 'roster'>;
+
+async function preflightBatch(input: RowInputs, progress: (completed: number, total: number) => void) {
   const { rows, template, options } = input;
   const results: BatchRowResult[] = [];
   progress(0, rows.length);
@@ -21,7 +24,7 @@ async function preflightBatch(input: BatchInput, progress: (completed: number, t
 
 export function createBatchProcessor() {
   let preflightStarted = false;
-  let retained: { input: BatchInput; results: BatchRowResult[] } | undefined;
+  let retained: { input: RowInputs; checked: BatchPreflightResult } | undefined;
   let pending: Promise<unknown> = Promise.resolve();
 
   async function handle(command: BatchCommand, notify: ProgressListener): Promise<BatchResult> {
@@ -32,12 +35,15 @@ export function createBatchProcessor() {
     if (phase === 'preflight') {
       if (preflightStarted) throw new Error('batch-already-started');
       preflightStarted = true;
-      const results = await preflightBatch(command.input, progress);
-      retained = { input: command.input, results };
-      return results;
+      const { roster, ...input } = command.input;
+      const rows = await preflightBatch(input, progress);
+      const custody = await hashCustodySources(input.template, roster);
+      const checked = { rows, custody };
+      retained = { input, checked };
+      return checked;
     }
     if (!retained) throw new Error('batch-not-ready');
-    const { input, results } = retained;
+    const { input, checked: { rows: results, custody } } = retained;
     const getPdfBytes = async (index: number) => {
       const { pdfBytes } = await preflightRow(input.template, input.rows[index]!, input.options);
       if (!pdfBytes) throw new Error('batch-render-failed');
@@ -59,7 +65,7 @@ export function createBatchProcessor() {
     if (!ready.length) throw new Error('empty-export');
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
     if (phase === 'zip') return createGeneratedZip(ready, progress, command.flattenZip, watermark);
-    return createMergedPdf(ready, progress, coverSheet && {
+    const bytes = await createMergedPdf(ready, progress, coverSheet && {
       locale: coverSheet.locale,
       templateName: coverSheet.templateName,
       exportedAt: new Date(),
@@ -67,7 +73,9 @@ export function createBatchProcessor() {
       rowNumbers: ready.map(({ rowNumber }) => rowNumber),
       flagged: results.filter(({ status }) => status === 'flagged').length,
       skipped: results.length - ready.length,
+      custody: coverSheet.includeCustody ? custody : undefined,
     }, watermark);
+    return { bytes, mergedPdfSha256: await sha256(bytes) };
   }
 
   return (command: BatchCommand, notify: ProgressListener) => {

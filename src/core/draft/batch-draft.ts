@@ -1,3 +1,4 @@
+import { sha256 } from '../audit/custody';
 import type { HygieneOperation, HygieneSummary } from '../roster/hygiene';
 import { isRecord, validateMappingPreset, type MappingPresetV4, type MappingPresetV5 } from './mapping-preset';
 
@@ -24,10 +25,7 @@ const hexHash = /^[0-9a-f]{64}$/;
 const booleanOptions = ['normalizeSpaces', 'normalizeAlef', 'normalizeTaaMarbuta', 'normalizeAlefMaqsura', 'stripHarakat', 'matchCase'];
 const hygieneOptions = new Set(['columns', 'find', 'replace', ...booleanOptions]);
 
-export async function hashBatchDraftInput(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+export { sha256 as hashBatchDraftInput };
 
 function isHash(value: unknown): value is string {
   return typeof value === 'string' && hexHash.test(value);

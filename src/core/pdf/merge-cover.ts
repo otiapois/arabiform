@@ -1,5 +1,6 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, PDFOperator, PDFOperatorNames as Op, type PDFPage } from 'pdf-lib';
+import { CUSTODY_PREFIX_LENGTH, type CustodySources } from '../audit/custody';
 import { appendPositionedText } from './appearances';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, textInputDiagnostic, type PlacedLine } from './shaping';
 import { key, number } from './template';
@@ -13,6 +14,7 @@ export interface MergeCoverOptions {
   rowNumbers: readonly number[];
   flagged: number;
   skipped: number;
+  custody?: CustodySources;
 }
 
 const PAGE_SIZE: [number, number] = [595.28, 841.89];
@@ -136,7 +138,7 @@ function localDate(date: Date) {
 export async function prependMergeCover(
   doc: PDFDocument, entries: readonly { filename: string; pageCount: number }[], options: MergeCoverOptions,
 ) {
-  const { locale, templateName, exportedAt, preflight, rowNumbers, flagged, skipped } = options;
+  const { locale, templateName, exportedAt, preflight, rowNumbers, flagged, skipped, custody } = options;
   if ((locale !== 'en' && locale !== 'ar') || rowNumbers.length !== entries.length || !Number.isFinite(exportedAt.getTime())) {
     throw new CoverSheetError('cover-sheet-invalid-metadata');
   }
@@ -146,6 +148,9 @@ export async function prependMergeCover(
     const { fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont } = preflight;
     const shaper = createShaper(fonts, 'auto');
     const title = layoutText(shaper, copy.title, 22, WIDTH, direction);
+    const footer = custody && layoutText(shaper,
+      `Template SHA-256 ${custody.templateSha256.slice(0, CUSTODY_PREFIX_LENGTH)}   ·   Roster SHA-256 ${custody.rosterSha256.slice(0, CUSTODY_PREFIX_LENGTH)}`,
+      8, WIDTH, 'ltr');
     const details = ([
       { label: copy.date, value: localDate(exportedAt), mode: 'ltr' },
       { label: copy.template, value: templateName, mode: 'filename' },
@@ -163,8 +168,9 @@ export async function prependMergeCover(
     const afterTitle = TOP - title.height - 18;
     const afterDetails = afterTitle - details.reduce((height, { label, value }) => height + Math.max(label.height, value.height) + 8, 0);
     const firstTable = afterDetails - summary.height - settings.height - 22;
-    if (firstTable - TABLE_HEADER <= MARGIN + 1) throw new CoverSheetError('cover-sheet-layout-overflow');
-    const pages = paginateCoverRows(rows, firstTable - TABLE_HEADER, afterTitle - TABLE_HEADER, MARGIN + 1);
+    const bottom = MARGIN + (footer ? footer.height + 9 : 1);
+    if (firstTable - TABLE_HEADER <= bottom) throw new CoverSheetError('cover-sheet-layout-overflow');
+    const pages = paginateCoverRows(rows, firstTable - TABLE_HEADER, afterTitle - TABLE_HEADER, bottom);
 
     doc.registerFontkit(fontkit);
     const [arabic, latin] = await Promise.all([
@@ -218,6 +224,7 @@ export async function prependMergeCover(
         });
         rule(top - height);
       }
+      if (footer) addText(page, footer, MARGIN, MARGIN + footer.height, WIDTH, 'center', resources);
     }
   } catch (cause) {
     if (cause instanceof CoverSheetError) throw cause;
