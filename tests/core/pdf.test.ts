@@ -169,10 +169,14 @@ describe('batch exports', () => {
     const first = await preflightRow(source, { Name: 'بَنِي يَمَن' }, config);
     const second = await preflightRow(source, { Name: 'يُسْرَى مُؤْمِن' }, config);
     const rows = [{ filename: '00007-بَنِي.pdf', pdfBytes: first.pdfBytes! }, { filename: '00123-يُسْرَى.pdf', pdfBytes: second.pdfBytes! }];
-    const zipped = unzipSync(createZip(rows));
+    const zipProgress: [number, number][] = [];
+    const zipped = unzipSync(createZip(rows, (complete, total) => zipProgress.push([complete, total])));
     expect(Object.keys(zipped)).toEqual(rows.map((row) => row.filename));
     for (const row of rows) expect(zipped[row.filename]).toEqual(row.pdfBytes);
-    const merged = await PDFDocument.load(await createMergedPdf(rows));
+    expect(zipProgress).toEqual([[0, 2], [1, 2], [2, 2]]);
+    const mergeProgress: [number, number][] = [];
+    const merged = await PDFDocument.load(await createMergedPdf(rows, (complete, total) => mergeProgress.push([complete, total])));
+    expect(mergeProgress).toEqual(zipProgress);
     expect(merged.getPages().map((page) => page.getRotation().angle)).toEqual([0, 90, 0, 90]);
     expect(merged.catalog.has(key('AcroForm'))).toBe(false);
     expect(merged.getPages().every((page) => !page.node.Annots()?.size())).toBe(true);

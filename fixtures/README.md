@@ -40,6 +40,23 @@ The US Letter PDF `golden/template.pdf` has five populated AcroForm widgets. The
 | `golden/encrypted.pdf` | PDF Standard Security Handler password required. PyMuPDF can authenticate the test vector with `synthetic` |
 | `golden/signed.pdf` | A populated synthetic `/FT /Sig` signature dictionary for the intake guard. The placeholder signature bytes have no cryptographic validity |
 
+## M2 synthetic forms
+
+Each fixture under `m2/` has a distinct form and a `KEEP 00109` unmapped field. `npm run verify:pixels` fills each form and checks exact values, original appearance streams, and ink bounds at 4× using a SHA-256-named copy of the source bytes.
+
+| PDF | Scenario |
+| --- | --- |
+| `hr-onboarding.pdf` | Required employee name, leading-zero ID, date, and mixed RTL and Latin text |
+| `clinic-intake.pdf` | International phone with grouped digits and two languages separated by a newline |
+| `bilingual-certificate.pdf` | Centered names, paired brackets, Arabic-Indic digits, and right-aligned record number |
+| `landscape-badge.pdf` | Page `/Rotate 90` and widget `/MK /R 90`, with the exact minimum font adjustment below |
+| `access-code.pdf` | A valid leading-zero code in a narrow `/MaxLen` field, and separate refusals for overlength and comb fields |
+| `dispatch-header.pdf` | One canonical header across three pages with different rotations and widget geometry |
+| `mailing-address.pdf` | Multiline field with explicit line breaks, wrapping, and Arabic marks |
+| `remittance-slip.pdf` | Right-aligned beneficiary, mixed-script reference, and Arabic-Indic amount |
+
+Use `m2/badge-roster.csv` with `m2/landscape-badge.pdf`. The one synthetic record flags `Name` at 8 pt and passes at the indicated 7.58 pt with the canonical field value and `00007` badge ID preserved.
+
 ## Optional public baselines
 
 Store official blank downloads in a local directory and run `node scripts/verify-public-templates.mjs <directory>` to verify their hashes and PDF field inventory. The default directory is `test-results/public-templates`. The probe skips an absent download and reports the number actually verified. The tracked synthetic suite runs independently of these downloads.
