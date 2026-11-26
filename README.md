@@ -13,7 +13,7 @@ Export a JSON mapping preset to reuse your field mappings, filename pattern, min
 
 The workbench rejects XFA, signed or encrypted PDFs, and flat or scanned PDFs without interactive text fields. Templates, rosters, previews, and exports stay on your device. The built site restricts browser connections with `connect-src 'none'`, loads workers from its own origin, and blocks form submission.
 
-See the [synthetic demo walkthrough](docs/launch/demo-walkthrough.md), [desktop field warning](docs/reports/screenshots/desktop-preview-flagged.png), and [mobile preview](docs/reports/screenshots/mobile-preview.png). Both screenshots are from the M1 synthetic sample.
+See the [synthetic demo walkthrough](docs/launch/demo-walkthrough.md). The M2 screenshots show a [badge field flagged at 8 pt](docs/reports/screenshots/m2/desktop-m2-flagged-delta.png) and a synthetic 200-row queue on [desktop](docs/reports/screenshots/m2/desktop-m2-200row-queue.png) and [mobile](docs/reports/screenshots/m2/mobile-m2-queue.png).
 
 ## Run and verify locally
 
@@ -66,7 +66,7 @@ See the [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.m
 
 ترفض الأداة نماذج XFA والملفات الموقّعة أو المشفّرة وملفات PDF التي تخلو من الحقول النصية التفاعلية. تبقى ملفاتك على جهازك أثناء المعالجة والمعاينة والتصدير. تقيّد النسخة المبنية اتصالات المتصفح عبر `connect-src 'none'`، وتحمّل مهام المعالجة من الموقع نفسه، وتمنع إرسال النماذج.
 
-راجع [سيناريو العرض بالعربية والإنجليزية](docs/launch/demo-walkthrough.md) و[لقطة الواجهة العربية من العينة الاصطناعية في M1](docs/reports/screenshots/desktop-ar-rtl.png).
+راجع [سيناريو العرض بالعربية والإنجليزية](docs/launch/demo-walkthrough.md) و[قائمة الفحص بالعربية مع بيانات العينة الاصطناعية في M2](docs/reports/screenshots/m2/desktop-m2-ar-rtl.png).
 
 بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يختبر الأمر `npm run test:fuzz` حالات مولّدة يمكن إعادة اختبارها، منها قراءة الجداول وأسماء الملفات واتجاه النص وتعبئة الحقول. يقارن PyMuPDF صور النماذج قبل التعبئة وبعدها بتكبير 4 أضعاف. تغطّي النتائج النماذج والبيانات المشمولة بالاختبارات. عاين قالبك قبل طباعة الدفعة.
 

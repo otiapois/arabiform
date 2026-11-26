@@ -15,8 +15,8 @@
 
 - **规则**　为验收和冒烟预览保留自己的进程或终端会话标识。删除临时目录前核对自己启动的预览已退出。
 - **原因**　Windows 上保留的预览会话仍可能占用工作目录。检查合并状态和监听端口无法单独确认目录已释放。
-- **证据**　五个工作树已移除后，`tmp/web-smoke` 仍被本轮冒烟预览会话占用。结束该会话后重试成功。另一次受限 Edge 运行的退出情况见[验收报告](docs/reports/M1-verification.md#复跑及适用边界)。
-- **Seen: 1**（2026-11-26）
+- **证据**　ImportMedic M1 的 `LESSONS.md` 记录了 14 项通过后 Vite 仍在监听，改由测试进程关闭服务后，16 项复跑结束时 43871 端口已关闭。ArabiForm M1 的 [Edge 验收](docs/reports/M1-verification.md#复跑及适用边界) 和工作树清理也遇到预览子进程残留。ArabiForm M2 的 Worker B 在冒烟测试后再次观测到监听 4237 的预览进程（PID 10372）。提交 `b420ac8` 让 Playwright 持有实际产物服务器句柄并在 teardown 关闭。M2 的套件退出及端口复查见[验收报告](docs/reports/M2-verification.md)。
+- **Seen: 3**（ImportMedic M1、ArabiForm M1、ArabiForm M2，各计一次，2026-11-26）。已纳入[代码标准](docs/code-standards.md)。
 
 ### 合成 PDF 的标题与原有字段也要验字形（2026-11-26）
 
@@ -51,3 +51,21 @@
 - **Why** — Vite preview can fall back to `/` on slashless directory routes, and screen-reader absolute text outside scroll containers silently expands mobile document width past `390px`.
 - **Evidence** — Caught and fixed during ImportMedic M1 (`d9c31bc`, `e0f97fd`).
 - **Seen: 1** (2026-11-26)
+
+### M2 文本与导出回归（2026-11-26）
+
+Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对应回归。每项计一个开发周期。[PDF 与导出回归](tests/core/pdf.test.ts) · [固定种子覆盖](tests/core/fuzz.test.ts)
+
+| 规则 | 为什么需要 | 可核证据 | Seen |
+|---|---|---|---|
+| 混排时同时校验逻辑字段值和外观流里的数字、符号顺序。 | 即使 PDF 的 `/V` 正确，RTL 段中的编号和电话仍可能读反。 | 主执行端回放 `d4c3a3a` 的字形排布，编号片段为 `00123#`，电话为 `345601250966+`。提交 `6be9384` 的字形检查分别得到 `#00123` 和 `+966500123456`，同时保留逻辑原文与空格。 | 1 |
+| 把超出 `/MaxLen` 的字符数传到预览和所选行。 | 只有错误码时，用户无法判断需要删几个字符，调小字号也无济于事。 | `000007` 比模板限制多 1 个字符。浏览器另测 10 位文本填入 4 位字段，两处均显示超出 6 个字符，PDF 导出禁用。[界面回归](tests/e2e/m2-batch.spec.ts) | 1 |
+| CSV 审计写出时检查兼容字符和前导空白，JSON 保留原文。 | 前导空格与全角加号会绕过只检查首个 ASCII 字符的逻辑。 | 带两个前导空格及全角加号的 `＋1+1.pdf` 在 CSV 单元格加上单引号前缀，JSON 解码后与输入相同。 | 1 |
+| 在写 ZIP 时验证每个成员的最终名称。 | 调用方直接传入名称时，可以绕开界面的文件名生成逻辑。 | 旧导出接受 `COM1.txt.pdf`。新导出拒绝保留设备名与归一化重名。浏览器下载的包中，三个会冲突的原始值分别生成 `note.pdf`、`note-2.pdf`、`note-3.pdf`。 | 1 |
+
+### 像素校验入口兼容两类源文件清单（2026-11-26）
+
+- **规则**　更改哈希快照检查时，用核心生成清单与真实浏览器下载清单分别复跑。对按 SHA-256 命名的快照验证文件名与字节，调用方可继续指定独立的源文件名。
+- **原因**　M2 核心像素套件已通过，原有浏览器清单使用 `before.pdf`，新加的强制命名断言却让两种视口的 CSV/XLSX 下载验收全部报错。
+- **证据**　独立 QA 在集成版本 `b420ac8` 收到 `source snapshot hash changed: before.pdf`。提交 `9722b07` 修正共享校验器后，同一套原有浏览器断言通过。[校验入口](scripts/verify-pdf-pixels.py) · [浏览器清单](tests/e2e/downloads.ts)
+- **Seen: 1**（四个失败场景对应同一原因，2026-11-26）

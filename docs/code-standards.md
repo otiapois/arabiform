@@ -12,3 +12,4 @@ Adapted from `yetone/magpie/docs/code-standards.md` + lessons already proven in 
 | **Zero External Runtime Requests** | Bundle all fonts, `pdf.js` worker, and sample fixtures locally. Zero Google Fonts, zero analytics beacons, zero network calls during processing; verified in Playwright network listener and `dist/_headers` CSP `connect-src 'none'`. |
 | **Atomic Scope + Sibling Grep** | Fixes for one input format (CSV vs XLSX) or one output mode (ZIP vs Merged PDF) must grep and check the sibling path in the same change. |
 | **Real Environment Red -> Green** | Every layout/PDF bug fix adds a failing fixture + PyMuPDF visual/readback test before marking green. Full suite (`typecheck + test + build + test:e2e`) must pass on `main`. |
+| **Close the E2E preview listener** | Use the production preview handler. Let the test runner own and close the server handle, then verify the run exits and the test port refuses new connections. |
