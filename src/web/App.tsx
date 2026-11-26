@@ -248,7 +248,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                   </div>
                   <label className="full-control">
                     {labels.pattern}
-                    <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
+                    <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern}
+                      disabled={desk.exportingFilenames} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                     <small>{labels.patternHelp}</small>
                   </label>
                   <label className="zip-mode">

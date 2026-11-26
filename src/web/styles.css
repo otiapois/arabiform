@@ -308,12 +308,13 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
 .zip-mode {
   display: flex;
   align-items: flex-start;
-  gap: .42rem;
+  gap: .65rem;
+  min-block-size: 1.5rem;
   font-size: .86rem;
   font-weight: 650;
   cursor: pointer;
 }
-.zip-mode input { flex: none; margin-block-start: .23rem; accent-color: var(--forest); }
+.zip-mode input { flex: none; inline-size: 1rem; block-size: 1rem; margin-block-start: .2rem; accent-color: var(--forest); }
 
 .button {
   border: 1px solid transparent;
@@ -568,6 +569,17 @@ tbody tr[data-selected="true"] { background: #f0f5ed; }
 .row-link[aria-pressed="true"] { background: var(--forest); border-color: var(--forest); color: white; }
 .filename { display: inline-block; max-inline-size: 100%; font-family: var(--mono); font-size: .8rem; white-space: nowrap; }
 .filename-stem { display: inline-block; max-inline-size: calc(100% - 4ch); text-align: right; white-space: break-spaces; overflow-wrap: anywhere; }
+.filename-adjustment { margin-block-start: .22rem; }
+.filename-adjustment summary {
+  display: list-item;
+  list-style-position: inside;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  color: var(--amber);
+  background: var(--amber-soft);
+  cursor: pointer;
+}
+.filename-adjustment p { margin-block-start: .25rem; color: var(--muted); overflow-wrap: anywhere; }
 .review-cell { color: var(--muted); overflow-wrap: anywhere; }
 .source-marker { color: var(--amber); font-weight: 650; display: block; }
 

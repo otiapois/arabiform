@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RosterRow } from '../core/roster';
+import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { FontMode } from './presets';
 import { errorCode, loadFonts, saveDownload } from './resources';
@@ -120,12 +120,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
     setPaused(true);
   }
 
-  function changeFilenames() {
-    if (exportLock.current) invalidate();
-    else setExportError(undefined);
-  }
-
-  async function download(kind: ExportKind, filenames: readonly string[], ready: number, flattenZip: boolean) {
+  async function download(kind: ExportKind, filenamePlans: readonly FilenamePlan[], ready: number, flattenZip: boolean) {
     const client = worker.current;
     if (!client || !results || exportLock.current) return;
     if ((kind === 'zip' || kind === 'merged') && !ready) return;
@@ -139,7 +134,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         if (exportLock.current !== operation || worker.current !== client) return;
         const audit = createAudit(results.map((result, index) => ({
           rowNumber: index + 1,
-          filename: filenames[index]!,
+          filename: filenamePlans[index]!.filename,
           status: result.status,
           diagnostics: result.diagnostics,
           fontSizes: result.fontSizes,
@@ -149,7 +144,9 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         const onProgress = trackProgress(client);
         setProgress({ phase: kind, completed: 0, total: ready });
         const isZip = kind === 'zip';
-        const data = await (isZip ? client.zip(filenames, onProgress, flattenZip) : client.merged(onProgress));
+        const data = await (isZip
+          ? client.zip(filenamePlans.map(({ filename }) => filename), onProgress, flattenZip)
+          : client.merged(onProgress));
         if (exportLock.current === operation && worker.current === client) {
           saveDownload(data, isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', isZip ? 'application/zip' : 'application/pdf');
         }
@@ -169,7 +166,8 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
     results, checking, paused, progress: activeProgress, preflightError: current?.error,
     previewBytes: currentPreview?.bytes, previewError: Boolean(currentPreview && !currentPreview.bytes),
     exporting: Boolean(exporting), exportingZip: exporting === 'zip', exportError,
-    invalidate, changeFilenames, clearExportError: () => setExportError(undefined), cancel,
+    exportingFilenames: Boolean(exporting && exporting !== 'merged'),
+    invalidate, clearExportError: () => setExportError(undefined), cancel,
     resume: () => invalidate(true), download,
   };
 }
