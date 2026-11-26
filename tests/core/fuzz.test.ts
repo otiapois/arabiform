@@ -732,7 +732,7 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
       const widget = { x: 0, y: 0, width: innerWidth + 3.2, height: innerHeight + 3.2,
         rotation: 0, defaultFontSize: 12, usable: true, innerWidth, innerHeight, pageIndex: 0 };
       const report = await inspectTemplateCapacities({
-        pages: [{ width: 300, height: 100, rotation: 0 }],
+        pages: [{ width: 300, height: 100, rotation: 0, visibleBox: { x: 0, y: 0, width: 300, height: 100 }, userUnit: 1 }],
         fields: [{ name: 'Name', kind: 'text', readOnly: false, required: false, multiline, maxLength,
           defaultFontSize: 12, supportsTextCapacity: true, value: '', widgets: [widget] }],
       }, fonts, min);

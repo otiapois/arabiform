@@ -35,7 +35,21 @@ export interface FieldMetadata {
 
 export interface TemplateMetadata {
   fields: FieldMetadata[];
-  pages: { width: number; height: number; rotation: number }[];
+  pages: {
+    width: number;
+    height: number;
+    rotation: number;
+    visibleBox: { x: number; y: number; width: number; height: number };
+    userUnit: number;
+  }[];
+}
+
+function visiblePageBox(media: TemplateMetadata['pages'][number]['visibleBox'], crop: typeof media) {
+  const x = Math.max(Math.min(media.x, media.x + media.width), Math.min(crop.x, crop.x + crop.width));
+  const y = Math.max(Math.min(media.y, media.y + media.height), Math.min(crop.y, crop.y + crop.height));
+  const right = Math.min(Math.max(media.x, media.x + media.width), Math.max(crop.x, crop.x + crop.width));
+  const top = Math.min(Math.max(media.y, media.y + media.height), Math.max(crop.y, crop.y + crop.height));
+  return right > x && top > y ? { x, y, width: right - x, height: top - y } : media;
 }
 
 export type PdfIntakeCode = 'invalid-pdf' | 'encrypted-pdf' | 'xfa-unsupported' | 'signed-pdf-warning' | 'flat-scanned-no-fields';
@@ -103,8 +117,16 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
     }
 
     const pdfPages = doc.getPages();
-    const pages = pdfPages.map((page) => ({ ...page.getSize(), rotation: rotationOf(page.getRotation().angle) }));
     const cropBoxes = pdfPages.map((page) => page.getCropBox());
+    const pages = pdfPages.map((page, index) => {
+      const userUnit = page.node.get(key('UserUnit'));
+      const unit = userUnit instanceof PDFNumber ? userUnit.asNumber() : 1;
+      return {
+        ...page.getSize(), rotation: rotationOf(page.getRotation().angle),
+        visibleBox: visiblePageBox(page.getMediaBox(), cropBoxes[index]!),
+        userUnit: Number.isFinite(unit) && unit > 0 ? unit : 1,
+      };
+    });
     const widgetPages = new Map<PDFDict, number>();
     for (const [pageIndex, page] of pdfPages.entries()) {
       const annots = page.node.Annots();
