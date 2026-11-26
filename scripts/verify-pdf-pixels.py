@@ -195,7 +195,7 @@ def check_merged(spec, directory):
     return index
 
 
-def check_cover_ink(page):
+def check_cover_ink(page, footer):
     width, height, samples = render(page)
     reds = samples[::CHANNELS]
     dark = reds.translate(DARK_PIXELS)
@@ -219,7 +219,16 @@ def check_cover_ink(page):
                   max(bounds[2], row.rindex(b"\x01") + 1), max(bounds[3], y + 1)]
     assert amount > 1_000, f"cover page {page.number + 1}: missing text ink at 4x"
     inset = min(bounds[0], bounds[1], width - bounds[2], height - bounds[3])
-    return {"page": page.number + 1, "inkBboxAt4x": bounds, "inkPixelsAt4x": amount, "minPageEdgeInsetAt4x": inset}
+    evidence = {"page": page.number + 1, "inkBboxAt4x": bounds, "inkPixelsAt4x": amount, "minPageEdgeInsetAt4x": inset}
+    if footer:
+        left = right = 0
+        for y in range(height - 50 * 4, height - margin):
+            row = dark[y * width:(y + 1) * width]
+            left += row[:width // 2].count(b"\x01")
+            right += row[width // 2:].count(b"\x01")
+        assert left > 100 and right > 100, f"cover page {page.number + 1}: missing left or right custody footer ink"
+        evidence["custodyFooter"] = {"text": footer, "leftInkPixelsAt4x": left, "rightInkPixelsAt4x": right}
+    return evidence
 
 
 def check_covered_merge(spec, directory):
@@ -239,14 +248,17 @@ def check_covered_merge(spec, directory):
             header = [expected["title"], *(expected["details"] if page_number == 0 else []), *expected["headings"]]
             assert [text for text, _ in spans[:len(header)]] == header, (spec["pdf"], page_number, spans[:len(header)])
             assert all(b" Tj" in operators for _, operators in spans), f"{spec['pdf']}: cover text span has no glyphs"
-            cells = spans[len(header):]
+            footer = expected.get("footer")
+            if footer:
+                assert spans[-1][0] == footer, f"{spec['pdf']}: displayed custody fingerprints differ from the source bytes"
+            cells = spans[len(header):-1] if footer else spans[len(header):]
             assert len(cells) % 4 == 0, f"{spec['pdf']}: incomplete cover table"
             for offset in range(0, len(cells), 4):
                 ordinal, row_number, filename, pages = cells[offset:offset + 4]
                 if filename[0] in expected["wrappedFilenames"]:
                     assert filename[1].count(b"BT\n") > 1, f"{spec['pdf']}: expected filename to wrap"
                 index_rows.append((ordinal[0], row_number[0], filename[0], pages[0]))
-            ink.append(check_cover_ink(page))
+            ink.append(check_cover_ink(page, footer))
         index = 0
         expected_index = []
         for ordinal, (row, filename, row_number) in enumerate(zip(spec["rows"], expected["filenames"], expected["rowNumbers"], strict=True), 1):
@@ -370,6 +382,9 @@ def main():
         row_pages = sum(item["rowPagesPixelIdentical"] for item in covered)
         verified_rows = sum(item["verifiedIndexRows"] for item in covered)
         print(f"Cover exports: {cover_pages} covers with 0 clipped pixels, {verified_rows} exact index rows, {row_pages} identical form pages with and without a cover.")
+        custody_footers = sum("custodyFooter" in page for item in covered for page in item["coverPages"])
+        if custody_footers:
+            print(f"Custody: {custody_footers} cover footers with exact hash prefixes and visible ink at 4x.")
     if watermarks:
         pages = sum(len(proof["pages"]) for proof in watermarks)
         print(f"Watermarks: {pages} stamped pages with visible ink, 0 clipped pixels, and original dark ink preserved.")

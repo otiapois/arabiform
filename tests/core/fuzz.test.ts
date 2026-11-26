@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { posix, resolve, win32 } from 'node:path';
 import fontkit, { type Font } from '@pdf-lib/fontkit';
@@ -6,10 +7,13 @@ import { unzipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
+import { createCustodyManifest, hashCustodySources, sha256 } from '../../src/core/audit/custody';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
-import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow, type AlignOverride } from '../../src/core/pdf';
+import { createAudit, createFlattenedZip, createZip, inspectCustomFont, inspectTemplate, matchChoice, preflightRow, type AlignOverride } from '../../src/core/pdf';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
+import { createGeneratedZip } from '../../src/core/pdf/exports';
+import { inspectPrintMargins } from '../../src/core/pdf/margin-preflight';
 import { paginateCoverRows } from '../../src/core/pdf/merge-cover';
 import { createShaper, fitText } from '../../src/core/pdf/shaping';
 import { watermarkLayout } from '../../src/core/pdf/watermark';
@@ -23,13 +27,14 @@ const decoder = new TextDecoder();
 const key = PDFName.of;
 let acceptedCases = 0;
 let discardedCases = 0;
+let failedProperties = 0;
 
 const mixedText = fc.oneof(
-  fc.array(fc.constantFrom('ن', 'ى', 'م', 'ي', 'ق', 'ب', 'أ', 'َ', 'ِ', 'ُ', 'ْ', 'ّ', 'ً', '١', '٢', '٠',
+  fc.array(fc.constantFrom('ن', 'ى', 'م', 'ي', 'ق', 'ب', 'أ', 'ـ', 'َ', 'ِ', 'ُ', 'ْ', 'ّ', 'ً', '١', '٢', '٠',
     'Name', ' ', '00123', '(A)', '#00123', '+966 50 012 3456', 'ع\u200dر', 'ع\u200cر', '🙂', '𐍈',
     '\u200e', '\u200f', '\u061c', '\u2066', '\u2067', '\u2069', '\u202e', '\u2028', '\x00', '\x1f', '\r\n', '\t', '\uD800'), { minLength: 1, maxLength: 22 }).map((chunks) => chunks.join('')),
   fc.constantFrom('مُحَمَّد سَالِم', 'بَنِي يَمَن', 'اَلْعَرَبِيَّةُ', 'الطلب #00123 - Riyadh 2026', '(أحمد - 0045)',
-    '+966 50 012 3456', '١٢٣٤٥٦', '00123', '00007', 'ع\u200dر', 'ع\u200cر', 'نَ\u0651\u0652\u064E'),
+    '+966 50 012 3456', '١٢٣٤٥٦', '00123', '00007', 'ع\u200dر', 'ع\u200cر', 'نَ\u0651\u0652\u064E', 'مُحَـمَّد'),
   fc.constantFrom('ب', 'مُ', 'A', '🙂', '0', 'A نَ ').map((piece) => piece.repeat(500)),
   fc.string({ minLength: 1, maxLength: 28 }),
 );
@@ -37,13 +42,17 @@ const mixedText = fc.oneof(
 async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns: number) {
   const details = await fc.check(property, { seed, numRuns });
   discardedCases += details.numSkips;
+  if (details.failed) failedProperties++;
   if (details.failed) throw new Error(`Replay seed ${details.seed}, path ${details.counterexamplePath}: ${JSON.stringify(details.counterexample)}`, { cause: details.errorInstance });
   expect(details.numRuns).toBe(numRuns);
   expect(details.numSkips).toBe(0);
   acceptedCases += details.numRuns;
 }
 
-afterAll(() => console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded.`));
+afterAll(() => {
+  console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
+  expect(discardedCases).toBe(0);
+});
 
 describe('seeded adversarial files and PDF geometry', () => {
   it('roundtrips 320 generated CSV records with exact strings and leading zeros', async () => {
@@ -732,7 +741,8 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
       const widget = { x: 0, y: 0, width: innerWidth + 3.2, height: innerHeight + 3.2,
         rotation: 0, defaultFontSize: 12, usable: true, innerWidth, innerHeight, pageIndex: 0 };
       const report = await inspectTemplateCapacities({
-        pages: [{ width: 300, height: 100, rotation: 0, visibleBox: { x: 0, y: 0, width: 300, height: 100 }, userUnit: 1 }],
+        pages: [{ width: 300, height: 100, rotation: 0, visibleBox: { x: 0, y: 0, width: 300, height: 100 },
+          printBounds: [0, 0, 300, 100], userUnit: 1 }],
         fields: [{ name: 'Name', kind: 'text', readOnly: false, required: false, multiline, maxLength,
           defaultFontSize: 12, supportsTextCapacity: true, value: '', widgets: [widget] }],
       }, fonts, min);
@@ -775,4 +785,123 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
       }
     }), 180);
   }, 60_000);
+});
+
+describe('seeded custody receipts and physical print margins', () => {
+  const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+  it('checks 800 raw input pairs and subviews against independent SHA-256', async () => {
+    expect(await sha256(new Uint8Array())).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+    await verify(fc.asyncProperty(fc.uint8Array({ maxLength: 8192 }), fc.uint8Array({ maxLength: 8192 }),
+      fc.integer({ min: 1, max: 23 }), async (template, roster, offset) => {
+        const wrapper = new Uint8Array(template.length + offset + 7).fill(0xaf);
+        wrapper.set(template, offset);
+        const view = wrapper.subarray(offset, offset + template.length);
+        const sources = await hashCustodySources(view, Uint8Array.from(roster).buffer);
+        expect(sources).toEqual({ templateSha256: digest(template), rosterSha256: digest(roster) });
+        const sourceOnly = createCustodyManifest(sources);
+        expect(sourceOnly).toBe(createCustodyManifest(await hashCustodySources(template, roster)));
+        expect(JSON.parse(sourceOnly)).toEqual({ version: 1, ...sources });
+        if (view.length) {
+          view[view.length - 1] = view[view.length - 1]! ^ 1;
+          const changed = await sha256(view);
+          expect(changed).toBe(digest(view));
+          expect(changed).not.toBe(sources.templateSha256);
+        }
+      }), 800);
+  });
+
+  it('checks 300 ZIP receipts against extracted PDF bytes and rejects device names and traversal before generation', async () => {
+    const templates = await Promise.all([120, 160, 200].map(async (width) => {
+      const doc = await PDFDocument.create();
+      const field = doc.getForm().createTextField('ID');
+      field.addToPage(doc.addPage([width, 80]), { x: 20, y: 24, width: 56, height: 22 });
+      field.setText(String(width).padStart(5, '0'));
+      return doc.save();
+    }));
+    const unsafeName = fc.constantFrom('../case.pdf', '..\\case.pdf', 'C:case.pdf', '/case.pdf', 'CON.pdf', 'ＣＯＮ.txt.pdf',
+      'LPT².form.pdf', 'COM9.pdf', 'NUL..pdf', 'AUX.txt.pdf', 'ＰＲＮ.pdf', 'x\u202ey.pdf');
+    await verify(fc.asyncProperty(fc.array(fc.integer({ min: 0, max: templates.length - 1 }), { minLength: 1, maxLength: 5 }),
+      fc.nat({ max: 100_000 }), unsafeName, async (indices, id, unsafe) => {
+        const staged: string[] = [];
+        const rows = indices.map((pdfIndex, index) => {
+          const filename = `${String(id).padStart(5, '0')}-سَالِم ${index + 1}.pdf`;
+          return { filename, getPdfBytes: async () => {
+            staged.push(filename);
+            return templates[pdfIndex]!;
+          } };
+        });
+        await expect(createGeneratedZip([{ ...rows[0]!, filename: unsafe }])).rejects.toThrow('invalid-export-filename');
+        expect(staged).toEqual([]);
+        const archive = await createGeneratedZip(rows);
+        const exact = Object.entries(unzipSync(archive.bytes));
+        expect(staged).toEqual(rows.map(({ filename }) => filename));
+        expect(exact.map(([filename]) => filename)).toEqual(staged);
+        expect(exact.every(([, bytes], index) => Buffer.from(bytes).equals(Buffer.from(templates[indices[index]!]!)))).toBe(true);
+        expect(archive.entries).toEqual(exact.map(([filename, bytes]) => ({ filename, sha256: digest(bytes), bytes: bytes.length })));
+      }), 300);
+  }, 15_000);
+
+  it('checks 450 actual page boxes for exact physical fractional clearances through crop, scale and rotation', async () => {
+    const geometry = fc.record({
+      x: fc.integer({ min: -400, max: 400 }).map((value) => value / 4),
+      y: fc.integer({ min: -400, max: 400 }).map((value) => value / 4),
+      crop: fc.constantFrom('none', 'inside', 'partial', 'disjoint'),
+      angle: fc.constantFrom(-90, 0, 90, 180, 270, 360, 450),
+      userUnit: fc.constantFrom(0.5, 1, 2, 4), indirect: fc.boolean(),
+      side: fc.constantFrom('left', 'right', 'bottom', 'top'),
+      clearancePt: fc.oneof(fc.constantFrom(-0.25, 0, 8.75, 8.9990234375, 9, 9.0009765625),
+        fc.integer({ min: 0, max: 80 }).map((value) => value / 4)),
+    });
+    const edges = ['top', 'right', 'bottom', 'left'];
+    await verify(fc.asyncProperty(geometry, async ({ x, y, angle, crop, clearancePt, userUnit, indirect, side }) => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([220, 180]);
+      page.setMediaBox(x, y, 220, 180);
+      page.setRotation(degrees(angle));
+      const unit = PDFNumber.of(userUnit);
+      page.node.set(key('UserUnit'), indirect ? doc.context.register(unit) : unit);
+      let left = x;
+      let bottom = y;
+      let right = x + 220;
+      let top = y + 180;
+      if (crop === 'inside') {
+        page.setCropBox(x + 10, y + 13, 180, 130);
+        left += 10;
+        bottom += 13;
+        right = x + 190;
+        top = y + 143;
+      } else if (crop === 'partial') {
+        page.setCropBox(x - 20, y + 13, 280, 130);
+        bottom += 13;
+        top = y + 143;
+      } else if (crop === 'disjoint') page.setCropBox(x + 230, y + 190, 100, 100);
+      const gap = clearancePt / userUnit;
+      const widgetX = side === 'left' ? left + gap : side === 'right' ? right - gap - 26 : left + 75;
+      const widgetY = side === 'bottom' ? bottom + gap : side === 'top' ? top - gap - 16 : bottom + 57;
+      const form = doc.getForm();
+      form.createTextField('قرب').addToPage(page, { x: widgetX, y: widgetY, width: 26, height: 16, borderWidth: 0 });
+      form.createCheckBox('Unmapped').addToPage(page, { x: left + 1, y: bottom + 38, width: 15, height: 15, borderWidth: 0 });
+      const metadata = await inspectTemplate(await doc.save());
+      const displayedSide = edges[(edges.indexOf(side) + angle / 90 + 4) % edges.length];
+      const expected = { code: 'margin-near-edge', field: 'قرب', pageNumber: 1, widgetIndex: 0, edge: displayedSide, clearancePt };
+      expect(inspectPrintMargins(metadata, [])).toEqual([]);
+      expect(inspectPrintMargins(metadata, ['قرب', 'missing'])).toEqual(clearancePt < 9 ? [expected] : []);
+      expect(inspectPrintMargins(metadata, ['Unmapped'])).toHaveLength(1);
+    }), 450);
+  }, 30_000);
+
+  it('keeps an exact 9 pt gap between decimal PDF coordinates out of the advisory', async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([240, 180]);
+    page.setCropBox(7.08, 9.67, 200, 150);
+    const form = doc.getForm();
+    for (const [name, x] of [['Below', 16.07999999], ['At', 16.08], ['Above', 16.08000001]] as const) {
+      form.createTextField(name).addToPage(page, { x, y: 50, width: 40, height: 20, borderWidth: 0 });
+    }
+    const metadata = await inspectTemplate(await doc.save());
+    expect(inspectPrintMargins(metadata, ['Below', 'At', 'Above'])).toEqual([
+      { code: 'margin-near-edge', field: 'Below', pageNumber: 1, widgetIndex: 0, edge: 'left', clearancePt: 8.99999999 },
+    ]);
+  });
 });

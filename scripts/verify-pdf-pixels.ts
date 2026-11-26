@@ -6,6 +6,7 @@ import { decodePDFRawStream, degrees, PDFArray, PDFCheckBox, PDFDict, PDFDocumen
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import { readRoster } from '../src/core/roster';
+import { createBatchProcessor } from '../src/core/worker/batch';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -322,7 +323,8 @@ const coverSource = await PDFDocument.create();
 const coverSourcePage = coverSource.addPage([180, 140]);
 const coverSourceField = coverSource.getForm().createTextField('ID');
 coverSourceField.addToPage(coverSourcePage, { x: 20, y: 60, width: 120, height: 20 });
-const singlePageCoverRow = await passingCase(Buffer.from(await coverSource.save()), { ID: 'بَنِي يَمَن 00123' },
+const coverSourceBytes = Buffer.from(await coverSource.save());
+const singlePageCoverRow = await passingCase(coverSourceBytes, { ID: 'بَنِي يَمَن 00123' },
   'cover-index-source.pdf', 'M6 compact one-page filled form for covered merge parity');
 const longFilename = `00123-${'يَاسِين'.repeat(10)}-${'W'.repeat(50)}.pdf`;
 const templateName = 'نَمُوذَج HR (00123).pdf';
@@ -372,6 +374,44 @@ for (const locale of ['en', 'ar'] as const) {
   }
   await writeFile(resolve(root, spec.pdf), covered);
   await writeFile(resolve(root, spec.plainPdf), plain);
+  coveredMerged.push(spec);
+}
+
+const custodyRoster = Buffer.from('\uFEFFID\r\nبَنِي يَمَن 00123\r\n', 'utf8');
+const custodyRows = (await readRoster(custodyRoster, 'roster.csv')).sheets[0]!.rows.map(({ values }) => values);
+const custodyBatch = createBatchProcessor();
+const ignoreProgress = () => {};
+await custodyBatch({ phase: 'preflight', input: { template: coverSourceBytes, roster: custodyRoster, rows: custodyRows, options: settings } }, ignoreProgress);
+const custodyName = 'نَمُوذَج 00123.pdf';
+const custodyFilenames = ['00123-سَالِم.pdf'];
+const custodyPlainPdf = 'm9-custody-plain.pdf';
+const templatePrefix = createHash('sha256').update(coverSourceBytes).digest('hex').slice(0, 12);
+const rosterPrefix = createHash('sha256').update(custodyRoster).digest('hex').slice(0, 12);
+const plain = await custodyBatch({ phase: 'merged' }, ignoreProgress);
+assert(plain && 'mergedPdfSha256' in plain);
+await writeFile(resolve(root, custodyPlainPdf), plain.bytes);
+for (const locale of ['en', 'ar'] as const) {
+  const now = new Date();
+  const rendered = await custodyBatch({ phase: 'merged', coverSheet: { locale, templateName: custodyName, filenames: custodyFilenames, includeCustody: true } }, ignoreProgress);
+  assert(rendered && 'mergedPdfSha256' in rendered);
+  assert.equal(rendered.mergedPdfSha256, createHash('sha256').update(rendered.bytes).digest('hex'));
+  const en = locale === 'en';
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const pdf = `m9-custody-covered-${locale}.pdf`;
+  const spec = {
+    pdf, plainPdf: custodyPlainPdf, rows: [singlePageCoverRow.filename], coverPages: 1,
+    expectedText: {
+      title: en ? 'ArabiForm · Batch Print Manifest' : 'ArabiForm · سجل طباعة الدفعة',
+      headings: en ? ['#', 'Row', 'Filename', 'Pages'] : ['#', 'الصف', 'اسم الملف', 'الصفحات'],
+      details: en ? ['Export date', date, 'Template', custodyName,
+        'Ready: 1   ·   Flagged: 0   ·   Skipped: 0', 'Min font size: 8 pt   ·   Font mode: Auto']
+        : ['تاريخ التصدير', date, 'القالب', custodyName,
+          'جاهز: 1   ·   يحتاج إلى مراجعة: 0   ·   تم تخطيه: 0', 'الحد الأدنى لحجم الخط: 8 نقطة   ·   وضع الخط: تلقائي'],
+      filenames: custodyFilenames, rowNumbers: [1], wrappedFilenames: [],
+      footer: `Template SHA-256 ${templatePrefix}   ·   Roster SHA-256 ${rosterPrefix}`,
+    },
+  };
+  await writeFile(resolve(root, pdf), rendered.bytes);
   coveredMerged.push(spec);
 }
 

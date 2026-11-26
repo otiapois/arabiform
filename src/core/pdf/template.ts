@@ -6,6 +6,8 @@ export const key = PDFName.of;
 export const number = PDFNumber.of;
 export const rotationOf = (angle: number): number => (angle % 360 + 360) % 360;
 
+export type RectangleBounds = readonly [left: number, bottom: number, right: number, top: number];
+
 export interface WidgetMetadata {
   pageIndex: number;
   x: number;
@@ -17,6 +19,7 @@ export interface WidgetMetadata {
   innerWidth: number | null;
   innerHeight: number | null;
   usable: boolean;
+  printBounds?: RectangleBounds;
 }
 
 export interface FieldMetadata {
@@ -40,16 +43,25 @@ export interface TemplateMetadata {
     height: number;
     rotation: number;
     visibleBox: { x: number; y: number; width: number; height: number };
+    printBounds: RectangleBounds;
     userUnit: number;
   }[];
 }
 
-function visiblePageBox(media: TemplateMetadata['pages'][number]['visibleBox'], crop: typeof media) {
-  const x = Math.max(Math.min(media.x, media.x + media.width), Math.min(crop.x, crop.x + crop.width));
-  const y = Math.max(Math.min(media.y, media.y + media.height), Math.min(crop.y, crop.y + crop.height));
-  const right = Math.min(Math.max(media.x, media.x + media.width), Math.max(crop.x, crop.x + crop.width));
-  const top = Math.min(Math.max(media.y, media.y + media.height), Math.max(crop.y, crop.y + crop.height));
-  return right > x && top > y ? { x, y, width: right - x, height: top - y } : media;
+function readBounds(rect: PDFArray): RectangleBounds {
+  const firstX = rect.lookup(0, PDFNumber).asNumber();
+  const firstY = rect.lookup(1, PDFNumber).asNumber();
+  const secondX = rect.lookup(2, PDFNumber).asNumber();
+  const secondY = rect.lookup(3, PDFNumber).asNumber();
+  return [Math.min(firstX, secondX), Math.min(firstY, secondY), Math.max(firstX, secondX), Math.max(firstY, secondY)];
+}
+
+function visiblePageBounds(media: RectangleBounds, crop: RectangleBounds): RectangleBounds {
+  const left = Math.max(media[0], crop[0]);
+  const bottom = Math.max(media[1], crop[1]);
+  const right = Math.min(media[2], crop[2]);
+  const top = Math.min(media[3], crop[3]);
+  return right > left && top > bottom ? [left, bottom, right, top] : media;
 }
 
 export type PdfIntakeCode = 'invalid-pdf' | 'encrypted-pdf' | 'xfa-unsupported' | 'signed-pdf-warning' | 'flat-scanned-no-fields';
@@ -118,12 +130,16 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
 
     const pdfPages = doc.getPages();
     const cropBoxes = pdfPages.map((page) => page.getCropBox());
-    const pages = pdfPages.map((page, index) => {
+    const pages = pdfPages.map((page) => {
       const userUnit = page.node.lookup(key('UserUnit'));
       const unit = userUnit instanceof PDFNumber ? userUnit.asNumber() : 1;
+      const media = readBounds(page.node.MediaBox());
+      const crop = page.node.CropBox();
+      const printBounds = crop ? visiblePageBounds(media, readBounds(crop)) : media;
+      const [x, y, right, top] = printBounds;
       return {
         ...page.getSize(), rotation: rotationOf(page.getRotation().angle),
-        visibleBox: visiblePageBox(page.getMediaBox(), cropBoxes[index]!),
+        visibleBox: { x, y, width: right - x, height: top - y }, printBounds,
         userUnit: Number.isFinite(unit) && unit > 0 ? unit : 1,
       };
     });
@@ -178,7 +194,8 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
       const defaultAppearance = fieldAttributes(canonical, 'DA') ?? rawForm.lookup(key('DA'));
       const appearance = defaultAppearance instanceof PDFString || defaultAppearance instanceof PDFHexString ? defaultAppearance.decodeText() : '';
       const widgets = field.acroField.getWidgets().map((widget): WidgetTarget => {
-        const rect = widget.getRectangle();
+        const rawRect = widget.Rect();
+        const rect = rawRect?.asRectangle() ?? { x: 0, y: 0, width: 0, height: 0 };
         const pageIndex = widgetPages.get(widget.dict) ?? -1;
         const crop = cropBoxes[pageIndex];
         const pageRotation = pages[pageIndex]?.rotation ?? 0;
@@ -199,6 +216,7 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         const supportedGeometry = rotation % 90 === 0 && [rect.width, rect.height, padding].every(Number.isFinite);
         const meta: WidgetMetadata = {
           ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance), usable,
+          printBounds: rawRect && readBounds(rawRect),
           innerWidth: supportedGeometry ? Math.max(0, (quarterTurn ? rect.height : rect.width) - 2 * padding) : null,
           innerHeight: supportedGeometry ? Math.max(0, (quarterTurn ? rect.width : rect.height) - 2 * padding) : null,
         };
