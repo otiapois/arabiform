@@ -11,6 +11,13 @@
 - **Evidence** — Verified in `import-medic/docs/research/M1.5/02-evidence/acroform-baseline.cjs` across `irs-w9.pdf`, `irs-1040.pdf`, and `synthetic-rotated.pdf`.
 - **Seen: 1** (2026-11-26)
 
+### 清理工作树前确认预览已退出（2026-11-26）
+
+- **规则**　为验收和冒烟预览保留自己的进程或终端会话标识。删除临时目录前核对自己启动的预览已退出。
+- **原因**　Windows 上保留的预览会话仍可能占用工作目录。检查合并状态和监听端口无法单独确认目录已释放。
+- **证据**　五个工作树已移除后，`tmp/web-smoke` 仍被本轮冒烟预览会话占用。结束该会话后重试成功。另一次受限 Edge 运行的退出情况见[验收报告](docs/reports/M1-verification.md#复跑及适用边界)。
+- **Seen: 1**（2026-11-26）
+
 ### 合成 PDF 的标题与原有字段也要验字形（2026-11-26）
 
 - **规则**　修改模板字体嵌入或子集策略后，在 PDF.js 和 PyMuPDF 中查看模板标题与保留字段，再验写入字段的值。

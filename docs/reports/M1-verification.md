@@ -70,3 +70,9 @@ npm run test:e2e
 本机 Windows 沙箱曾使 tsx 读取用户信息返回 `uv_os_get_passwd ENOMEM`。按同一范围运行的本地像素命令通过。另一次沙箱内 E2E 跑完 12 项后，Playwright 等待预览子进程退出，定向回收该进程后退出码为 0。以批准的本地运行权限重复常规 E2E，**12/12，49.7 秒，退出码 0**。复核原预览 PID 已退出，4187 端口拒绝连接。
 
 结果适用于上述 Edge 版本、视口、模板版本和字段。移动端使用视口模拟，阿语母语审校、真机浏览器、物理打印、真实域名的 Cloudflare 响应及搜索收录尚未验收。当前构建使用 `https://arabiform.example` 占位来源。Vite 构建成功，同时提示 PDF、预览及字体相关延迟加载资源超过 500 kB。
+
+## 主线复跑与交付
+
+在 `main` 的 `78b2e3cfcd3c33c23dbf5bfb9920f962017e43ee` 复跑 typecheck、Vitest、4× 像素核验、五路由构建和 Edge E2E，全部退出码为 0。Edge 12 项用时 48.5 秒。主线 JSON 回读确认 156 次同源 HTTP 请求和 32 个本地 Worker，外部请求、WebSocket 与浏览器错误均为 0。六张原始截图的像素尺寸与两种测试视口一致。验收后的改动限于报告与实际教训。
+
+五个临时工作树、已合并的临时分支及 `.arabiform-wt` 已清理，主目录的 D 盘依赖及 `dist/` 保留。GitHub Actions 的四项检查已在本机执行，远端工作流尚无运行记录。两款字体附有原始 OFL，`@pdf-lib/fontkit` 1.1.1 的上游包未附独立版权通知，现有声明及可核许可材料已落盘。 [第三方许可](../../THIRD_PARTY_NOTICES.md)
