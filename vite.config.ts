@@ -50,4 +50,5 @@ function bundledAssets(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), bundledAssets()],
+  worker: { format: 'es' },
 });

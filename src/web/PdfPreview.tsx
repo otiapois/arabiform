@@ -5,6 +5,34 @@ import { diagnosticText } from './Diagnostics';
 import { fillLabel, type translator } from './labels';
 import type { RowResult, TemplateInfo } from './useWorkbench';
 
+const en = {
+  previewError: 'This PDF could not be previewed.',
+  previewCanvas: 'Rendered PDF page',
+  zoom: 'Preview zoom',
+  fit: 'Fit',
+  previousPage: 'Previous page',
+  nextPage: 'Next page',
+  pageCount: 'Page {page} of {total}',
+  previewPages: 'Preview pages',
+  pageNumber: 'Page {page}',
+  issuePageOne: 'Page {page} · {count} issue',
+  issuePageMany: 'Page {page} · {count} issues',
+};
+
+const ar: typeof en = {
+  previewError: 'تعذّرت معاينة ملف PDF.',
+  previewCanvas: 'صفحة PDF المعروضة',
+  zoom: 'تكبير المعاينة',
+  fit: 'ملاءمة الصفحة',
+  previousPage: 'الصفحة السابقة',
+  nextPage: 'الصفحة التالية',
+  pageCount: 'الصفحة {page} من {total}',
+  previewPages: 'صفحات المعاينة',
+  pageNumber: 'الصفحة {page}',
+  issuePageOne: 'الصفحة {page} · عدد التنبيهات {count}',
+  issuePageMany: 'الصفحة {page} · عدد التنبيهات {count}',
+};
+
 GlobalWorkerOptions.workerSrc = workerUrl;
 
 type PreviewProps = {
@@ -31,7 +59,8 @@ type Position = {
 export default function PdfPreview({
   bytes, fields, diagnostics, minSize, unavailable, language, requestedPage, onPageChange,
 }: PreviewProps) {
-  const { labels } = language;
+  const { arabic, labels } = language;
+  const copy = arabic ? ar : en;
   const [loaded, setLoaded] = useState<{ bytes: Uint8Array; pdf?: PDFDocumentProxy }>();
   const [rendered, setRendered] = useState<{
     pdf: PDFDocumentProxy;
@@ -170,23 +199,23 @@ export default function PdfPreview({
     <>
       <div className="preview-toolbar">
         <div className="page-controls" aria-label={labels.preview}>
-          <button type="button" className="icon-button" aria-label={labels.previousPage} disabled={page <= 1 || !pdf} onClick={() => onPageChange(page - 1)}>
+          <button type="button" className="icon-button" aria-label={copy.previousPage} disabled={page <= 1 || !pdf} onClick={() => onPageChange(page - 1)}>
             <span aria-hidden="true" className="chevron previous" />
           </button>
-          <span className="page-counter">{fillLabel(labels.pageCount, { page: pdf ? page : 0, total: pageCount })}</span>
-          <button type="button" className="icon-button" aria-label={labels.nextPage} disabled={!pdf || page >= pdf.numPages} onClick={() => onPageChange(page + 1)}>
+          <span className="page-counter">{fillLabel(copy.pageCount, { page: pdf ? page : 0, total: pageCount })}</span>
+          <button type="button" className="icon-button" aria-label={copy.nextPage} disabled={!pdf || page >= pdf.numPages} onClick={() => onPageChange(page + 1)}>
             <span aria-hidden="true" className="chevron next" />
           </button>
         </div>
-        <select aria-label={labels.zoom} value={zoom} onChange={(event) => setZoom(event.currentTarget.value)}>
-          <option value="fit">{labels.fit}</option>
+        <select aria-label={copy.zoom} value={zoom} onChange={(event) => setZoom(event.currentTarget.value)}>
+          <option value="fit">{copy.fit}</option>
           <option value="1">100%</option>
           <option value="1.25">125%</option>
           <option value="1.5">150%</option>
         </select>
       </div>
       {pageCount > 0 && (
-        <div className="preview-page-rail" ref={pageRail} role="group" aria-label={labels.previewPages} data-testid="preview-pages">
+        <div className="preview-page-rail" ref={pageRail} role="group" aria-label={copy.previewPages} data-testid="preview-pages">
           {Array.from({ length: pageCount }, (_, index) => {
             const pageNumber = index + 1;
             const count = issuePages.get(pageNumber);
@@ -197,19 +226,19 @@ export default function PdfPreview({
                 aria-current={active ? 'page' : undefined} onClick={() => onPageChange(pageNumber)}>
                 {count && <span className="page-issue-dot" aria-hidden="true" />}
                 {count
-                  ? fillLabel(count === 1 ? labels.issuePageOne : labels.issuePageMany, { page: pageNumber, count })
-                  : fillLabel(labels.pageNumber, { page: pageNumber })}
+                  ? fillLabel(count === 1 ? copy.issuePageOne : copy.issuePageMany, { page: pageNumber, count })
+                  : fillLabel(copy.pageNumber, { page: pageNumber })}
               </button>
             );
           })}
         </div>
       )}
       <div className="preview-bed" ref={frame}>
-        {failed && <p className="alert" role="alert">{labels.previewError}</p>}
+        {failed && <p className="alert" role="alert">{copy.previewError}</p>}
         {!failed && !raster && <p className="preview-message" role="status">{labels.previewBusy}</p>}
         <div className="canvas-paper" style={{ width: raster?.width, aspectRatio: raster?.ratio }} hidden={!raster?.complete}>
           <canvas
-            aria-label={labels.previewCanvas}
+            aria-label={copy.previewCanvas}
             role="img"
             data-testid="pdf-canvas"
             data-rendered={raster?.complete ? 'true' : undefined}

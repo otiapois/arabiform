@@ -1,12 +1,13 @@
 import { lazy, Suspense, type ChangeEvent, type ReactNode } from 'react';
-import type { AlignOverride } from '../core/pdf/alignment';
-import { ChoiceList } from './Choices';
-import { Diagnostics } from './Diagnostics';
+import { CapacityDisclosure } from './CapacityDisclosure';
 import { fillLabel, translator } from './labels';
-import { Queue } from './Queue';
+import { QueuePanel } from './QueuePanel';
 import { saveDownload } from './resources';
 import { sampleWorkflows, useWorkbench } from './useWorkbench';
+import { WatermarkControls } from './WatermarkControls';
 
+const MappingRows = lazy(() => import('./MappingRows'));
+const Diagnostics = lazy(() => import('./Diagnostics').then(({ Diagnostics }) => ({ default: Diagnostics })));
 const PdfPreview = lazy(() => import('./PdfPreview'));
 const Hygiene = lazy(() => import('./Hygiene'));
 const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
@@ -70,7 +71,6 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
   const { missingFields, missingColumns } = desk.presetWarnings ?? { missingFields: [], missingColumns: [] };
   const presetMismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
-  const fieldKinds = { text: labels.kindText, checkbox: labels.kindCheckbox, radio: labels.kindRadio, dropdown: labels.kindDropdown };
   const textMapped = desk.fields.some(({ kind, name }) => (kind === 'text' || kind === 'dropdown') && desk.mapping[name]);
   const missingCustomGlyphs = customFont?.status === 'ready'
     && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
@@ -129,6 +129,9 @@ export function App({ arabic, heading, summary, details }: AppProps) {
         </section>
 
         <div className="workbench" id="workbench" tabIndex={-1}>
+          {desk.template && (
+            <CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} />
+          )}
           <div className="workbench-grid">
             <div className="setup">
               <section className="panel source-panel" aria-labelledby="files-heading">
@@ -181,53 +184,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 </header>
                 <div className="panel-body">
                   {desk.templateFields.length > 0 && desk.sheet
-                    ? (
-                      <>
-                        <p className="quiet mapping-help">{labels.mappingHelp}</p>
-                        <div className="mapping-labels" aria-hidden="true">
-                          <span>{labels.pdfField}</span><span>{labels.rosterColumn}</span>
-                        </div>
-                        <div className="mapping-rows">
-                          {desk.templateFields.map((field) => (
-                            <div key={field.name} className="mapping-row">
-                              <div className="mapping-field">
-                                <bdi title={field.name}>{field.name}</bdi>
-                                <span className="tag tag-pending">{fieldKinds[field.kind]}</span>
-                                {field.choices?.length ? (
-                                  <details className="choice-options">
-                                    <summary>{labels.allowedChoices}</summary>
-                                    <ChoiceList choices={field.choices} label={labels.allowedChoices} blank={labels.blankChoice} />
-                                  </details>
-                                ) : null}
-                              </div>
-                              {Object.hasOwn(desk.mapping, field.name) ? (
-                                <div className="mapping-target">
-                                  <select dir="auto" aria-label={field.name} data-pdf-field={field.name} value={desk.mapping[field.name]}
-                                    onChange={(event) => desk.changeMapping(field.name, event.currentTarget.value)}>
-                                    <option value="">{labels.unmapped}</option>
-                                    {desk.sheet?.headers.map((column) => <option key={column} value={column}>{column}</option>)}
-                                  </select>
-                                  {field.kind === 'text' && desk.mapping[field.name] && (
-                                    <label className="align-control">
-                                      {labels.align}
-                                      <select aria-label={`${labels.align} ${field.name}`} data-align-field={field.name}
-                                        value={Object.hasOwn(desk.alignOverrides, field.name) ? desk.alignOverrides[field.name] : 'auto'}
-                                        onChange={(event) => desk.changeAlignment(field.name, event.currentTarget.value as AlignOverride)}>
-                                        <option value="auto">{labels.alignAuto}</option>
-                                        <option value="rtl">{labels.alignRtl}</option>
-                                        <option value="ltr">{labels.alignLtr}</option>
-                                        <option value="center">{labels.alignCenter}</option>
-                                      </select>
-                                    </label>
-                                  )}
-                                  {field.choices && !desk.mapping[field.name] && <small className="quiet">{labels.preserved}</small>}
-                                </div>
-                              ) : <span className="quiet">{labels.preserved}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )
+                    ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><MappingRows desk={desk} language={language} /></Suspense>
                     : <p className="quiet">{labels.mappingWait}</p>}
                 </div>
               </section>
@@ -291,6 +248,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
                     <span>{labels.includeCoverSheet}</span>
                   </label>
+                  <WatermarkControls settings={desk.watermark} change={desk.changeWatermark} disabled={desk.exporting}
+                    invalid={desk.watermarkBlocked} arabic={arabic} />
                   <div className="preset-controls">
                     <h3>{labels.preset}</h3>
                     <p className="quiet">{labels.presetHelp}</p>
@@ -300,8 +259,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                         <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
                           onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
                       </label>
-                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet}
-                        onClick={desk.exportPreset}>{labels.presetExport}</button>
+                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.watermarkBlocked}
+                        onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                     </div>
                     {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
                     {(missingFields.length > 0 || missingColumns.length > 0) && (
@@ -335,7 +294,9 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               </header>
               {!!selectedResult?.diagnostics.length && (
                 <div className="preview-diagnostics">
-                  <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
+                  <Suspense>
+                    <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
+                  </Suspense>
                 </div>
               )}
               {desk.template
@@ -367,7 +328,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
             </Suspense>
           )}
-          <Queue key={desk.roster?.name + ':' + desk.sheetIndex} desk={desk} language={language} />
+          <QueuePanel key={desk.roster?.name + ':' + desk.sheetIndex} desk={desk} language={language} />
 
           <section className="panel exports" aria-labelledby="export-heading">
             <header>
@@ -376,8 +337,10 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             </header>
             <div className="panel-body export-actions">
               <div className="actions">
-                <button type="button" className="button primary" disabled={!ready || desk.exporting} onClick={() => desk.download('zip')}>{labels.zip}</button>
-                <button type="button" className="button secondary" disabled={!ready || desk.exporting} onClick={() => desk.download('merged')}>{labels.merged}</button>
+                <button type="button" className="button primary" disabled={!ready || desk.exporting || (desk.flattenZip && desk.watermarkBlocked)}
+                  onClick={() => desk.download('zip')}>{labels.zip}</button>
+                <button type="button" className="button secondary" disabled={!ready || desk.exporting || desk.watermarkBlocked}
+                  onClick={() => desk.download('merged')}>{labels.merged}</button>
               </div>
               <div className="actions audit-actions" aria-label={labels.audit}>
                 <button type="button" className="button secondary" disabled={!desk.results || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
@@ -392,7 +355,10 @@ export function App({ arabic, heading, summary, details }: AppProps) {
         {details && <div className="route-details" dangerouslySetInnerHTML={details} />}
         <section className="checklist" aria-labelledby="checklist-heading">
           <div><h2 id="checklist-heading">{labels.checklistTitle}</h2><p>{labels.checklistSummary}</p></div>
-          <button type="button" className="button secondary" onClick={() => saveDownload(labels.checklistText, 'arabiform-scope-checklist.txt', 'text/plain;charset=utf-8')}>
+          <button type="button" className="button secondary" onClick={async () => {
+            const { scopeChecklist } = await import('./scope-checklist');
+            saveDownload(scopeChecklist[arabic ? 'ar' : 'en'], 'arabiform-scope-checklist.txt', 'text/plain;charset=utf-8');
+          }}>
             {labels.checklist}
           </button>
         </section>
