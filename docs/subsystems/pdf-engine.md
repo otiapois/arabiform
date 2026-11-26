@@ -1,0 +1,25 @@
+# Subsystem: PDF & Font Shaping Engine (`src/core/pdf/`)
+
+## Responsibilities
+- Pure browser- and Node-compatible TypeScript module (`src/core/pdf/`) with zero external network calls.
+- Reference proven baseline algorithm from `D:\workspace\vibe_coding\sites\import-medic\docs\research\M1.5\02-evidence\acroform-baseline.cjs` and evolve it to production quality:
+  1. **Strict PDF Intake Gate**:
+     - Inspect raw AcroForm dictionary BEFORE `getForm()`.
+     - Reject with clear actionable error code if: `/XFA` present (`xfa-unsupported`), encrypted (`encrypted-pdf`), digital signature fields present (`signed-pdf-warning` or block when modifying signed forms), or `0` fillable text fields (`flat-scanned-no-fields`).
+     - Extract every text field's metadata: canonical name, all widget rectangles (`x, y, w, h`), page index, page `/Rotate`, widget `/MK /R`, `maxLength`, multiline flag, default appearance font size, and existing value.
+  2. **Bundled Local Fonts (`public/fonts/`)**:
+     - Bundle OFL-licensed `Noto Naskh Arabic` (Regular) + `Noto Sans` (Regular) locally so both pure Arabic (with harakat/diacritics), pure Latin/numeric IDs (`00123`), AND mixed Arabic+Latin/digits work 100% offline with zero external requests!
+  3. **True Ink-BBox Shaping & Auto-Baseline**:
+     - Shape Arabic runs via `@pdf-lib/fontkit` (full GSUB/GPOS ligatures, diacritics, RTL visual order) and handle mixed BiDi runs cleanly (using deterministic Unicode BiDi algorithm e.g. `bidi-js` MIT, or cleanly flagging unsupported complex bidirectional edge cases rather than rendering backwards!).
+     - Calculate true ink bounding box (`yMin`, `yMax`, total advance width) across all glyphs including descenders (`ن`, `ى`, `ي`, `م`, `ق`) and diacritics.
+     - Auto-fit font size within `[options.minFontSize (default 8pt, user adjustable 6–10pt), templateFontSize || 12pt]` against inner box (`width - 2*pad - 2*border`, `height - 2*pad - 2*border`).
+     - Vertically center true ink (`yMin..yMax`) inside the widget rect to guarantee **zero top/bottom clipping**.
+     - Support single-line AND multiline wrapping (when field has multiline flag, wrap by word boundaries and check total line height against inner height; flag overflow if it exceeds box height!).
+     - Multi-widget atomicity: if a canonical field appears on multiple pages/widgets, verify ALL widgets fit; if any widget fails, flag the field fail-closed!
+  4. **Row-Level Batch Execution & Outputs**:
+     - For each roster row, return deterministic `RowPreflightResult`: `status: 'pass' | 'flagged'`, per-field diagnostics (`too-narrow`, `too-low`, `exceeds-maxlen`, `unsupported-glyph`, `widget-rotated-unsupported`, `missing-required`), computed font sizes, and rendered bytes (when passing).
+     - Support **two batch export modes**:
+       1. **Individual PDFs in `.zip`** (`fflate` MIT) with customizable sanitized filename pattern (e.g. `{{ID}}-{{Name}}.pdf`, deduplicating collisions with `-2`, `-3`).
+       2. **Merged Single Printable PDF** (combining all passing rows into one multi-page print-ready PDF — flattening or renaming AcroForm field names uniquely per copy so rows never overwrite each other when merged!).
+     - **Untouched Field Invariance**: Every unmapped field keeps its exact original `/V` and visual appearance.
+     - **Audit Report**: Export deterministic `.json` and `.csv` preflight audit logs (row index, filename, status, field font sizes, flag reasons).
