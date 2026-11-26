@@ -2,7 +2,7 @@
 
 ## Bundled fonts
 
-Both files are the unchanged static Regular, unhinted TrueType binaries from the official Noto releases. Each release's original OFL text is included alongside its font.
+ArabiForm distributes two fonts. Both files are the unchanged static Regular, unhinted TrueType binaries from the official Noto releases. Each release's original OFL text is included alongside its font.
 
 | Font | Release and archive member | SHA-256 | Original OFL 1.1 |
 | --- | --- | --- | --- |
@@ -12,6 +12,8 @@ Both files are the unchanged static Regular, unhinted TrueType binaries from the
 The [Noto Naskh Arabic release archive](https://github.com/notofonts/arabic/releases/download/NotoNaskhArabic-v2.021/NotoNaskhArabic-v2.021.zip) has SHA-256 `6c050ab9bd087d69b733c505a7576e60c528c2f33cd7b91005a5bd7da4514032`. Its original OFL file has SHA-256 `a7a5a25eb188bf1cd96982030d53e23c33485c69b1044a562254226857ee13af`.
 
 The [Noto Sans release archive](https://github.com/notofonts/latin-greek-cyrillic/releases/download/NotoSans-v2.015/NotoSans-v2.015.zip) has SHA-256 `0c34df072a3fa7efbb7cbf34950e1f971a4447cffe365d3a359e2d4089b958f5`. Its original OFL file has SHA-256 `cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a`.
+
+Custom `.ttf` and `.otf` files are supplied by the user and processed locally in the current browser tab. Generated PDFs may embed data from the selected font. Use a font whose license permits PDF embedding and the intended distribution of those PDFs.
 
 ## JavaScript and CSS
 
