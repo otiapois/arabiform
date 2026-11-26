@@ -103,6 +103,32 @@ describe('PDF intake and fill', () => {
     expect((await preflightRow(source, { Name: ' ' }, config)).diagnostics).toEqual([{ field: 'Name', code: 'missing-required', pageNumbers: [1, 2] }]);
   });
 
+  it('keeps auto byte-equivalent and changes mapped text alignment on every widget without changing logical values', async () => {
+    const initial = await PDFDocument.load(await makeTemplate());
+    const initialName = initial.getForm().getTextField('Name');
+    initialName.acroField.getWidgets()[1]!.dict.set(key('Q'), initial.context.obj(TextAlignment.Right));
+    const source = await initial.save({ updateFieldAppearances: false });
+    const options = { fonts: await fonts() };
+    const values = { Name: '  سَلْمَى Alex #00123 ' };
+    const baseline = await preflightRow(source, values, options);
+    const autoOptions = { ...options, alignOverrides: { Name: 'auto' } as const };
+    expect((await preflightRow(source, values, autoOptions)).pdfBytes).toEqual(baseline.pdfBytes);
+    const baselineForm = (await PDFDocument.load(baseline.pdfBytes!)).getForm();
+    const old = valueAndAppearances(baselineForm.getTextField('Sentinel'));
+    for (const [mode, quadding] of [['center', TextAlignment.Center], ['ltr', TextAlignment.Left], ['rtl', TextAlignment.Right]] as const) {
+      const explicitOptions = { ...options, alignOverrides: { Name: mode, Sentinel: mode } };
+      const result = await preflightRow(source, values, explicitOptions);
+      expect(result.status).toBe('pass');
+      expect(result.fontSizes).toEqual(baseline.fontSizes);
+      const form = (await PDFDocument.load(result.pdfBytes!)).getForm();
+      const name = form.getTextField('Name');
+      expect(name.getText()).toBe(values.Name);
+      expect(name.getAlignment()).toBe(quadding);
+      expect(name.acroField.getWidgets()[1]!.dict.get(key('Q'))?.toString()).toBe(String(quadding));
+      expect(valueAndAppearances(form.getTextField('Sentinel'))).toEqual(old);
+    }
+  });
+
   it('writes Latin letters and digits left to right within an Arabic paragraph', async () => {
     const bundled = await fonts();
     const sans = fontkit.create(bundled.latin);
