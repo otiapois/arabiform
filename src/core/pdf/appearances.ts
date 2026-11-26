@@ -42,12 +42,6 @@ function textColor(appearance: string) {
   return color(last?.[1]?.trim().split(/\s+/).map(Number)) ?? operator(Op.NonStrokingColorGray, [number(0)]);
 }
 
-export function borderWidth(target: WidgetTarget): number {
-  const border = target.widget.dict.lookupMaybe(key('Border'), PDFArray);
-  const width = target.widget.getBorderStyle()?.getWidth() ?? (border && border.size() >= 3 ? Number(border.get(2).toString()) : 0);
-  return Math.max(0, width);
-}
-
 export function installAppearance(doc: PDFDocument, target: WidgetTarget, placement: Placement, fonts: Partial<Record<FontKey, AppearanceFont>>) {
   const { width, height, rotation } = target.meta;
   const operators = [operator(Op.PushGraphicsState)];
@@ -55,7 +49,7 @@ export function installAppearance(doc: PDFDocument, target: WidgetTarget, placem
   const background = color(mk?.getBackgroundColor());
   if (background) operators.push(background, operator(Op.AppendRectangle, [0, 0, width, height].map(number)), operator(Op.FillNonZero));
   const stroke = color(mk?.getBorderColor(), true);
-  const border = borderWidth(target);
+  const { border } = target;
   if (stroke && border > 0 && border < Math.min(width, height)) {
     operators.push(stroke, operator(Op.SetLineWidth, [number(border)]));
     const style = target.widget.BS();

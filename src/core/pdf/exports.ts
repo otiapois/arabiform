@@ -1,6 +1,7 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFWidgetAnnotation } from 'pdf-lib';
 import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
+import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
 import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
 import { key, number, openTemplate, widgetFlags } from './template';
@@ -137,10 +138,6 @@ export async function createMergedPdf(rows: readonly PdfExportRow[], onProgress?
   }
   if (cover) await prependMergeCover(merged, coverEntries, cover);
   return merged.save({ updateFieldAppearances: false });
-}
-
-function escapeSpreadsheetCell(value: string): string {
-  return /^[\t\r\n]|^[\s\p{Cc}\p{Cf}]*[=+\-@]/u.test(value.normalize('NFKC')) ? `'${value}` : value;
 }
 
 export function createAudit(rows: readonly AuditRow[]): { json: string; csv: string } {

@@ -1,4 +1,5 @@
 import { isAlignOverride, type AlignOverride } from '../pdf/alignment';
+import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
 
 export type FontMode = 'auto' | 'arabic' | 'latin';
 
@@ -16,11 +17,13 @@ export type MappingPresetV4 = PresetSettings & {
   alignOverrides: Record<string, AlignOverride>;
 };
 
+export type MappingPresetV5 = Omit<MappingPresetV4, 'version'> & { version: 5; watermark: WatermarkSettings };
+
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4;
+)) | MappingPresetV4 | MappingPresetV5;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -31,7 +34,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4)
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5)
     || Object.keys(data).length !== presetKeys.length + data.version - 1
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
@@ -62,5 +65,8 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
     if (!isAlignOverride(mode) || !Object.hasOwn(settings.mapping, field) || !settings.mapping[field]) return undefined;
     alignOverrides.push([field, mode]);
   }
-  return { version: 4, ...settings, flattenZip, includeCoverSheet, alignOverrides: Object.fromEntries(alignOverrides) };
+  const printSettings = { ...settings, flattenZip, includeCoverSheet, alignOverrides: Object.fromEntries(alignOverrides) };
+  if (data.version === 4) return { version: 4, ...printSettings };
+  const watermark = Object.hasOwn(data, 'watermark') && validateWatermarkSettings(data.watermark);
+  if (watermark) return { version: 5, ...printSettings, watermark };
 }

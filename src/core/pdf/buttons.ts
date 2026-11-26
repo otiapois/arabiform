@@ -42,7 +42,7 @@ function usableAppearance(stream: unknown, checked: boolean): boolean {
 }
 
 function usableButton(target: WidgetTarget, normal: PDFDict, on: PDFName): boolean {
-  if (!target.usable || !(target.meta.width > 0 && target.meta.height > 0) || target.meta.rotation % 90 !== 0) return false;
+  if (!target.meta.usable || !(target.meta.width > 0 && target.meta.height > 0) || target.meta.rotation % 90 !== 0) return false;
   try {
     const unchecked = normal.lookup(off);
     const checked = normal.lookup(on);
