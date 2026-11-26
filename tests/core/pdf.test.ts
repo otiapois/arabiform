@@ -6,6 +6,7 @@ import { unzipSync } from 'fflate';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFTextField, TextAlignment } from 'pdf-lib';
 import { createAudit, createMergedPdf, createZip, inspectTemplate, preflightRow } from '../../src/core/pdf';
 import { createShaper } from '../../src/core/pdf/shaping';
+import { readRoster } from '../../src/core/roster';
 
 const key = PDFName.of;
 const assets = process.env.ARABIFORM_ASSET_ROOT ?? '.';
@@ -96,7 +97,7 @@ describe('PDF intake and fill', () => {
     const config = { fonts: await fonts(), minFontSize: 8, preferredFont: 'auto' as const };
     const source = await makeTemplate(8);
     const overflow = await preflightRow(source, { Name: 'سَلْمَى بِنْت يَاسِين', ID: '000007' }, config);
-    expect(overflow).toMatchObject({ status: 'flagged', diagnostics: [{ field: 'Name', code: 'too-narrow', widgetIndex: 1 }, { field: 'ID', code: 'exceeds-maxlen' }] });
+    expect(overflow).toMatchObject({ status: 'flagged', diagnostics: [{ field: 'Name', code: 'too-narrow', widgetIndex: 1 }, { field: 'ID', code: 'exceeds-maxlen', maxLengthExcess: 1 }] });
     expect(overflow.pdfBytes).toBeUndefined();
     expect((await preflightRow(source, { Name: ' ' }, config)).diagnostics).toEqual([{ field: 'Name', code: 'missing-required' }]);
   });
@@ -116,6 +117,49 @@ describe('PDF intake and fill', () => {
     expect(arabic.map((glyph) => glyph.id)).toEqual(native);
     expect(latin.at(-1)!.x).toBeLessThan(arabic[0]!.x);
   });
+
+  it('keeps number groups, phone punctuation, and paired brackets in visual order', async () => {
+    const bundled = await fonts();
+    const sans = fontkit.create(bundled.latin);
+    const naskh = fontkit.create(bundled.arabic);
+    const shaper = createShaper(bundled, 'auto');
+    const ids = (s: string, font = sans) => [...s].map((character) => font.glyphForCodePoint(character.codePointAt(0)!).id);
+    for (const [text, expectedLatin] of [
+      ['الطلب #00123 - Riyadh 2026', 'Riyadh2026-#00123'],
+      ['الطلب +966 50 012 3456', '+966500123456'],
+      ['(أحمد - 0045)', '(0045-)'],
+    ]) {
+      const shaped = shaper.line(text!)!;
+      expect(shaped.glyphs.filter((glyph) => glyph.font === 'latin').map((glyph) => glyph.id)).toEqual(ids(expectedLatin!));
+    }
+    const numbers = ids('١٢٣٤٥٦', naskh);
+    const indic = shaper.line('الطلب ١٢٣٤٥٦')!.glyphs.map((glyph) => glyph.id);
+    expect(indic.slice(0, numbers.length)).toEqual(numbers);
+  });
+
+  it('fails closed for unsupported directional controls and malformed Unicode', async () => {
+    const bundled = await fonts();
+    const source = await makeTemplate();
+    for (const Name of ['أحمد\u202e00123', 'ليلى\u2066ABC\u2069', 'ABC\u200d', 'ID\0X', 'ID\uD800']) {
+      const result = await preflightRow(source, { Name }, { fonts: bundled });
+      expect(result.status).toBe('flagged');
+      expect(result.pdfBytes).toBeUndefined();
+    }
+  });
+
+  it('applies the exact advertised font floor to a flagged roster row', async () => {
+    const source = await readFile(resolve(assets, 'fixtures/m2/landscape-badge.pdf'));
+    const [row] = (await readRoster(await readFile(resolve(assets, 'fixtures/m2/badge-roster.csv')), 'badge-roster.csv')).sheets[0]!.rows;
+    const bundled = await fonts();
+    const preview = await preflightRow(source, row!.values, { fonts: bundled });
+    expect(preview.status).toBe('flagged');
+    expect(preview.diagnostics).toEqual([{ field: 'Name', code: 'too-narrow', widgetIndex: 0, requiredFontSizePt: 7.58 }]);
+    const size = preview.diagnostics[0]!.requiredFontSizePt!;
+    const fixed = await preflightRow(source, row!.values, { fonts: bundled, minFontSize: size });
+    expect(fixed.status).toBe('pass');
+    expect((await PDFDocument.load(fixed.pdfBytes!)).getForm().getTextField('Name').getText()).toBe(row!.values.Name);
+    expect((await preflightRow(source, row!.values, { fonts: bundled, minFontSize: size + 0.01 })).status).toBe('flagged');
+  });
 });
 
 describe('batch exports', () => {
@@ -125,10 +169,14 @@ describe('batch exports', () => {
     const first = await preflightRow(source, { Name: 'بَنِي يَمَن' }, config);
     const second = await preflightRow(source, { Name: 'يُسْرَى مُؤْمِن' }, config);
     const rows = [{ filename: '00007-بَنِي.pdf', pdfBytes: first.pdfBytes! }, { filename: '00123-يُسْرَى.pdf', pdfBytes: second.pdfBytes! }];
-    const zipped = unzipSync(createZip(rows));
+    const zipProgress: [number, number][] = [];
+    const zipped = unzipSync(createZip(rows, (complete, total) => zipProgress.push([complete, total])));
     expect(Object.keys(zipped)).toEqual(rows.map((row) => row.filename));
     for (const row of rows) expect(zipped[row.filename]).toEqual(row.pdfBytes);
-    const merged = await PDFDocument.load(await createMergedPdf(rows));
+    expect(zipProgress).toEqual([[0, 2], [1, 2], [2, 2]]);
+    const mergeProgress: [number, number][] = [];
+    const merged = await PDFDocument.load(await createMergedPdf(rows, (complete, total) => mergeProgress.push([complete, total])));
+    expect(mergeProgress).toEqual(zipProgress);
     expect(merged.getPages().map((page) => page.getRotation().angle)).toEqual([0, 90, 0, 90]);
     expect(merged.catalog.has(key('AcroForm'))).toBe(false);
     expect(merged.getPages().every((page) => !page.node.Annots()?.size())).toBe(true);
@@ -140,5 +188,14 @@ describe('batch exports', () => {
     expect(report).toEqual(createAudit(rows));
     expect(JSON.parse(report.json)[0]).toMatchObject(rows[0]!);
     expect(report.csv).toContain("'=1+1.pdf");
+    expect(createAudit([{ ...rows[0]!, filename: '  ＋1+1.pdf' }]).csv).toContain("'  ＋1+1.pdf");
+  });
+
+  it('independently rejects unsafe or colliding ZIP entry names', () => {
+    const row = (filename: string) => ({ filename, pdfBytes: new Uint8Array() });
+    for (const name of ['../A.pdf', 'x\\A.pdf', 'COM1.txt.pdf', 'NUL .pdf', 'a\u200fb.pdf', '／foo.pdf', 'a'.repeat(300) + '.pdf']) {
+      expect(() => createZip([row(name)])).toThrow('invalid-export-filename');
+    }
+    expect(() => createZip([row('résumé.pdf'), row('RE\u0301SUME\u0301.PDF')])).toThrow('invalid-export-filename');
   });
 });

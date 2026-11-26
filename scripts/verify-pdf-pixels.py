@@ -2,6 +2,7 @@
 
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -139,13 +140,17 @@ def main():
     path = arguments.parse_args().manifest.resolve()
     manifest = json.loads(path.read_text(encoding="utf-8-sig"))
     assert manifest["cases"], "the pixel verification manifest has no cases"
+    for filename in {case["before"] for case in manifest["cases"]}:
+        sha256 = hashlib.sha256((path.parent / filename).read_bytes()).hexdigest()
+        assert filename == f"source-{sha256}.pdf", f"source snapshot hash changed: {filename}"
     results = [check_case(case, path.parent) for case in manifest["cases"]]
     merged = check_merged(manifest["merged"], path.parent) if "merged" in manifest else 0
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
-        "leadingZeros": manifest.get("leadingZeros", {}), "publicTemplates": manifest.get("publicTemplates", []),
+        "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
+        "publicTemplates": manifest.get("publicTemplates", []),
     }
     path.with_name(f"{path.stem}-verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{summary['engine']}: {len(results)} fills, {len(inks)} ink-bearing widgets, 0 clipped ink pixels, 0 changed pixels outside mapped widgets, {merged} identical merged pages.")

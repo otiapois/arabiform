@@ -1,6 +1,7 @@
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFString, PDFWidgetAnnotation } from 'pdf-lib';
-import { zipSync } from 'fflate';
+import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
+import { filenameKey, isSafePdfFilename } from '../roster/filenames';
 import { key, number, openTemplate, widgetFlags } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 
@@ -13,17 +14,38 @@ export interface AuditRow {
   fontSizes: Record<string, number[]>;
 }
 
-export function createZip(rows: readonly PdfExportRow[]): Uint8Array {
+type ExportProgress = (completed: number, total: number) => void;
+
+export function createZip(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Uint8Array {
   const filenames = new Set<string>();
   for (const { filename } of rows) {
-    const normalized = filename.normalize('NFC').toLowerCase();
-    if (!/^.+\.pdf$/iu.test(filename) || /^[.\s]/u.test(filename) || /[\\/:*?"<>|\p{Cc}]/u.test(filename) || filenames.has(normalized)) {
-      throw new Error('invalid-export-filename');
-    }
+    const normalized = filenameKey(filename);
+    if (!isSafePdfFilename(filename) || filenames.has(normalized)) throw new Error('invalid-export-filename');
     filenames.add(normalized);
   }
-  const mtime = new Date(Date.UTC(2000, 0, 1, 12));
-  return zipSync(Object.fromEntries(rows.map(({ filename, pdfBytes }) => [filename, [pdfBytes, { mtime }]])), { level: 0 });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const zip = new Zip((error, data) => {
+    if (error) throw error;
+    chunks.push(data);
+    size += data.length;
+  });
+  onProgress?.(0, rows.length);
+  for (const [index, { filename, pdfBytes }] of rows.entries()) {
+    const entry = new ZipPassThrough(filename);
+    entry.mtime = new Date(2000, 0, 1, 12);
+    zip.add(entry);
+    entry.push(pdfBytes, true);
+    onProgress?.(index + 1, rows.length);
+  }
+  zip.end();
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
 }
 
 function activeAppearance(widget: PDFDict) {
@@ -82,22 +104,28 @@ function flattenWidgets(doc: PDFDocument) {
   doc.catalog.delete(key('AcroForm'));
 }
 
-export async function createMergedPdf(rows: readonly PdfExportRow[]): Promise<Uint8Array> {
+export async function createMergedPdf(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Promise<Uint8Array> {
   if (!rows.length) throw new Error('empty-export');
   const merged = await PDFDocument.create();
-  for (const row of rows) {
+  onProgress?.(0, rows.length);
+  for (const [index, row] of rows.entries()) {
     const { doc: source } = await openTemplate(row.pdfBytes);
     flattenWidgets(source);
     const pages = await merged.copyPages(source, source.getPageIndices());
     for (const page of pages) merged.addPage(page);
+    onProgress?.(index + 1, rows.length);
   }
   return merged.save({ updateFieldAppearances: false });
+}
+
+function escapeSpreadsheetCell(value: string): string {
+  return /^[\t\r\n]|^[\s\p{Cc}\p{Cf}]*[=+\-@]/u.test(value.normalize('NFKC')) ? `'${value}` : value;
 }
 
 export function createAudit(rows: readonly AuditRow[]): { json: string; csv: string } {
   const ordered = rows.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => ({
     rowNumber, filename, status, diagnostics, fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),
   }));
-  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => [rowNumber, filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes)]);
-  return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields: ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'], data }, { escapeFormulae: true })}\r\n` };
+  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => [rowNumber, ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes)].map(escapeSpreadsheetCell)]);
+  return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields: ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'], data })}\r\n` };
 }
