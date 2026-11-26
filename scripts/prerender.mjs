@@ -30,11 +30,11 @@ const routes = [
     title: 'Arabic PDF Form Filler from CSV or Excel | ArabiForm',
     description: 'Fill AcroForm text fields with Arabic names, diacritics, and mixed-script IDs. Review the rendered PDF and fix flagged rows before exporting.',
     heading: 'Fill Arabic PDF forms with a roster',
-    summary: 'Put Arabic names, diacritics, and mixed Arabic and Latin text into interactive PDF fields. Inspect the rendered page and resolve any rows the template is too small to hold.',
-    guide: 'Review Arabic text in the PDF preview',
+    summary: 'Fill interactive PDF fields with Arabic and mixed-script text. The workbench measures the drawn letters and diacritics to catch clipping before export.',
+    guide: 'Why ink-bounds preflight matters',
     paragraphs: [
-      'Map the name and ID columns to their PDF fields. ArabiForm uses bundled Noto fonts and checks the rendered bounds of the text against the space in the field. Select a ready row to preview its filled page.',
-      'When the text exceeds the field limits, the workbench flags the row. Check the highlighted field, edit the text or adjust the minimum font size, and review the result before exporting.',
+      'Synthetic specimen: بَنِي يَمَن. The marks above the letters and strokes below the baseline take up space. ArabiForm shapes the text in bundled Noto fonts and checks the edges of the drawn letters and marks against the space inside each field.',
+      'Select the deliberately long name in the synthetic roster to see a field outlined in red. If the text fits at a smaller size within the supported range, the workbench shows the required size. Edit the value or adjust the minimum and check again. PDF exports include rows that pass.',
     ],
     faq: [
       ['Can I fill a name with tashkeel?', 'You can enter a name with diacritics, such as بَنِي يَمَن. Check the rendered PDF preview to see how it fits the field.'],
@@ -51,11 +51,11 @@ const routes = [
     title: 'دمج بيانات CSV وExcel في نماذج PDF | ArabiForm',
     description: 'املأ حقول نماذج PDF التفاعلية من جدول CSV أو Excel. عاين الأسماء العربية والأرقام قبل تصدير الملفات، وكل ذلك داخل متصفحك.',
     heading: 'املأ نماذج PDF من جدول بيانات',
-    summary: 'اربط أعمدة جدول CSV أو Excel بالحقول النصية في نموذج PDF. عاين الصفوف وراجع التنبيهات قبل تنزيل الملفات، وكل ذلك داخل متصفحك.',
-    guide: 'من الجدول إلى ملفات جاهزة للطباعة',
+    summary: 'اربط أعمدة جدول CSV أو Excel بالحقول النصية في نموذج PDF. يفحص المتصفح مساحة الحروف والتشكيل داخل الحقل قبل التنزيل.',
+    guide: 'لماذا نفحص حدود الحروف قبل التصدير؟',
     paragraphs: [
-      'اختر نموذج PDF تفاعليًا واربط كل حقل بالعمود المناسب في الجدول. يمكنك تجربة العينة الاصطناعية لمعاينة الأسماء العربية بالتشكيل ومعرّفات تبدأ بأصفار.',
-      'إذا ظهر تنبيه بأن النص يتجاوز حدود الحقل، فعدّل النص في الصف أو غيّر الحد الأدنى لحجم الخط وراجع المعاينة. يمكنك تنزيل ملفات الصفوف الجاهزة في أرشيف ZIP أو دمجها في ملف PDF واحد للطباعة.',
+      'من العينة الاصطناعية «بَنِي يَمَن». يشغل التشكيل فوق الحروف وأجزاء الحروف تحت السطر مساحةً داخل الحقل. يرسم ArabiForm النص بخطوط نوتو المضمّنة ويقارن حدود الحروف وعلامات التشكيل بمساحة الحقل المتاحة.',
+      'اختر الصف الذي يتعمّد عرض اسم طويل في العينة لترى الحقل محاطًا بإطار أحمر. إذا أمكن احتواء النص بحجم خط أصغر ضمن النطاق المدعوم، فسترى الحجم المطلوب. عدّل القيمة أو غيّر الحد الأدنى للحجم وأعد الفحص. تُصدَّر ملفات PDF للصفوف التي تجتاز الفحص.',
     ],
     faq: [
       ['هل تُرفع ملفاتي إلى خادم؟', 'تُقرأ ملفات النموذج والجدول وتُعالج داخل متصفحك. تُنزَّل النتائج من المتصفح بعد التصدير.'],
