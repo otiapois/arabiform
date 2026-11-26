@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import fontkit from '@pdf-lib/fontkit';
+import Papa from 'papaparse';
 import { describe, expect, it } from 'vitest';
 import { unzipSync } from 'fflate';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFTextField, TextAlignment } from 'pdf-lib';
-import { createAudit, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow } from '../../src/core/pdf';
+import { createAudit, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type FieldDiagnostic } from '../../src/core/pdf';
 import { createShaper } from '../../src/core/pdf/shaping';
 import { readRoster } from '../../src/core/roster';
 
@@ -189,6 +190,20 @@ describe('batch exports', () => {
     expect(JSON.parse(report.json)[0]).toMatchObject(rows[0]!);
     expect(report.csv).toContain("'=1+1.pdf");
     expect(createAudit([{ ...rows[0]!, filename: '  ＋1+1.pdf' }]).csv).toContain("'  ＋1+1.pdf");
+  });
+
+  it('keeps diagnostic page numbers available to the preview without exporting them in the audit', () => {
+    const expected = [
+      { field: 'Name', code: 'too-narrow', widgetIndex: 1, requiredFontSizePt: 7.58 },
+      { field: 'ID', code: 'exceeds-maxlen', maxLengthExcess: 1 },
+      { field: 'Clinic', code: 'invalid-choice', choices: [{ value: 'RIY', label: 'عِيَادَةُ الرِّيَاضِ' }] },
+    ] satisfies Omit<FieldDiagnostic, 'pageNumbers'>[];
+    const diagnostics = expected.map((issue, index) => ({ ...issue, pageNumbers: [index + 1] }));
+    const report = createAudit([{ rowNumber: 1, filename: '00123.pdf', status: 'flagged', diagnostics, fontSizes: {} }]);
+    const csv = Papa.parse<{ diagnostics: string }>(report.csv, { header: true }).data[0]!;
+    expect(JSON.parse(report.json)[0].diagnostics).toEqual(expected);
+    expect(JSON.parse(csv.diagnostics)).toEqual(expected);
+    expect(diagnostics.map(({ pageNumbers }) => pageNumbers)).toEqual([[1], [2], [3]]);
   });
 
   it('independently rejects unsafe or colliding ZIP entry names', () => {

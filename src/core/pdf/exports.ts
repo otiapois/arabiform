@@ -141,7 +141,9 @@ function escapeSpreadsheetCell(value: string): string {
 
 export function createAudit(rows: readonly AuditRow[]): { json: string; csv: string } {
   const ordered = rows.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => ({
-    rowNumber, filename, status, diagnostics, fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),
+    rowNumber, filename, status,
+    diagnostics: diagnostics.map(({ pageNumbers, ...issue }) => issue),
+    fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),
   }));
   const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => [rowNumber, ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes)].map(escapeSpreadsheetCell)]);
   return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields: ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'], data })}\r\n` };
