@@ -26,8 +26,17 @@ const copy = {
 for (const language of ['en', 'ar'] as const) {
   test('M5 ' + language + ' previews adjusted names, cancels a keyboard edit and verifies the actual downloads', async ({ page }, info) => {
     const text = copy[language];
+    const paths: string[] = [];
+    page.on('request', request => paths.push(new URL(request.url()).pathname));
     await page.goto(language === 'en' ? '/' : '/ar/pdf-mail-merge');
     await expect(page.locator('html')).toHaveAttribute('dir', language === 'en' ? 'ltr' : 'rtl');
+    await expect(page.getByTestId('pdf-upload')).toBeAttached();
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const idlePaths = [...paths];
+    expect(idlePaths.filter(path => /\/assets\/(fonts|pdf|PdfPreview|batch\.worker|pdf\.worker\.min)-/.test(path))).toEqual([]);
+    const displayFont = '/fonts/NotoNaskhArabic-Regular.ttf';
+    if (language === 'ar') expect(idlePaths).toContain(displayFont);
+    else expect(idlePaths.filter(path => path.startsWith('/fonts/'))).toEqual([]);
     await page.getByTestId('pdf-upload').setInputFiles(golden('template.pdf'));
     await page.locator('.pattern-input').fill('{{Record}}.pdf');
     const checkbox = page.getByTestId('flatten-zip');
@@ -49,6 +58,7 @@ for (const language of ['en', 'ar'] as const) {
     const counts = page.locator('.queue dl[aria-live="polite"]');
     await expect(counts.getByTestId('ready-count')).toHaveText('5');
     await expect(counts.getByTestId('flagged-count')).toHaveText('0');
+    expect(paths.some(path => /\/assets\/fonts-.*\.js$/.test(path))).toBe(true);
 
     const rows = page.getByTestId('queue-row');
     const filenames = rows.locator('.filename');
@@ -135,7 +145,7 @@ for (const language of ['en', 'ar'] as const) {
     expect(csv.errors).toEqual([]);
     expect(csv.meta.fields).toEqual(keys);
     expect(csv.data.map(row => row.filename)).toEqual(displayed);
-    await writeFile(info.outputPath('m5-checks.json'), JSON.stringify({ displayed, ring, labelGap }, null, 2));
+    await writeFile(info.outputPath('m5-checks.json'), JSON.stringify({ idlePaths, displayed, ring, labelGap }, null, 2));
     await noOverflow(page);
   });
 }
