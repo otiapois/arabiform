@@ -67,21 +67,23 @@
 
 ## 复跑
 
-使用锁文件对应的 D 盘依赖与系统 Edge。在项目根目录执行下列 PowerShell 命令。将 `ARABIFORM_PUBLIC_TEMPLATES` 指向已按上述 SHA-256 核对的四个空白表目录，才能复现全部 18 次填充。临时文件、npm 缓存及运行结果均位于 D 盘。M2 截图仅在显式设置捕获变量时写入。
+使用锁文件对应的 D 盘依赖与系统 Edge，在项目根目录执行下列 PowerShell 命令。默认验证仓库内的 M1、M2 合成模板。若要复现全部 18 次填充，把四份官方空白表保存到 D 盘，启用下方标注的两行并核对 SHA-256。需要重新拍图时将 `ARABIFORM_CAPTURE_M2_SCREENSHOTS` 设为 `1`。
 
 ```powershell
-$qaRoot = 'D:\workspace\vibe_coding\sites\.arabiform-wt'
+$qaRoot = Join-Path (Get-Location).Path 'test-results\m2-replay'
 $env:TEMP = Join-Path $qaRoot 'tmp'
 $env:TMP = $env:TEMP
 $env:npm_config_cache = Join-Path $qaRoot 'npm-cache'
-$env:ARABIFORM_PUBLIC_TEMPLATES = Join-Path $qaRoot 'templates'
+New-Item -ItemType Directory -Force -Path $env:TEMP, $env:npm_config_cache | Out-Null
+$env:ARABIFORM_PUBLIC_TEMPLATES = ''
+# $env:ARABIFORM_PUBLIC_TEMPLATES = Join-Path (Get-Location).Path 'test-results\public-templates'
+# node scripts/verify-public-templates.mjs $env:ARABIFORM_PUBLIC_TEMPLATES
 $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
 $env:ARABIFORM_E2E_PORT = '4187'
 $env:ARABIFORM_CAPTURE_SCREENSHOTS = '0'
-$env:ARABIFORM_CAPTURE_M2_SCREENSHOTS = '1'
+$env:ARABIFORM_CAPTURE_M2_SCREENSHOTS = '0'
 $env:PATH = 'C:\Program Files\nodejs;' + $env:PATH
 $npm = 'C:\Program Files\nodejs\npm.cmd'
-node scripts/verify-public-templates.mjs $env:ARABIFORM_PUBLIC_TEMPLATES
 & $npm run typecheck
 & $npm test
 & $npm run test:fuzz
@@ -93,4 +95,10 @@ node scripts/verify-public-templates.mjs $env:ARABIFORM_PUBLIC_TEMPLATES
 
 上述七条 npm 命令均返回 0。Vitest 23/23（含四项模糊测试），17 个跟踪夹具重新生成后逐字节相同，构建产出 5 个静态 HTML，Edge 22/22（约 2.2 分钟）。附加运行 `npm run test:fuzz -- --reporter=verbose --disableConsoleIntercept` 可看到实际通过与标记数。Windows 沙箱内首次像素命令在 tsx 查询用户信息时收到 `uv_os_get_passwd ENOMEM`，同一命令在批准的本机范围内用同组 D 盘输入通过。
 
-每次复跑会在忽略目录 `test-results/e2e/<场景>/` 写入网络日志 `runtime.json`、计时 `batch-200.json` 或取消记录 `cancellation.json`。浏览器下载与逐页比对在同一场景目录，核心 4 倍像素明细在 `test-results/pdf-pixels/manifest-verification.json`。Vite 提示部分字体及 PDF 模块超过 500 kB。证据范围限于此次模板、已安装的 Edge 和两个视口。尚未验证移动真机、物理打印、阿语母语校订、远端 CI 或生产域名。此次验收未发布站点。
+网络日志 `runtime.json`、计时 `batch-200.json` 和取消记录 `cancellation.json` 是 `test-results/e2e/<场景>/` 下的阶段产物。核心 4 倍像素明细写入 `test-results/pdf-pixels/manifest-verification.json`。Vite 提示部分字体及 PDF 模块超过 500 kB。证据范围限于此次模板、已安装的 Edge 和两个视口。尚未验证移动真机、物理打印、阿语母语校订、远端 CI 或生产域名。此次验收未发布站点。
+
+## 主线复跑与交付
+
+在 `main` 的 `73442e9334aef1ff6df1f14bb005999e8fcfee72` 复跑七项检查，均退出码 0。Edge 22/22 用时 3.4 分钟，结束后 4195 回环监听已释放。主线同样对四份公开空白表和库内夹具进行了 4 倍核验，共 18 次填充、59 个有墨迹的控件，裁切和字段外变动为 0。主线复跑后只合入报告、README 和经验文档。
+
+四个临时工作树及 `.arabiform-wt` 已清理。M1 验收报告、原有截图和 E2E 场景经 Git 比较一致。新截图、演示稿和 CI 配置在主仓库交付。[20 秒英阿演示稿](../launch/demo-walkthrough.md)
