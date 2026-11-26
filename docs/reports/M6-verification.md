@@ -52,3 +52,7 @@
 Lead 在 Edge 运行前后核对了 dist 的 31 个文件，内容指纹均为 `2037ab70c795bec84df78348854f292fa4837b86a44cd6eec918c62be9ac4378`，其修改时间也一致。完整 Edge 日志以 `58 passed (4.7m)` 结束，Playwright 的 `.last-run.json` 为 `passed`，失败列表为空。PowerShell 将 Node 的 `NO_COLOR` 警告从 stderr 合流后，整段日志收集命令返回 1，当次没有单独保存 npm 原生退出码。同一外壳中，一个原生退出 0 的程序仅写入一行 stderr 就能复现该返回值。浏览器结果取自 Playwright 本身及 58 份收据。
 
 Worker A 记录了默认 5 秒的 strict-origin 子进程检查在并行验收期间超时。对该项单独设置 15 秒后，核心工作树串行全套通过，最终主线的 59 项也全部通过。两项 M6 经验各计一次，已有两条达三次的经验此前均已纳入代码标准。[经验记录](../../LESSONS.md) · [代码标准](../code-standards.md)
+
+## 主线交付
+
+四个 M6 临时工作树及其 D 盘临时缓存均已清理。Git 回读只登记 `main` 主工作树。
