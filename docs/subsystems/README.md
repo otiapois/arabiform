@@ -2,7 +2,7 @@
 
 | Subsystem | Scope | Contract |
 | --- | --- | --- |
-| PDF & Font Shaping Engine (`src/core/pdf/`) | AcroForm inspection, text and checkbox mapping, dropdown and radio choices, bundled and local font shaping and ink bounds, mixed-widget preservation, editable and flattened PDF exports, roundtrip readback | [pdf-engine.md](pdf-engine.md) |
-| Browser Batch Worker (`src/core/worker/`) | Local preflight and export jobs, row progress, cancellation, and stale-result isolation | [pdf-engine.md](pdf-engine.md) |
+| PDF & Font Shaping Engine (`src/core/pdf/`) | AcroForm inspection, text and checkbox mapping, dropdown and radio choices, bundled and local font shaping and ink bounds, mixed-widget preservation, editable and flattened PDF exports, optional print manifest, roundtrip readback | [pdf-engine.md](pdf-engine.md) |
+| Browser Batch Worker (`src/core/worker/`) | Local preflight and export jobs, retained batch results for the cover, row progress, cancellation, and stale-result isolation | [pdf-engine.md](pdf-engine.md) |
 | Roster Ingestion & Auto-Mapping (`src/core/roster/`) | CSV (`papaparse`) and XLSX ingestion, encoding and leading-zero preservation, spreadsheet source warnings, auto-mapping and safe filenames | [roster-mapper.md](roster-mapper.md) |
-| Local Workbench, Live PDF Preview & Static SEO (`src/web/`) | Browser-local workbench, `pdfjs-dist` raster preview with flagged-page navigation, inline row fixes, JSON mapping presets, five static routes, production CSP, Playwright Edge E2E | [web-preview-seo.md](web-preview-seo.md) |
+| Local Workbench, Live PDF Preview & Static SEO (`src/web/`) | Browser-local workbench, `pdfjs-dist` raster preview with flagged-page navigation, row fixes and batch font-size suggestions, versioned JSON mapping presets, synthetic workflows and ink-bounds specimen, five static routes, production CSP, Playwright Edge E2E | [web-preview-seo.md](web-preview-seo.md) |
