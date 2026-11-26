@@ -64,15 +64,18 @@ def appearance_xref(document, widget):
 def check_case(case, directory):
     before_path, after_path = (directory / case[key] for key in ("before", "after"))
     expected = case["values"]
+    checkboxes = case.get("checkboxes", {})
     label = case.get("label", after_path.name)
     seen = Counter()
     results = []
+    if case.get("customFont"):
+        fitz.TOOLS.mupdf_warnings(reset=True)
     with fitz.open(before_path) as original, fitz.open(after_path) as filled, fitz.open(after_path) as no_text:
         assert len(original) == len(filled), label
         edited = set()
         for page in filled:
             for widget in page.widgets():
-                if widget.field_name not in expected:
+                if widget.field_name not in expected or widget.field_name in checkboxes:
                     continue
                 xref = appearance_xref(filled, widget)
                 if xref in edited:
@@ -97,14 +100,30 @@ def check_case(case, directory):
                     assert old_widget.field_name == field and old_widget.rect == widget.rect, label
                     if field not in expected:
                         assert widget.field_value == old_widget.field_value, f"{label}: unmapped {field} /V changed"
-                        assert filled.xref_get_key(widget.xref, "AP") == original.xref_get_key(old_widget.xref, "AP"), f"{label}: unmapped {field} /AP changed"
+                        for key in ("V", "AS", "AP"):
+                            assert filled.xref_get_key(widget.xref, key) == original.xref_get_key(old_widget.xref, key), (
+                                f"{label}: unmapped {field} /{key} changed"
+                            )
                         continue
                     seen[field] += 1
-                    assert (widget.field_value or "") == expected[field], (label, field, widget.field_value, expected[field])
                     mapped = (widget.rect * page.rotation_matrix * SCALE).irect
                     box = (max(0, mapped.x0), max(0, mapped.y0), min(after[0], mapped.x1), min(after[1], mapped.y1))
                     assert box[2] > box[0] and box[3] > box[1], (label, field, box)
                     allowed.append(box)
+                    if field in checkboxes:
+                        state = checkboxes[field]
+                        assert filled.xref_get_key(widget.xref, "AS") == ("name", f"/{state}"), (label, field, "invalid /AS")
+                        assert filled.xref_get_key(widget.xref, "AP") == original.xref_get_key(old_widget.xref, "AP"), (
+                            f"{label}: checkbox {field} /AP changed"
+                        )
+                        bounds, amount = ink_bounds(before, after, box)
+                        inset = min(bounds[0] - box[0], bounds[1] - box[1], box[2] - bounds[2], box[3] - bounds[3]) if amount else None
+                        if filled.xref_get_key(widget.xref, "AS") != original.xref_get_key(old_widget.xref, "AS"):
+                            assert amount and inset >= 3, (label, field, "checkbox state changed without visible inset ink", box)
+                        results.append({"field": field, "page": page.number + 1, "checkboxState": state,
+                                        "inkBboxAt4x": bounds if amount else None, "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset})
+                        continue
+                    assert (widget.field_value or "") == expected[field], (label, field, widget.field_value, expected[field])
                     bounds, amount = ink_bounds(text_only_baseline, after, box)
                     if expected[field].strip():
                         assert amount, f"{label}: {field} has no visible ink"
@@ -117,6 +136,9 @@ def check_case(case, directory):
                 assert_same_outside(before, after, allowed, f"{label} page {page.number + 1}")
                 assert_same_outside(text_only_baseline, after, allowed, f"{label} text on page {page.number + 1}")
     assert set(seen) == set(expected), (label, seen, list(expected))
+    if case.get("customFont"):
+        warnings = fitz.TOOLS.mupdf_warnings(reset=True)
+        assert not warnings, f"{label}: MuPDF emitted font or appearance warnings: {warnings}"
     return {"label": label, "outsideMappedWidgetChangedPixels": 0, "clippedInkPixels": 0, "widgets": results}
 
 
@@ -146,7 +168,7 @@ def main():
             sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
             assert source.name == f"source-{sha256}.pdf", f"source snapshot hash changed: {filename}"
     results = [check_case(case, path.parent) for case in manifest["cases"]]
-    merged = check_merged(manifest["merged"], path.parent) if "merged" in manifest else 0
+    merged = sum(check_merged(manifest[key], path.parent) for key in ("merged", "mixedMerged") if manifest.get(key))
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,

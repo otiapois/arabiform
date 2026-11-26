@@ -33,8 +33,28 @@ describe('roster ingest', () => {
     const { sheets: [sheet] } = await readRoster(xlsx, 'roster.xlsx');
     expect(sheet!.rows).toEqual([
       { values: { ID: '00007', Name: 'بَنِي يَمَن\n&#10;' }, warnings: [] },
-      { values: { ID: '123', Name: '' }, warnings: [{ column: 'ID', code: 'excel-numeric-identifier-warning' }] },
-      { values: { ID: '1.23457E+11', Name: '' }, warnings: [{ column: 'ID', code: 'excel-scientific-notation-warning' }] },
+      { values: { ID: '123', Name: '' }, warnings: [{ column: 'ID', source: { row: 3, column: 'A' }, code: 'excel-numeric-identifier-warning' }] },
+      { values: { ID: '1.23457E+11', Name: '' }, warnings: [{ column: 'ID', source: { row: 4, column: 'A' }, code: 'excel-scientific-notation-warning' }] },
+    ]);
+  });
+
+  it('keeps cached formula values as source data and independently warns at exact source coordinates', async () => {
+    const parts = {
+      'xl/workbook.xml': '<workbook xmlns:r="urn:r"><sheets><sheet name="Consent" r:id="rId1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/custom.xml" Type="urn:/worksheet"/></Relationships>',
+      'xl/worksheets/custom.xml': '<worksheet><sheetData><row r="3"><c r="A3" t="inlineStr"><is><t>ID</t></is></c><c r="B3" t="inlineStr"><is><t>Approval</t></is></c></row><row r="8"><c r="A8"><f>7^40</f><v>1.23457E+11</v></c><c r="B8" t="b"><f>1=1</f><v>0</v></c></row><row r="12"><c r="B12"><f t="shared" si="0"/></c></row></sheetData></worksheet>',
+    };
+    const xlsx = zipSync(Object.fromEntries(Object.entries(parts).map(([name, xml]) => [name, strToU8(xml)])));
+    const { sheets: [sheet] } = await readRoster(xlsx, 'consent.xlsx');
+    expect(sheet!.rows).toEqual([
+      { values: { ID: '1.23457E+11', Approval: '0' }, warnings: [
+        { column: 'ID', source: { row: 8, column: 'A' }, code: 'excel-scientific-notation-warning' },
+        { column: 'ID', source: { row: 8, column: 'A' }, code: 'excel-formula-warning', formulaHasCachedValue: true },
+        { column: 'Approval', source: { row: 8, column: 'B' }, code: 'excel-formula-warning', formulaHasCachedValue: true },
+      ] },
+      { values: { ID: '', Approval: '' }, warnings: [
+        { column: 'Approval', source: { row: 12, column: 'B' }, code: 'excel-formula-warning', formulaHasCachedValue: false },
+      ] },
     ]);
   });
 });

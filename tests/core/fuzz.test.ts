@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
-import { createAudit, createZip, preflightRow } from '../../src/core/pdf';
+import { createAudit, createZip, inspectCustomFont, preflightRow } from '../../src/core/pdf';
 import { makeFilenames, readRoster } from '../../src/core/roster';
 
 const seed = 0x4a216d32;
@@ -168,6 +168,63 @@ describe('seeded adversarial files and PDF geometry', () => {
     }), 280);
     expect(passed).toBeGreaterThan(40);
     expect(flagged).toBeGreaterThan(40);
-    console.info(`fast-check seed ${seed}: 1160 generated cases, 0 discarded, 280 PDF fills (${passed} passed, ${flagged} flagged).`);
+    console.info(`fast-check seed ${seed}: 1160 M1/M2 cases, 0 discarded, 280 PDF fills (${passed} passed, ${flagged} flagged).`);
   }, 90_000);
+
+  it('rejects 460 malformed custom font containers', async () => {
+    const valid = await readFile(resolve(process.env.ARABIFORM_ASSET_ROOT ?? '.', 'public/fonts/NotoSans-Regular.ttf'));
+    await verify(fc.asyncProperty(fc.uint8Array({ maxLength: 400 }), fc.integer({ min: 0, max: valid.length - 4 }), fc.nat(), async (noise, length, corruption) => {
+      const bytes = corruption % 3 === 0 ? noise : Uint8Array.from(valid.subarray(0, length));
+      if (bytes.length >= 12 && corruption % 3 === 1) new DataView(bytes.buffer).setUint16(4, 0xffff);
+      if (bytes.length >= 28 && corruption % 3 === 2) new DataView(bytes.buffer).setUint32(20, 0xfffffff0);
+      expect(() => inspectCustomFont(bytes)).toThrow('invalid-custom-font');
+    }), 460);
+  });
+
+  it('checks 520 mapped checkbox cells with mixed spellings, blank values and unrecognized tokens', async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage();
+    const field = source.getForm().createCheckBox('Consent');
+    for (const x of [30, 80]) field.addToPage(page, { x, y: 50 });
+    const template = await source.save();
+    const blank = new Uint8Array();
+    const fonts = { arabic: blank, latin: blank };
+    const tokens = fc.oneof(
+      fc.constantFrom('true', 'yes', '1', 'x', 'نعم').map((token) => ({ token, expected: '/Yes' })),
+      fc.constantFrom('false', 'no', '0', '', 'لا').map((token) => ({ token, expected: '/Off' })),
+      mixedText.map((token) => ({ token: `?${token}`, expected: undefined })),
+    );
+    await verify(fc.asyncProperty(tokens, fc.boolean(), fc.constantFrom('', ' ', '\t', '\r\n', '\u00a0'), async ({ token, expected }, upper, padding) => {
+      // Checkbox-only rows never need to parse or embed bundled text fonts.
+      const result = await preflightRow(template, { Consent: padding + (upper ? token.toUpperCase() : token) + padding }, { fonts });
+      if (!expected) {
+        expect(result.diagnostics).toEqual([{ field: 'Consent', code: 'invalid-checkbox-value' }]);
+        expect(result.pdfBytes).toBeUndefined();
+        return;
+      }
+      expect(result.diagnostics).toEqual([]);
+      const document = await PDFDocument.load(result.pdfBytes!);
+      const checkbox = document.getForm().getCheckBox('Consent').acroField;
+      expect(checkbox.dict.get(key('V'))?.toString()).toBe(expected);
+      expect(checkbox.getWidgets().map(({ dict }) => dict.get(key('AS'))?.toString())).toEqual([expected, expected]);
+    }), 520);
+  }, 60_000);
+
+  it('flags 420 custom Latin font rows containing missing Arabic glyphs', async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage();
+    source.getForm().createTextField('Name').addToPage(page, { x: 30, y: 50, width: 250, height: 30 });
+    const template = await source.save();
+    const customFont = await readFile(resolve(process.env.ARABIFORM_ASSET_ROOT ?? '.', 'public/fonts/NotoSans-Regular.ttf'));
+    const fonts = { arabic: customFont, latin: customFont };
+    const name = fc.array(fc.constantFrom('نَ', 'ي', 'مُ', 'بَ', 'سّ', 'ى', 'ل', 'ر', 'ا'), { minLength: 1, maxLength: 12 }).map((letters) => letters.join(''));
+    await verify(fc.asyncProperty(name, fc.nat({ max: 9999 }), fc.boolean(), async (arabic, id, reversed) => {
+      const latin = `#${String(id).padStart(5, '0')} Alex`;
+      const value = reversed ? `${latin} (${arabic})` : `${arabic} ${latin}`;
+      const result = await preflightRow(template, { Name: value }, { fonts, customFont });
+      expect(result.diagnostics).toEqual([{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0 }]);
+      expect(result.pdfBytes).toBeUndefined();
+    }), 420);
+    console.info(`fast-check seed ${seed}: 1400 M3 font and checkbox cases, 2560 total cases, 0 discarded.`);
+  }, 60_000);
 });
