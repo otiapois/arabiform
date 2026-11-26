@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { matchChoice } from '../core/pdf/choice-match';
+import { choiceText, editableChoices } from './Choices';
 import { Diagnostics, diagnosticText, safeRowMinSize } from './Diagnostics';
 import { Filename } from './Filename';
 import { fillLabel, type translator } from './labels';
-import type { RowFilter, useWorkbench } from './useWorkbench';
+import type { RowFilter, TemplateInfo, useWorkbench } from './useWorkbench';
 
 type QueueProps = {
   desk: ReturnType<typeof useWorkbench>;
@@ -26,6 +28,17 @@ export function Queue({ desk, language }: QueueProps) {
   const [pageIndex, setPageIndex] = useState(0);
   const row = desk.rows[desk.selected];
   const result = desk.results?.[desk.selected];
+  const fieldsByColumn = useMemo(() => {
+    const fields = new Map<string, TemplateInfo['fields'][number] | undefined>();
+    for (const field of desk.fields) {
+      const column = desk.mapping[field.name];
+      if (column) fields.set(column, fields.has(column) ? undefined : field);
+    }
+    return fields;
+  }, [desk.mapping, desk.fields]);
+  const invalidChoiceColumns = new Set(result?.diagnostics
+    .filter(({ code }) => code === 'invalid-choice')
+    .map(({ field }) => desk.mapping[field]));
   const safeSize = result?.status === 'flagged' ? safeRowMinSize(result.diagnostics, desk.minFontSize) : undefined;
   const searchIndex = useMemo(() => desk.rows.map(({ values }, i) =>
     searchable([desk.filenames[i] ?? '', ...Object.values(values)].join('\0'))), [desk.rows, desk.filenames]);
@@ -121,7 +134,7 @@ export function Queue({ desk, language }: QueueProps) {
                             className="row-link"
                             aria-label={fillLabel(labels.showRow, { row: index + 1 })}
                             aria-pressed={desk.selected === index}
-                            onClick={() => { desk.setSelected(index); setEditing(false); }}
+                            onClick={() => { desk.selectRow(index); setEditing(false); }}
                           >
                             {String(index + 1).padStart(2, '0')}
                           </button>
@@ -205,19 +218,50 @@ export function Queue({ desk, language }: QueueProps) {
                     </ul>
                   </div>
                 )}
-                <div id="edit-cells" className="edit-cells" hidden={!editing}>
-                  {desk.sheet?.headers.map((column) => (
-                    <label key={column}>
-                      <bdi>{column}</bdi>
-                      <textarea
-                        dir="auto"
-                        rows={2}
-                        data-testid="roster-cell"
-                        value={row.values[column] ?? ''}
-                        onChange={(event) => desk.editCell(desk.selected, column, event.currentTarget.value)}
-                      />
-                    </label>
-                  ))}
+                <div id="edit-cells" className="edit-cells" hidden={!editing && invalidChoiceColumns.size === 0}>
+                  {desk.sheet?.headers.map((column) => {
+                    const invalid = invalidChoiceColumns.has(column);
+                    if (!editing && !invalid) return null;
+                    const value = row.values[column] ?? '';
+                    const choices = fieldsByColumn.get(column)?.choices ?? [];
+                    const options = editableChoices(choices);
+                    const match = matchChoice(choices, value);
+                    const current = options.find(({ index }) => index === match);
+                    return (
+                      <label key={column}>
+                        <bdi>{column}</bdi>
+                        {options.length
+                          ? (
+                            <select
+                              dir="auto"
+                              data-testid="roster-choice"
+                              data-roster-column={column}
+                              aria-invalid={invalid || undefined}
+                              value={current?.input ?? value}
+                              onChange={(event) => {
+                                setEditing(true);
+                                desk.editCell(desk.selected, column, event.currentTarget.value);
+                              }}
+                            >
+                              {!current && <option value={value} disabled>{value || labels.blankChoice}</option>}
+                              {options.map(({ choice, input }) => (
+                                <option key={input} value={input}>{choiceText(choice, labels.blankChoice)}</option>
+                              ))}
+                            </select>
+                          )
+                          : (
+                            <textarea
+                              dir="auto"
+                              rows={2}
+                              data-testid="roster-cell"
+                              aria-invalid={invalid || undefined}
+                              value={value}
+                              onChange={(event) => desk.editCell(desk.selected, column, event.currentTarget.value)}
+                            />
+                          )}
+                      </label>
+                    );
+                  })}
                 </div>
               </section>
             )}

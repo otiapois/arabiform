@@ -32,23 +32,25 @@ export function useWorkbench() {
   });
   const [edits, setEdits] = useState<Record<number, Record<string, string>>>({});
   const [selected, setSelected] = useState(0);
+  const [requestedPage, setRequestedPage] = useState<number>();
   const [filter, setFilter] = useState<RowFilter>('all');
   const [minFontSize, setMinFontSize] = useState(8);
   const [font, setFont] = useState<FontMode>('auto');
   const [customFont, setCustomFont] = useState<CustomFont>();
   const [pattern, setPattern] = useState('{{ID}}-{{Name}}.pdf');
+  const [flattenZip, setFlattenZip] = useState(false);
   const [presetError, setPresetError] = useState(false);
 
   const sheet = roster?.data.sheets[sheetIndex];
   const templateFields = template?.info.fields ?? emptyFields;
   const fields = useMemo(() => templateFields.filter((field) =>
-    !field.readOnly && (field.kind === 'text' || field.kind === 'checkbox')),
+    !field.readOnly && (field.kind === 'text' || field.kind === 'checkbox' || Boolean(field.choices?.length))),
   [templateFields]);
   const mapping = useMemo(() => {
-    const names = fields.map((field) => field.name);
     const headers = sheet?.headers ?? [];
-    const auto = mappingSettings.fromPreset ? undefined : roster?.engine.autoMap(names, headers);
-    const entries = names.map((field) => {
+    const autoNames = fields.filter(({ kind }) => kind === 'text' || kind === 'checkbox').map(({ name }) => name);
+    const auto = mappingSettings.fromPreset ? undefined : roster?.engine.autoMap(autoNames, headers);
+    const entries = fields.map(({ name: field }) => {
       const column = Object.hasOwn(mappingSettings.values, field) ? mappingSettings.values[field] : auto?.[field];
       return [field, column && headers.includes(column) ? column : ''] as const;
     });
@@ -76,13 +78,30 @@ export function useWorkbench() {
     ? { template: template.bytes, rows, mapping, minFontSize, font, customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
     : null, [template, rows, mapping, minFontSize, font, customFont, hasMapping, fontBlocked]);
   const filenames = useMemo(() => roster?.engine.makeFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
-  const { invalidate, changeFilenames, download, ...job } = useBatch(batch, selected);
+  const { invalidate, changeFilenames, clearExportError, download, cancel, ...job } = useBatch(batch, selected);
   const ready = useMemo(() => job.results?.filter(({ status }) => status === 'pass').length ?? 0, [job.results]);
   const warningRows = useMemo(() => rows.filter((row) => row.warnings.length > 0).length, [rows]);
+  const firstFlaggedPage = job.results?.[selected]?.pageNumbers[0];
+  const previewPage = requestedPage ?? firstFlaggedPage ?? 1;
+
+  function selectRow(index: number) {
+    setSelected(index);
+    setRequestedPage(job.results ? job.results[index]?.pageNumbers[0] ?? previewPage : undefined);
+  }
+
+  function retainPreviewPage() {
+    if (requestedPage === undefined && firstFlaggedPage !== undefined) setRequestedPage(firstFlaggedPage);
+  }
+
+  function recheck() {
+    retainPreviewPage();
+    invalidate();
+  }
 
   function resetRows() {
     setSheetIndex(0);
     setSelected(0);
+    setRequestedPage(undefined);
     setFilter('all');
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setEdits({});
@@ -92,6 +111,7 @@ export function useWorkbench() {
     const id = ++request.current.pdf;
     invalidate(true);
     setTemplate(undefined);
+    setRequestedPage(undefined);
     setSynthetic(false);
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setErrors((current) => ({ ...current, pdf: undefined }));
@@ -170,33 +190,33 @@ export function useWorkbench() {
   }
 
   function changeMapping(field: string, column: string) {
-    invalidate();
+    recheck();
     setMappingSettings((current) => ({ ...current, values: { ...current.values, [field]: column } }));
   }
 
   function resetMapping() {
-    invalidate();
+    recheck();
     setMappingSettings({ fromPreset: false, values: {} });
   }
 
   function editCell(row: number, column: string, value: string) {
-    invalidate();
+    recheck();
     setEdits((current) => ({ ...current, [row]: { ...current[row], [column]: value } }));
   }
 
   function changeSize(size: number) {
-    invalidate();
+    recheck();
     setMinFontSize(size);
   }
 
   function changeFont(value: FontMode) {
-    invalidate();
+    recheck();
     setFont(value);
   }
 
   async function loadCustomFont(file: File) {
     const id = ++request.current.customFont;
-    invalidate();
+    recheck();
     setCustomFont({ status: 'loading' });
     try {
       if (!/\.(?:ttf|otf)$/i.test(file.name)) throw new Error('invalid-custom-font');
@@ -217,13 +237,18 @@ export function useWorkbench() {
 
   function clearCustomFont() {
     request.current.customFont++;
-    invalidate();
+    recheck();
     setCustomFont(undefined);
   }
 
   function changePattern(value: string) {
     changeFilenames();
     setPattern(value);
+  }
+
+  function changeFlattenZip(value: boolean) {
+    clearExportError();
+    setFlattenZip(value);
   }
 
   async function importPreset(file: File) {
@@ -234,27 +259,37 @@ export function useWorkbench() {
       const preset = parseMappingPreset(await file.text());
       if (id !== request.current.preset) return;
       if (customFontId === request.current.customFont) clearCustomFont();
-      else invalidate();
+      else recheck();
       setMappingSettings({ fromPreset: true, values: preset.mapping });
       setPattern(preset.filenamePattern);
       setMinFontSize(preset.minFontSize);
       setFont(preset.font);
+      setFlattenZip(preset.version === 2 && preset.flattenZip);
     } catch {
       if (id === request.current.preset) setPresetError(true);
     }
   }
 
   function exportPreset() {
-    const preset: MappingPreset = { version: 1, mapping, filenamePattern: pattern, minFontSize, font };
+    const settings = {
+      mapping: Object.fromEntries(fields.flatMap(({ name, kind }) =>
+        kind === 'text' || kind === 'checkbox' || mapping[name] ? [[name, mapping[name]!]] : [])),
+      filenamePattern: pattern, minFontSize, font,
+    };
+    const preset: MappingPreset = flattenZip
+      ? { version: 2, ...settings, flattenZip }
+      : { version: 1, ...settings };
     saveDownload(JSON.stringify(preset, null, 2), 'arabiform-mapping-preset.json', 'application/json');
   }
 
   return {
     template, roster, synthetic, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping,
-    hasMapping, selected, setSelected, filter, setFilter, minFontSize, font, customFont, fontBlocked, pattern, filenames,
+    hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
+    minFontSize, font, customFont, fontBlocked, pattern, filenames, flattenZip, changeFlattenZip,
     ...job, ready, flagged: job.results ? job.results.length - ready : 0, warningRows,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
-    download: (kind: Parameters<typeof download>[0]) => download(kind, filenames, ready),
+    cancel: () => { retainPreviewPage(); cancel(); },
+    download: (kind: Parameters<typeof download>[0]) => download(kind, filenames, ready, flattenZip),
   };
 }

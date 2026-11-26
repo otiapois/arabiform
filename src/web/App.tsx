@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, type ChangeEvent } from 'react';
+import { ChoiceList } from './Choices';
 import { Diagnostics } from './Diagnostics';
 import { fillLabel, translator } from './labels';
 import { Queue } from './Queue';
@@ -65,7 +66,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const { missingFields, missingColumns } = desk.presetWarnings ?? { missingFields: [], missingColumns: [] };
   const presetMismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
   const fieldKinds = { text: labels.kindText, checkbox: labels.kindCheckbox, radio: labels.kindRadio, dropdown: labels.kindDropdown };
-  const textMapped = desk.fields.some(({ kind, name }) => kind === 'text' && desk.mapping[name]);
+  const textMapped = desk.fields.some(({ kind, name }) => (kind === 'text' || kind === 'dropdown') && desk.mapping[name]);
   const missingCustomGlyphs = customFont?.status === 'ready'
     && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
   const fontCheck = !desk.results || !textMapped ? labels.customFontCoverage
@@ -173,16 +174,25 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                         <div className="mapping-rows">
                           {desk.templateFields.map((field) => (
                             <div key={field.name} className="mapping-row">
-                              <span className="mapping-field">
+                              <div className="mapping-field">
                                 <bdi title={field.name}>{field.name}</bdi>
                                 <span className="tag tag-pending">{fieldKinds[field.kind]}</span>
-                              </span>
+                                {field.choices?.length ? (
+                                  <details className="choice-options">
+                                    <summary>{labels.allowedChoices}</summary>
+                                    <ChoiceList choices={field.choices} label={labels.allowedChoices} blank={labels.blankChoice} />
+                                  </details>
+                                ) : null}
+                              </div>
                               {Object.hasOwn(desk.mapping, field.name) ? (
-                                <select dir="auto" aria-label={field.name} data-pdf-field={field.name} value={desk.mapping[field.name]}
-                                  onChange={(event) => desk.changeMapping(field.name, event.currentTarget.value)}>
-                                  <option value="">{labels.unmapped}</option>
-                                  {desk.sheet?.headers.map((column) => <option key={column} value={column}>{column}</option>)}
-                                </select>
+                                <div className="mapping-target">
+                                  <select dir="auto" aria-label={field.name} data-pdf-field={field.name} value={desk.mapping[field.name]}
+                                    onChange={(event) => desk.changeMapping(field.name, event.currentTarget.value)}>
+                                    <option value="">{labels.unmapped}</option>
+                                    {desk.sheet?.headers.map((column) => <option key={column} value={column}>{column}</option>)}
+                                  </select>
+                                  {field.choices && !desk.mapping[field.name] && <small className="quiet">{labels.preserved}</small>}
+                                </div>
                               ) : <span className="quiet">{labels.preserved}</span>}
                             </div>
                           ))}
@@ -241,6 +251,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                     <small>{labels.patternHelp}</small>
                   </label>
+                  <label className="zip-mode">
+                    <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exportingZip}
+                      onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
+                    <span>{labels.flattenZip}</span>
+                  </label>
                   <div className="preset-controls">
                     <h3>{labels.preset}</h3>
                     <p className="quiet">{labels.presetHelp}</p>
@@ -287,7 +302,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 ? (
                   <Suspense fallback={<div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>}>
                     <PdfPreview bytes={bytes} fields={desk.template.info.fields} diagnostics={selectedResult?.diagnostics}
-                      minSize={desk.minFontSize} unavailable={desk.previewError} language={language} />
+                      minSize={desk.minFontSize} unavailable={desk.previewError} language={language}
+                      requestedPage={desk.previewPage} onPageChange={desk.setPreviewPage} />
                   </Suspense>
                 )
                 : (
@@ -323,7 +339,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 <button type="button" className="button secondary" disabled={!desk.results || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
               </div>
               {desk.exporting && <p role="status">{labels.exporting}</p>}
-              {desk.exportError && <p className="alert" role="alert">{labels.exportError}</p>}
+              {desk.exportError && <p className="alert" role="alert">{problem(desk.exportError) ?? labels.exportError}</p>}
             </div>
           </section>
         </div>
