@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { matchChoice } from '../core/pdf/choice-match';
 import { choiceText, editableChoices } from './Choices';
 import { Diagnostics, diagnosticText, safeRowMinSize } from './Diagnostics';
@@ -23,11 +23,47 @@ function searchable(value: string) {
 export function Queue({ desk, language }: QueueProps) {
   const { labels, problem } = language;
   const { ready, flagged, warningRows, progress } = desk;
-  const [editing, setEditing] = useState(false);
+  const [editSession, setEditSession] = useState<{
+    sheet: typeof desk.sheet; row: number; original: typeof desk.rowEdit;
+  }>();
   const [search, setSearch] = useState('');
   const [pageIndex, setPageIndex] = useState(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const activeEdit = editSession?.sheet === desk.sheet && editSession?.row === desk.selected ? editSession : undefined;
+  const editing = activeEdit !== undefined;
   const row = desk.rows[desk.selected];
   const result = desk.results?.[desk.selected];
+  const adjustmentReasons = {
+    sanitized: labels.filenameSanitized,
+    'reserved-name': labels.filenameReserved,
+    'collision-dedup': labels.filenameCollision,
+  };
+
+  useEffect(() => {
+    function focusQueueSearch(event: KeyboardEvent) {
+      const input = searchInput.current;
+      if (!input || event.key !== '/' || event.defaultPrevented || event.isComposing
+        || event.altKey || event.ctrlKey || event.metaKey || document.designMode === 'on') return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.isContentEditable) return;
+      if (target instanceof Element && target.closest('form, input, textarea, select, [role="textbox"]')) return;
+      event.preventDefault();
+      input.focus();
+    }
+    document.addEventListener('keydown', focusQueueSearch);
+    return () => document.removeEventListener('keydown', focusQueueSearch);
+  }, []);
+
+  function beginEdit() {
+    setEditSession({ sheet: desk.sheet, row: desk.selected, original: desk.rowEdit });
+  }
+
+  function updateCell(column: string, value: string) {
+    if (!editing) beginEdit();
+    desk.editCell(desk.selected, column, value);
+  }
+
   const fieldsByColumn = useMemo(() => {
     const fields = new Map<string, TemplateInfo['fields'][number] | undefined>();
     for (const field of desk.fields) {
@@ -41,7 +77,7 @@ export function Queue({ desk, language }: QueueProps) {
     .map(({ field }) => desk.mapping[field]));
   const safeSize = result?.status === 'flagged' ? safeRowMinSize(result.diagnostics, desk.minFontSize) : undefined;
   const searchIndex = useMemo(() => desk.rows.map(({ values }, i) =>
-    searchable([desk.filenames[i] ?? '', ...Object.values(values)].join('\0'))), [desk.rows, desk.filenames]);
+    searchable([desk.filenamePlans[i]!.filename, ...Object.values(values)].join('\0'))), [desk.rows, desk.filenamePlans]);
   const matches = useMemo(() => {
     const query = searchable(search.trim());
     const rowNumber = Number(query.match(/^(?:(?:row|الصف)\s+|#)?([0-9]+)$/u)?.[1]);
@@ -78,6 +114,7 @@ export function Queue({ desk, language }: QueueProps) {
         <p className="alert warning">{fillLabel(labels.sourceWarningCount, { count: warningRows })}</p>
       )}
       {desk.preflightError && <p role="alert" className="alert">{problem(desk.preflightError) ?? labels.pdfError}</p>}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{phaseLabel}</p>
       {progress && (
         <div className="batch-state">
           <div className="batch-meter">
@@ -106,7 +143,8 @@ export function Queue({ desk, language }: QueueProps) {
             <div className="queue-controls">
               <label className="queue-search">
                 <span className="sr-only">{labels.queueSearch}</span>
-                <input type="search" dir="auto" data-testid="queue-search" placeholder={labels.queueSearchHint} value={search}
+                <input ref={searchInput} type="search" dir="auto" data-testid="queue-search" aria-keyshortcuts="/"
+                  placeholder={labels.queueSearchHint} value={search}
                   onChange={(event) => { setSearch(event.currentTarget.value); setPageIndex(0); }} />
               </label>
               <div className="filter-chips" role="group" aria-label={labels.filter}>
@@ -125,6 +163,9 @@ export function Queue({ desk, language }: QueueProps) {
                   {visibleRows.map((index) => {
                     const source = desk.rows[index]!;
                     const result = desk.results?.[index];
+                    const filenamePlan = result ?? desk.filenamePlans[index]!;
+                    const adjustmentReason = filenamePlan.filenameAdjusted
+                      ? adjustmentReasons[filenamePlan.filenameAdjustReason] : undefined;
                     const issue = result?.diagnostics[0];
                     return (
                       <tr key={index} data-testid="queue-row" data-row={index + 1} data-selected={desk.selected === index}>
@@ -134,12 +175,20 @@ export function Queue({ desk, language }: QueueProps) {
                             className="row-link"
                             aria-label={fillLabel(labels.showRow, { row: index + 1 })}
                             aria-pressed={desk.selected === index}
-                            onClick={() => { desk.selectRow(index); setEditing(false); }}
+                            onClick={() => { desk.selectRow(index); setEditSession(undefined); }}
                           >
                             {String(index + 1).padStart(2, '0')}
                           </button>
                         </th>
-                        <td><Filename name={desk.filenames[index]!} /></td>
+                        <td>
+                          <Filename name={filenamePlan.filename} />
+                          {adjustmentReason && (
+                            <details className="filename-adjustment">
+                              <summary className="tag" data-testid="filename-adjusted" title={adjustmentReason}>{labels.filenameAdjusted}</summary>
+                              <p>{adjustmentReason}</p>
+                            </details>
+                          )}
+                        </td>
                         <td><span className={`tag tag-${result?.status ?? 'pending'}`}>{!result ? labels.waiting : result.status === 'pass' ? labels.ready : labels.flagged}</span></td>
                         <td className="review-cell">
                           {issue && (
@@ -173,11 +222,18 @@ export function Queue({ desk, language }: QueueProps) {
               </div>
             )}
             {row && (
-              <section className="row-editor" aria-label={fillLabel(labels.selected, { row: desk.selected + 1 })}>
+              <section className="row-editor" aria-label={fillLabel(labels.selected, { row: desk.selected + 1 })}
+                onKeyDown={(event) => {
+                  if (!activeEdit || event.key !== 'Escape' || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  setEditSession(undefined);
+                  desk.restoreRowEdit(activeEdit.row, activeEdit.original);
+                  editButton.current?.focus();
+                }}>
                 <div className="row-editor-head">
                   <div className="row-summary">
                     <h3>{fillLabel(labels.selected, { row: desk.selected + 1 })}</h3>
-                    <Filename name={desk.filenames[desk.selected]!} />
+                    <Filename name={desk.filenamePlans[desk.selected]!.filename} />
                     {result?.status === 'pass' && <p>{labels.cleanRow}</p>}
                     {desk.checking && <p>{labels.unresolved}</p>}
                   </div>
@@ -189,11 +245,13 @@ export function Queue({ desk, language }: QueueProps) {
                       </button>
                     )}
                     <button
+                      ref={editButton}
                       type="button"
                       className="button secondary"
                       aria-expanded={editing}
                       aria-controls="edit-cells"
-                      onClick={() => setEditing((current) => !current)}
+                      aria-keyshortcuts={editing ? 'Escape' : undefined}
+                      onClick={editing ? () => setEditSession(undefined) : beginEdit}
                     >
                       {editing ? labels.done : fillLabel(labels.editRow, { row: desk.selected + 1 })}
                     </button>
@@ -238,10 +296,7 @@ export function Queue({ desk, language }: QueueProps) {
                               data-roster-column={column}
                               aria-invalid={invalid || undefined}
                               value={current?.input ?? value}
-                              onChange={(event) => {
-                                setEditing(true);
-                                desk.editCell(desk.selected, column, event.currentTarget.value);
-                              }}
+                              onChange={(event) => updateCell(column, event.currentTarget.value)}
                             >
                               {!current && <option value={value} disabled>{value || labels.blankChoice}</option>}
                               {options.map(({ choice, input }) => (
@@ -256,7 +311,7 @@ export function Queue({ desk, language }: QueueProps) {
                               data-testid="roster-cell"
                               aria-invalid={invalid || undefined}
                               value={value}
-                              onChange={(event) => desk.editCell(desk.selected, column, event.currentTarget.value)}
+                              onChange={(event) => updateCell(column, event.currentTarget.value)}
                             />
                           )}
                       </label>

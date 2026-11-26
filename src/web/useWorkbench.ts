@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import type { FilenamePlan } from '../core/roster';
 import type { BatchRowResult } from '../core/worker/client';
 import { parseMappingPreset, presetMismatches, type FontMode, type MappingPreset } from './presets';
 import { decodeBase64, errorCode, saveDownload } from './resources';
@@ -6,7 +7,7 @@ import { useBatch } from './useBatch';
 
 type PdfEngine = typeof import('../core/pdf');
 export type TemplateInfo = Awaited<ReturnType<PdfEngine['inspectTemplate']>>;
-export type RowResult = BatchRowResult;
+export type RowResult = BatchRowResult & FilenamePlan;
 type RosterEngine = typeof import('../core/roster');
 type Roster = Awaited<ReturnType<RosterEngine['readRoster']>>;
 export type SourceRow = Roster['sheets'][number]['rows'][number];
@@ -77,8 +78,11 @@ export function useWorkbench() {
   const batch = useMemo(() => template && rows.length && hasMapping && !fontBlocked
     ? { template: template.bytes, rows, mapping, minFontSize, font, customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
     : null, [template, rows, mapping, minFontSize, font, customFont, hasMapping, fontBlocked]);
-  const filenames = useMemo(() => roster?.engine.makeFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
-  const { invalidate, changeFilenames, clearExportError, download, cancel, ...job } = useBatch(batch, selected);
+  const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
+  const { invalidate, clearExportError, download, cancel, ...job } = useBatch(batch, selected);
+  const results = useMemo(() => job.results?.map((result, index): RowResult => ({
+    ...result, ...filenamePlans[index]!,
+  })), [job.results, filenamePlans]);
   const ready = useMemo(() => job.results?.filter(({ status }) => status === 'pass').length ?? 0, [job.results]);
   const warningRows = useMemo(() => rows.filter((row) => row.warnings.length > 0).length, [rows]);
   const firstFlaggedPage = job.results?.[selected]?.pageNumbers[0];
@@ -204,6 +208,17 @@ export function useWorkbench() {
     setEdits((current) => ({ ...current, [row]: { ...current[row], [column]: value } }));
   }
 
+  function restoreRowEdit(row: number, original: Record<string, string> | undefined) {
+    if (edits[row] === original) return;
+    recheck();
+    setEdits((current) => {
+      if (original) return { ...current, [row]: original };
+      const restored = { ...current };
+      delete restored[row];
+      return restored;
+    });
+  }
+
   function changeSize(size: number) {
     recheck();
     setMinFontSize(size);
@@ -242,7 +257,7 @@ export function useWorkbench() {
   }
 
   function changePattern(value: string) {
-    changeFilenames();
+    clearExportError();
     setPattern(value);
   }
 
@@ -285,11 +300,12 @@ export function useWorkbench() {
   return {
     template, roster, synthetic, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
-    minFontSize, font, customFont, fontBlocked, pattern, filenames, flattenZip, changeFlattenZip,
-    ...job, ready, flagged: job.results ? job.results.length - ready : 0, warningRows,
+    minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip,
+    ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
+    rowEdit: edits[selected], restoreRowEdit,
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
-    download: (kind: Parameters<typeof download>[0]) => download(kind, filenames, ready, flattenZip),
+    download: (kind: Parameters<typeof download>[0]) => download(kind, filenamePlans, ready, flattenZip),
   };
 }
