@@ -1,12 +1,36 @@
 import { PDFArray, PDFDict, PDFDocument, PDFFont, PDFHexString, PDFOperator, PDFOperatorNames as Op } from 'pdf-lib';
 import { key, number, type WidgetTarget } from './template';
-import type { FontKey, Placement } from './shaping';
+import type { FontKey, PlacedLine, Placement } from './shaping';
 
 const operator = PDFOperator.of;
 const fillColor = { 1: Op.NonStrokingColorGray, 3: Op.NonStrokingColorRgb, 4: Op.NonStrokingColorCmyk };
 const strokeColor = { 1: Op.StrokingColorGray, 3: Op.StrokingColorRgb, 4: Op.StrokingColorCmyk };
 
 export interface AppearanceFont { name: string; ref: PDFFont['ref']; cids?: Map<number, number> }
+
+export function appendPositionedText(
+  operators: PDFOperator[], text: string, lines: readonly PlacedLine[], size: number, fontFor: (key: FontKey) => AppearanceFont,
+) {
+  const actualText = `<< /ActualText ${PDFHexString.fromText(text).toString()} >>`;
+  operators.push(operator(Op.BeginMarkedContentSequence, [key('Span'), actualText]));
+  for (const { line, origin, baseline } of lines) {
+    if (!line.painted) continue;
+    operators.push(operator(Op.BeginText));
+    let current: FontKey | undefined;
+    for (const glyph of line.glyphs) {
+      const font = fontFor(glyph.font);
+      if (glyph.font !== current) {
+        operators.push(operator(Op.SetFontAndSize, [key(font.name), number(size)]));
+        current = glyph.font;
+      }
+      const cid = font.cids ? font.cids.get(glyph.id)! : glyph.id;
+      operators.push(operator(Op.SetTextMatrix, [1, 0, 0, 1, origin + glyph.x * size, baseline + glyph.y * size].map(number)),
+        operator(Op.ShowText, [PDFHexString.of(cid.toString(16).padStart(4, '0'))]));
+    }
+    operators.push(operator(Op.EndText));
+  }
+  operators.push(operator(Op.EndMarkedContent));
+}
 
 function color(values: number[] | undefined, stroking = false) {
   if (!values || (values.length !== 1 && values.length !== 3 && values.length !== 4) || values.some((value) => !Number.isFinite(value))) return undefined;
@@ -52,24 +76,13 @@ export function installAppearance(doc: PDFDocument, target: WidgetTarget, placem
   operators.push(operator(Op.ConcatTransformationMatrix, matrix.map(number)), textColor(target.appearance));
   operators.push(operator(Op.BeginMarkedContent, [key('Tx')]));
   const resources: Record<string, PDFFont['ref']> = {};
-  for (const { line, origin, baseline } of placement.lines) {
-    if (!line.painted) continue;
-    const actualText = `<< /ActualText ${PDFHexString.fromText(line.text).toString()} >>`;
-    operators.push(operator(Op.BeginMarkedContentSequence, [key('Span'), actualText]), operator(Op.BeginText));
-    let current: FontKey | undefined;
-    for (const glyph of line.glyphs) {
-      if (glyph.font !== current) {
-        const font = fonts[glyph.font]!;
-        resources[font.name] = font.ref;
-        operators.push(operator(Op.SetFontAndSize, [key(font.name), number(placement.size)]));
-        current = glyph.font;
-      }
-      const cids = fonts[glyph.font]!.cids;
-      const cid = cids ? cids.get(glyph.id)! : glyph.id;
-      operators.push(operator(Op.SetTextMatrix, [1, 0, 0, 1, origin + glyph.x * placement.size, baseline + glyph.y * placement.size].map(number)),
-        operator(Op.ShowText, [PDFHexString.of(cid.toString(16).padStart(4, '0'))]));
-    }
-    operators.push(operator(Op.EndText), operator(Op.EndMarkedContent));
+  for (const placed of placement.lines) {
+    if (!placed.line.painted) continue;
+    appendPositionedText(operators, placed.line.text, [placed], placement.size, (family) => {
+      const font = fonts[family]!;
+      resources[font.name] = font.ref;
+      return font;
+    });
   }
   operators.push(operator(Op.EndMarkedContent), operator(Op.PopGraphicsState));
   const stream = doc.context.formXObject(operators, { BBox: [0, 0, width, height], Resources: { Font: resources } });

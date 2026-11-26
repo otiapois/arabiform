@@ -14,6 +14,8 @@ import fitz
 SCALE = fitz.Matrix(4, 4)
 CHANNELS = 3
 TEXT_LAYER = re.compile(rb"/Tx BMC\r?\n.*?(?=\r?\nQ(?:\r?\n|$))", re.S)
+COVER_SPAN = re.compile(rb"/Span << /ActualText <([0-9A-F]+)> >> BDC\n(.*?)\nEMC", re.S)
+DARK_PIXELS = bytes(1 if value < 128 else 0 for value in range(256))
 
 
 def render(page):
@@ -163,6 +165,80 @@ def check_merged(spec, directory):
     return index
 
 
+def check_cover_ink(page):
+    width, height, samples = render(page)
+    reds = samples[::CHANNELS]
+    dark = reds.translate(DARK_PIXELS)
+    margin = 39 * 4
+    white = b"\xff" * margin
+    assert reds[:width * margin] == reds[-width * margin:] == b"\xff" * (width * margin), (
+        f"cover page {page.number + 1}: ink crossed the top or bottom margin"
+    )
+    bounds = [width, height, 0, 0]
+    amount = 0
+    for y in range(margin, height - margin):
+        start = y * width
+        assert reds[start:start + margin] == reds[start + width - margin:start + width] == white, (
+            f"cover page {page.number + 1}: ink crossed a side margin"
+        )
+        row = dark[start:start + width]
+        if b"\x01" not in row:
+            continue
+        amount += row.count(b"\x01")
+        bounds = [min(bounds[0], row.index(b"\x01")), min(bounds[1], y),
+                  max(bounds[2], row.rindex(b"\x01") + 1), max(bounds[3], y + 1)]
+    assert amount > 1_000, f"cover page {page.number + 1}: missing text ink at 4x"
+    inset = min(bounds[0], bounds[1], width - bounds[2], height - bounds[3])
+    return {"page": page.number + 1, "inkBboxAt4x": bounds, "inkPixelsAt4x": amount, "minPageEdgeInsetAt4x": inset}
+
+
+def check_covered_merge(spec, directory):
+    cover_pages = spec["coverPages"]
+    expected = spec["expectedText"]
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    with fitz.open(directory / spec["pdf"]) as merged, fitz.open(directory / spec["plainPdf"]) as plain:
+        assert len(merged) == len(plain) + cover_pages
+        ink = []
+        index_rows = []
+        for page_number in range(cover_pages):
+            page = merged[page_number]
+            assert abs(page.rect.width - 595.28) < 0.01 and abs(page.rect.height - 841.89) < 0.01
+            assert not list(page.widgets()) and not page.get_images(), "cover must be printable vector text"
+            spans = [(bytes.fromhex(value.decode("ascii")).decode("utf-16"), operators)
+                     for value, operators in COVER_SPAN.findall(page.read_contents())]
+            header = [expected["title"], *(expected["details"] if page_number == 0 else []), *expected["headings"]]
+            assert [text for text, _ in spans[:len(header)]] == header, (spec["pdf"], page_number, spans[:len(header)])
+            assert all(b" Tj" in operators for _, operators in spans), f"{spec['pdf']}: cover text span has no glyphs"
+            cells = spans[len(header):]
+            assert len(cells) % 4 == 0, f"{spec['pdf']}: incomplete cover table"
+            for offset in range(0, len(cells), 4):
+                ordinal, row_number, filename, pages = cells[offset:offset + 4]
+                if filename[0] in expected["wrappedFilenames"]:
+                    assert filename[1].count(b"BT\n") > 1, f"{spec['pdf']}: expected filename to wrap"
+                index_rows.append((ordinal[0], row_number[0], filename[0], pages[0]))
+            ink.append(check_cover_ink(page))
+        index = 0
+        expected_index = []
+        for ordinal, (row, filename, row_number) in enumerate(zip(spec["rows"], expected["filenames"], expected["rowNumbers"], strict=True), 1):
+            with fitz.open(directory / row) as original:
+                start, end = index + cover_pages + 1, index + cover_pages + len(original)
+                pages = str(start) if start == end else f"{start}–{end}"
+                expected_index.append((str(ordinal), str(row_number), filename, pages))
+                for source_page in original:
+                    page = merged[index + cover_pages]
+                    assert not list(page.widgets()), f"{spec['pdf']}: index target page {page.number + 1} still has widgets"
+                    image = render(page)
+                    assert image == render(source_page), f"{spec['pdf']}: page {page.number + 1} differs from {row}"
+                    assert image == render(plain[index]), f"{spec['pdf']}: prepending the cover changed page {index + 1}"
+                    index += 1
+        assert index_rows == expected_index, f"{spec['pdf']}: displayed cover index differs from actual row pages"
+        assert index == len(plain)
+    warnings = fitz.TOOLS.mupdf_warnings(reset=True)
+    assert not warnings, f"{spec['pdf']}: MuPDF emitted warnings: {warnings}"
+    return {"pdf": spec["pdf"], "coverPages": ink, "verifiedIndexRows": len(index_rows),
+            "clippedCoverInkPixels": 0, "rowPagesPixelIdentical": index}
+
+
 def check_zip(spec, directory):
     pages = 0
     with ZipFile(directory / spec["editable"]) as editable, ZipFile(directory / spec["flattened"]) as flattened:
@@ -194,17 +270,24 @@ def main():
             assert source.name == f"source-{sha256}.pdf", f"source snapshot hash changed: {filename}"
     results = [check_case(case, path.parent) for case in manifest["cases"]]
     merged = sum(check_merged(manifest[key], path.parent) for key in ("merged", "mixedMerged", "m4Merged") if manifest.get(key))
+    covered = [check_covered_merge(spec, path.parent) for spec in manifest.get("coveredMerged", [])]
     zipped = check_zip(manifest["choiceZip"], path.parent) if manifest.get("choiceZip") else 0
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "flattenedZipPagesPixelIdentical": zipped,
+        "coveredMerged": covered,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
     }
     path.with_name(f"{path.stem}-verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{summary['engine']}: {len(results)} fills, {len(inks)} ink-bearing widgets, 0 clipped ink pixels, 0 changed pixels outside mapped widgets, {merged} identical merged pages, {zipped} identical flattened ZIP pages.")
+    if covered:
+        cover_pages = sum(len(item["coverPages"]) for item in covered)
+        row_pages = sum(item["rowPagesPixelIdentical"] for item in covered)
+        verified_rows = sum(item["verifiedIndexRows"] for item in covered)
+        print(f"Cover exports: {cover_pages} covers with 0 clipped pixels, {verified_rows} exact index rows, {row_pages} identical form pages with and without a cover.")
 
 
 if __name__ == "__main__":

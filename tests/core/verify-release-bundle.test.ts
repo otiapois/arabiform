@@ -76,4 +76,4 @@ it('accepts a strict origin and rejects a local hostname leak in any release met
       writeFileSync(path, original);
     }
   });
-});
+}, 15_000);

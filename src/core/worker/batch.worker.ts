@@ -1,4 +1,4 @@
-import { createFlattenedZip, createMergedPdf, createZip, preflightRow, type RowPreflightResult } from '../pdf';
+import { createFlattenedZip, createMergedPdf, createZip, preflightRow, type PreflightOptions, type RowPreflightResult } from '../pdf';
 import type { BatchProgress, BatchRequest, BatchResponse, BatchResult } from './protocol';
 
 // This file is loaded only as a dedicated module worker. The project also compiles DOM UI code.
@@ -7,7 +7,7 @@ const scope = self as unknown as {
   postMessage(message: BatchResponse, transfer?: Transferable[]): void;
 };
 let preflightStarted = false;
-let cached: RowPreflightResult[] | undefined;
+let cached: { rows: RowPreflightResult[]; options: PreflightOptions } | undefined;
 
 scope.addEventListener('message', async ({ data: request }) => {
   const { id, phase } = request;
@@ -26,20 +26,32 @@ scope.addEventListener('message', async ({ data: request }) => {
         results.push(await preflightRow(template, row, options));
         progress(results.length, rows.length);
       }
-      cached = results;
+      cached = { rows: results, options };
       result = results.map(({ status, diagnostics, fontSizes, pageNumbers }) => ({ status, diagnostics, fontSizes, pageNumbers }));
     } else {
       if (!cached) throw new Error('batch-not-ready');
       if (phase === 'preview') {
-        result = cached[request.rowIndex]?.pdfBytes?.slice();
+        result = cached.rows[request.rowIndex]?.pdfBytes?.slice();
       } else {
-        if (phase === 'zip' && request.filenames.length !== cached.length) throw new Error('batch-filename-count-mismatch');
-        const ready = cached.flatMap(({ pdfBytes }, index) => pdfBytes ? [{
-          filename: phase === 'zip' ? request.filenames[index]! : '', pdfBytes,
+        const coverSheet = phase === 'merged' ? request.coverSheet : undefined;
+        const filenames = phase === 'zip' ? request.filenames : coverSheet?.filenames;
+        if (filenames && filenames.length !== cached.rows.length) {
+          throw new Error(phase === 'zip' ? 'batch-filename-count-mismatch' : 'cover-sheet-invalid-metadata');
+        }
+        const ready = cached.rows.flatMap(({ pdfBytes }, index) => pdfBytes ? [{
+          filename: filenames?.[index] ?? '', pdfBytes, rowNumber: index + 1,
         }] : []);
         if (!ready.length) throw new Error('empty-export');
         if (phase === 'zip') result = request.flattenZip ? await createFlattenedZip(ready, progress) : createZip(ready, progress);
-        else result = await createMergedPdf(ready, progress);
+        else result = await createMergedPdf(ready, progress, coverSheet && {
+          locale: coverSheet.locale,
+          templateName: coverSheet.templateName,
+          exportedAt: new Date(),
+          preflight: cached.options,
+          rowNumbers: ready.map(({ rowNumber }) => rowNumber),
+          flagged: cached.rows.filter(({ status }) => status === 'flagged').length,
+          skipped: cached.rows.length - ready.length,
+        });
       }
     }
     scope.postMessage({ id, kind: 'result', result }, result instanceof Uint8Array ? [result.buffer as ArrayBuffer] : []);

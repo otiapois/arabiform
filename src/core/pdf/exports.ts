@@ -2,6 +2,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOpe
 import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
+import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
 import { key, number, openTemplate, widgetFlags } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 
@@ -121,17 +122,20 @@ function flattenWidgets(doc: PDFDocument) {
   doc.catalog.delete(key('AcroForm'));
 }
 
-export async function createMergedPdf(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Promise<Uint8Array> {
+export async function createMergedPdf(rows: readonly PdfExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions): Promise<Uint8Array> {
   if (!rows.length) throw new Error('empty-export');
   const merged = await PDFDocument.create();
+  const coverEntries: { filename: string; pageCount: number }[] = [];
   onProgress?.(0, rows.length);
   for (const [index, row] of rows.entries()) {
     const { doc: source } = await openTemplate(row.pdfBytes);
     flattenWidgets(source);
     const pages = await merged.copyPages(source, source.getPageIndices());
     for (const page of pages) merged.addPage(page);
+    if (cover) coverEntries.push({ filename: row.filename, pageCount: pages.length });
     onProgress?.(index + 1, rows.length);
   }
+  if (cover) await prependMergeCover(merged, coverEntries, cover);
   return merged.save({ updateFieldAppearances: false });
 }
 

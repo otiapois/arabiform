@@ -18,11 +18,13 @@ const arabic = /\p{Script_Extensions=Arabic}/u;
 const arabicLetter = /(?=\p{L})\p{Script=Arabic}/u;
 const joinControl = /[\u200c\u200d]/u;
 const paragraphBreak = /\r\n|[\r\n\u2028\u2029]/;
-const isolateMarks = /[\u2066\u2069]/u;
+const isolateMarks = /[\u2066\u2067\u2069]/u;
 const numberToken = /(?<![\p{L}\p{N}])(?:#[0-9\u0660-\u0669\u06f0-\u06f9]+|\+[0-9\u0660-\u0669\u06f0-\u06f9]+(?:[ .\u00a0\u202f-][0-9\u0660-\u0669\u06f0-\u06f9]+)*)/gu;
+const arabicFilenameRun = /\p{Script=Arabic}[\p{Script=Arabic}\p{M}\u200c\u200d]*(?: +\p{Script=Arabic}[\p{Script=Arabic}\p{M}\u200c\u200d]*)*/gu;
 
 export const MIN_FONT_SIZE = 6;
 export const MAX_FONT_SIZE = 10;
+export const DEFAULT_MIN_FONT_SIZE = 8;
 
 export function textInputDiagnostic(value: string): 'unsupported-glyph' | 'unsupported-bidi' | undefined {
   const characters = Array.from(value);
@@ -48,12 +50,14 @@ export function createShaper(bytes: FontBytes, preferred: BundledFontKey | 'auto
   }
   const cache = new Map<string, Line | undefined>();
 
-  function line(text: string, base?: Direction): Line | undefined {
-    const key = `${base ?? ''}\0${text}`;
+  function line(text: string, base?: Direction, filename = false): Line | undefined {
+    const key = `${filename ? 'filename' : base ?? ''}\0${text}`;
     if (cache.has(key)) return cache.get(key);
     // Give ID prefixes and international phones their own left-to-right direction in RTL text.
     // The isolates are used only by the ordering pass and never written to PDF data or glyphs.
-    const directional = text.replace(numberToken, '\u2066$&\u2069');
+    // Isolate Arabic words in the filename's LTR frame, keeping ASCII IDs and .pdf in filename order.
+    const ordered = filename ? text.replace(arabicFilenameRun, '\u2067$&\u2069') : text;
+    const directional = ordered.replace(numberToken, '\u2066$&\u2069');
     const { levels, paragraphs } = bidi.getEmbeddingLevels(directional, base);
     const direction = (paragraphs[0]?.level ?? (base === 'rtl' ? 1 : 0)) % 2 ? 'rtl' : 'ltr';
     const runs: DirectionalRun[] = [];
@@ -132,7 +136,10 @@ export function createShaper(bytes: FontBytes, preferred: BundledFontKey | 'auto
     return shaped;
   }
 
-  return { line, missingGlyphCode: custom ? 'missing-glyphs' as const : 'unsupported-glyph' as const };
+  return {
+    line, filenameLine: (text: string) => line(text, 'ltr', true),
+    missingGlyphCode: custom ? 'missing-glyphs' as const : 'unsupported-glyph' as const,
+  };
 }
 
 type Shaper = ReturnType<typeof createShaper>;

@@ -13,11 +13,13 @@ export interface BatchProgress {
   total: number;
 }
 
+export type MergeCoverSheet = { locale: 'en' | 'ar'; templateName: string; filenames: readonly string[] };
+
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }
   | { phase: 'preview'; rowIndex: number }
   | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean }
-  | { phase: 'merged' };
+  | { phase: 'merged'; coverSheet?: MergeCoverSheet };
 
 export type BatchRequest = BatchCommand & { id: number };
 export type BatchResult = BatchRowResult[] | Uint8Array | undefined;
