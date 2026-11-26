@@ -48,3 +48,11 @@ Windows 本机安装的 Microsoft Edge 124.0.2478.80、Playwright 1.65.1、Node.
 Lead 另行回放 M3 旧打印路径。缺少 `/AP` 且 `/V` 为数组的下拉框压平后改变 86,832 个像素。已勾选但缺少 `/AS` 的复选框改变 350 个像素。新版对此两例的合并打印和压平 ZIP 均返回 `unflattenable-widget`，可编辑 ZIP 保留成员原始字节。Lead 还从 `357fc6c` 的英文桌面页与阿语移动页分别验证打印失败的界面提示，以及关闭压平后成功下载可编辑 ZIP。[已纳入本次独立全套的回归](../../tests/core/choices.test.ts) · [经验记录](../../LESSONS.md)
 
 本次结论适用于本地 Edge、PDF.js 和上述 PyMuPDF 版本及输入。Adobe 一项验证了 CFF 字体文件。Acrobat、iOS 真机、macOS Preview、WhatsApp、实体打印机、线上 Cloudflare 及远端 CI 均未实测。
+
+## 主线交付
+
+主线生产提交 `c2664b1d6839e7f6faad8a5ecfff7e5de532014a` 通过类型检查、45 项单元与集成测试、4,100 个固定种子用例、23 个合成夹具字节检查、包含公开输入的 4 倍像素校验及生产构建。独立 QA 在同一主线构建上完成 38 项 Edge 测试。验收发现的阻断问题均已修复复验。本轮经验已记录，新增或更新条目的 Seen 为 1 或 2。[经验记录](../../LESSONS.md)
+
+主线复跑后仅合入验收报告和经验记录。与 M4 起点 `a8def94` 对照，之前的浏览器用例、夹具、截图、验收报告、CI 配置、锁文件及第三方声明全部一致。三张 M4 截图已逐图核验并核对文件尺寸。四个临时工作树及 `.arabiform-wt` 已删除，Git 只登记主工作树。4187、4191、4193、4195 均拒绝新的回环连接。
+
+主工作区的 `test-results/m4-evidence/` 保留初轮审计失败记录、最终 Edge 运行日志与逐场景收据、打印回读、像素清单及前后构建指纹。可从项目根目录运行本报告的命令复验。加验四份公开空白表及 Source Serif 4 OTF 时，将 `ARABIFORM_PUBLIC_TEMPLATES` 指向本地 `test-results/m3-evidence/inputs`，将 `ARABIFORM_CUSTOM_CFF_FONT` 指向其中的 `SourceSerif4-Regular.otf`。常规 CI 直接使用仓库内的合成夹具。
