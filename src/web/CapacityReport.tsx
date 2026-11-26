@@ -51,6 +51,9 @@ export default function CapacityReport({ template, minFontSize, open, arabic, la
           {arabic ? 'نزّل سعة الحقول بصيغة CSV' : 'Download capacity CSV'}
         </button>
       </div>
+      <p className="quiet capacity-scroll-hint">{arabic
+        ? 'مرّر الجدول أفقيًا لعرض جميع الأعمدة.'
+        : 'Scroll sideways to see every column.'}</p>
       <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
         <CapacityTable report={report} arabic={arabic} labels={labels} />
       </Suspense>
