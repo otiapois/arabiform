@@ -1,10 +1,9 @@
 import { readFile, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const dist = fileURLToPath(new URL('../dist/', import.meta.url))
-const port = Number(process.argv[2] ?? 4173)
 const [pattern, ...headerLines] = (await readFile(join(dist, '_headers'), 'utf8')).trim().split(/\r?\n/)
 if (pattern !== '/*') throw new Error('The first _headers rule must apply to every route')
 
@@ -27,7 +26,7 @@ const contentTypes = {
   '.png': 'image/png',
 }
 
-createServer(async (request, response) => {
+async function respond(request, response) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     response.writeHead(405, headers).end()
     return
@@ -54,6 +53,21 @@ createServer(async (request, response) => {
       : error.code === 'ENOENT' || error.code === 'ENOTDIR' ? 404 : 500
     response.writeHead(status, headers).end()
   }
-}).listen(port, '127.0.0.1', () => {
+}
+
+export function startPreview(port = 4173) {
+  const server = createServer(respond)
+  return new Promise((listening, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject)
+      listening(server)
+    })
+  })
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const port = Number(process.argv[2] ?? 4173)
+  await startPreview(port)
   console.log(`ArabiForm preview: http://127.0.0.1:${port}`)
-})
+}
