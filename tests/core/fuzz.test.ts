@@ -6,10 +6,13 @@ import { unzipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow } from '../../src/core/pdf';
+import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
+import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow, type AlignOverride } from '../../src/core/pdf';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { paginateCoverRows } from '../../src/core/pdf/merge-cover';
-import { makeFilenames, planFilenames, readRoster } from '../../src/core/roster';
+import { createShaper, fitText } from '../../src/core/pdf/shaping';
+import { makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
+import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 
 const seed = 0x4a216d32;
 const encoder = new TextEncoder();
@@ -532,4 +535,148 @@ describe('seeded filename plans and mixed-direction choices', () => {
     }), 240);
     expect(checkedFonts).toEqual(new Set(['bundled', 'naskh-with-digits', 'naskh-with-latin', 'sans-with-arabic']));
   }, 120_000);
+});
+
+describe('seeded roster changes, explicit ink alignment and portable drafts', () => {
+  it('checks 500 exact previews and full Undo snapshots for mixed Arabic, ASCII identifiers and literal characters', async () => {
+    const flags = fc.record({
+      normalizeSpaces: fc.boolean(), normalizeAlef: fc.boolean(), normalizeTaaMarbuta: fc.boolean(),
+      normalizeAlefMaqsura: fc.boolean(), stripHarakat: fc.boolean(), matchCase: fc.boolean(),
+      selectNotes: fc.boolean(), replaceLiteral: fc.boolean(),
+    });
+    const samples = fc.array(fc.record({
+      alef: fc.constantFrom('أ', 'إ', 'آ'), mark: fc.constantFrom('\u064b', '\u0650', '\u065f', '\u0670'),
+      joiner: fc.constantFrom('\u200c', '\u200d'), id: fc.nat({ max: 9999 }),
+    }), { minLength: 1, maxLength: 9 });
+    await verify(fc.asyncProperty(samples, flags, async (samples, { selectNotes, replaceLiteral, ...flags }) => {
+      const operation = { ...flags, columns: selectNotes ? [2, 1, 0] : [1, 0], find: replaceLiteral ? 'a.*' : '', replace: '$&$1' };
+      const roster: RosterSheet = {
+        name: 'فريق', headers: ['ID', 'Name', 'Notes'],
+        rows: samples.map(({ alef, mark, joiner, id }, index) => ({
+          values: { ID: `00${String(id).padStart(4, '0')}`, Name: `  \u200B${alef}${mark}${joiner}بةى\u00a0 \tA.* a.*\uFEFF `, Notes: '\u200B 00123 \u00a0' },
+          warnings: [{ code: 'excel-formula-warning', column: 'ID', source: { row: index + 2, column: 'A' }, formulaHasCachedValue: true }],
+        })),
+      };
+      const original = JSON.stringify(roster);
+      const changes = samples.flatMap(({ alef, mark, joiner }, rowIndex) => {
+        const vowels = flags.stripHarakat ? '' : mark;
+        const word = (flags.normalizeAlef ? 'ا' : alef) + vowels + joiner + 'ب'
+          + (flags.normalizeTaaMarbuta ? 'ه' : 'ة') + (flags.normalizeAlefMaqsura ? 'ي' : 'ى');
+        const phrase = replaceLiteral ? (flags.matchCase ? 'A.* $&$1' : '$&$1 $&$1') : 'A.* a.*';
+        const after = flags.normalizeSpaces ? `${word} ${phrase}` : `  \u200B${word}\u00a0 \t${phrase}\uFEFF `;
+        const { Name, Notes } = roster.rows[rowIndex]!.values;
+        return [
+          ...(Name !== after ? [{ rowIndex, columnIndex: 1, column: 'Name', before: Name, after }] : []),
+          ...(selectNotes && flags.normalizeSpaces ? [{ rowIndex, columnIndex: 2, column: 'Notes', before: Notes, after: '00123' }] : []),
+        ];
+      });
+      const affectedRows = new Set(changes.map(({ rowIndex }) => rowIndex)).size;
+      const preview = previewRosterHygiene(roster, operation);
+      expect(preview).toEqual({ affectedRows, affectedCells: changes.length, changes, samples: changes.slice(0, 5) });
+      const transformed = applyRosterHygiene(roster, operation);
+      expect(transformed.summary).toEqual({ operation, affectedRows, affectedCells: changes.length });
+      for (const change of changes) expect(transformed.sheet.rows[change.rowIndex]!.values[change.column]).toBe(change.after);
+      expect(transformed.undo).toBe(roster);
+      expect(JSON.stringify(transformed.undo)).toBe(original);
+      expect(transformed.sheet.rows.map(({ values }) => values.ID)).toEqual(roster.rows.map(({ values }) => values.ID));
+      expect(transformed.sheet.rows.every(({ warnings }, row) => warnings === roster.rows[row]!.warnings)).toBe(true);
+    }), 500);
+  });
+
+  it('checks all four anchors against actual glyph ink in 500 mixed-script layouts', async () => {
+    const assets = process.env.ARABIFORM_ASSET_ROOT ?? '.';
+    const fonts = {
+      arabic: await readFile(resolve(assets, 'public/fonts/NotoNaskhArabic-Regular.ttf')),
+      latin: await readFile(resolve(assets, 'public/fonts/NotoSans-Regular.ttf')),
+    };
+    const measuredFaces = { arabic: fontkit.create(fonts.arabic), latin: fontkit.create(fonts.latin) };
+    const shaper = createShaper(fonts, 'auto');
+    const modes: AlignOverride[] = ['auto', 'rtl', 'ltr', 'center'];
+    const geometry = fc.record({
+      innerWidth: fc.integer({ min: 18, max: 260 }), innerHeight: fc.integer({ min: 7, max: 80 }),
+      padding: fc.integer({ min: 2, max: 7 }), alignment: fc.constantFrom(undefined, 0, 1, 2),
+      multiline: fc.boolean(), max: fc.integer({ min: 8, max: 18 }),
+    });
+    const values = fc.tuple(fc.constantFrom('  ', '', ' ', '  \t'), fc.constantFrom('بَنِي #00123', 'A jQ 00123', 'سَلْمَى Alex', 'إدارة ٠١٢3'),
+      fc.constantFrom('', ' ', '    ', '\nرُقَيَّة نَاجِي  ')).map((parts) => parts.join(''));
+    const verified: Record<AlignOverride, number> = { auto: 0, rtl: 0, ltr: 0, center: 0 };
+    let flagged = 0;
+    await verify(fc.asyncProperty(values, geometry, async (value, { multiline, ...geometry }) => {
+      const options = { ...geometry, min: 8 };
+      const auto = fitText(shaper, value, multiline, options);
+      if ('code' in auto) flagged++;
+      for (const mode of modes) {
+        const output = fitText(shaper, value, multiline, { ...options, alignOverride: mode });
+        if ('code' in auto || mode === 'auto') {
+          expect(output).toEqual(auto);
+          if ('code' in auto) continue;
+        }
+        if ('code' in output || 'code' in auto) throw new Error('Alignment changed the fit result');
+        expect(output.size).toBe(auto.size);
+        for (const [{ line, baseline, origin }, old] of output.lines.map((line, index) => [line, auto.lines[index]!] as const)) {
+          expect(line.glyphs).toEqual(old.line.glyphs);
+          expect(baseline).toBe(old.baseline);
+          if (!line.painted) continue;
+          let left = Infinity;
+          let right = -Infinity;
+          for (const glyph of line.glyphs) {
+            if (glyph.font === 'custom') throw new Error('Expected a bundled font');
+            const face = measuredFaces[glyph.font];
+            const bounds = face.getGlyph(glyph.id).bbox;
+            const size = output.size;
+            const scale = size / face.unitsPerEm;
+            left = Math.min(left, origin + glyph.x * size + bounds.minX * scale);
+            right = Math.max(right, origin + glyph.x * size + bounds.maxX * scale);
+            expect(baseline + glyph.y * size + bounds.minY * scale).toBeGreaterThanOrEqual(options.padding - 1e-8);
+            expect(baseline + glyph.y * size + bounds.maxY * scale).toBeLessThanOrEqual(options.padding + options.innerHeight + 1e-8);
+          }
+          const start = left - options.padding;
+          const end = options.padding + options.innerWidth - right;
+          expect(start).toBeGreaterThanOrEqual(-1e-8);
+          expect(end).toBeGreaterThanOrEqual(-1e-8);
+          if (mode === 'ltr') expect(start).toBeCloseTo(0, 8);
+          if (mode === 'rtl') expect(end).toBeCloseTo(0, 8);
+          if (mode === 'center') expect(start).toBeCloseTo(end, 8);
+        }
+        verified[mode]++;
+      }
+    }), 500);
+    expect(flagged).toBeGreaterThan(40);
+    expect(verified).toEqual(Object.fromEntries(modes.map((mode) => [mode, 500 - flagged])));
+    console.info(`fast-check: ${500 - flagged} fitting and ${flagged} flagged layouts in each of the four alignment modes.`);
+  }, 30_000);
+
+  it('rejects 500 malformed drafts while roundtripping edits for exact inputs', async () => {
+    const corruption = fc.constantFrom('json', 'row', 'column', 'cell', 'mapping', 'alignment', 'unexpected-key', 'summary', 'hash', 'version');
+    await verify(fc.asyncProperty(mixedText, corruption, fc.nat({ max: 9999 }), async (text, mode, row) => {
+      const source = {
+        templateSha256: 'a'.repeat(64), rosterSha256: 'b'.repeat(64), fields: ['Name'],
+        sheetName: 'Roster', columns: ['Name', '__proto__'], rowCount: row + 1,
+      };
+      const draft: BatchDraft = {
+        kind: 'arabiform-batch-draft', version: 1, source,
+        edits: { [row]: { Name: text, ['__proto__']: '00123' } },
+        settings: { version: 4, mapping: { Name: 'Name' }, filenamePattern: '{{Name}}.pdf', minFontSize: 8,
+          font: 'auto', flattenZip: false, includeCoverSheet: true, alignOverrides: { Name: 'center' } },
+        hygiene: [{ operation: { columns: [0] }, affectedRows: 1, affectedCells: 1 }], customFontSha256: null,
+      };
+      const saved = serializeBatchDraft(draft);
+      expect(parseBatchDraft(saved, source)).toEqual(draft);
+      expect(() => parseBatchDraft(saved, { ...source, rosterSha256: 'f'.repeat(64) })).toThrow('batch-draft-source-mismatch');
+      const corrupted = {
+        json: {},
+        row: { edits: { [row + 1]: { Name: text } } },
+        column: { edits: { [row]: { constructor: text } } },
+        cell: { edits: { [row]: { Name: [text] } } },
+        mapping: { settings: { ...draft.settings, mapping: { Name: text + '!' } } },
+        alignment: { settings: { ...draft.settings, alignOverrides: { Name: text + '!' } } },
+        'unexpected-key': { ['__proto__']: text },
+        summary: { hygiene: [{ ...draft.hygiene[0], affectedCells: 2 }] },
+        hash: { source: { ...source, templateSha256: text + '!' } },
+        version: { version: row + 2 },
+      };
+      expect(() => parseBatchDraft(mode === 'json' ? '#' + text : JSON.stringify({ ...draft, ...corrupted[mode] }), source))
+        .toThrow('invalid-batch-draft');
+    }), 500);
+  });
 });

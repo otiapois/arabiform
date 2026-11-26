@@ -79,7 +79,14 @@ def check_alignment(spec, document, widget, page, bounds, box, label):
         if spec["mode"] == "auto":
             assert near + 10 < far, (label, widget.field_name, start, end)
         else:
-            expected = 4 * (1.6 + max(0, widget.border_width or 0))
+            kind, raw_width = document.xref_get_key(widget.xref, "BS/W")
+            if kind in ("int", "float"):
+                border_width = float(raw_width)
+            else:
+                kind, border = document.xref_get_key(widget.xref, "Border")
+                parts = border.strip("[] ").split(maxsplit=3) if kind == "array" else []
+                border_width = float(parts[2]) if len(parts) >= 3 else 0
+            expected = 4 * (1.6 + max(0, border_width))
             assert abs(near - expected) <= 3 and near + 10 < far, (label, widget.field_name, near, expected, far)
     return {"alignmentMode": spec["mode"], "alignmentAnchor": spec["anchor"], "logicalHorizontalInsetsAt4x": [start, end]}
 
