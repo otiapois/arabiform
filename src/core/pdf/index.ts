@@ -1,12 +1,15 @@
 import fontkit from '@pdf-lib/fontkit';
-import { PDFBool, PDFCheckBox, PDFDict, PDFHexString, PDFName, PDFTextField } from 'pdf-lib';
+import { PDFBool, PDFCheckBox, PDFDict, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
 import { borderWidth, installAppearance, type AppearanceFont } from './appearances';
-import { applyCheckbox, parseCheckbox, planCheckbox } from './checkbox';
+import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
+import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
 import { createShaper, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
 import { key, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
 
-export { createAudit, createMergedPdf, createZip } from './exports';
+export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './exports';
+export { matchChoice } from './choice-match';
+export type { FieldChoice } from './choice-match';
 export { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } from './custom-font';
 export type { AuditRow, PdfExportRow } from './exports';
 export { PdfIntakeError } from './template';
@@ -14,11 +17,14 @@ export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } f
 
 export type DiagnosticCode = 'too-narrow' | 'too-low' | 'exceeds-maxlen' | 'unsupported-glyph' | 'widget-rotated-unsupported'
   | 'missing-required' | 'unknown-field' | 'no-widget' | 'readonly-field' | 'unsupported-field-mode' | 'unsupported-line-break'
-  | 'unsupported-widget' | 'unsupported-bidi' | 'invalid-checkbox-value' | 'unsupported-checkbox-appearance' | 'missing-glyphs';
+  | 'unsupported-widget' | 'unsupported-bidi' | 'invalid-checkbox-value' | 'unsupported-checkbox-appearance' | 'missing-glyphs'
+  | 'invalid-choice' | 'unsupported-radio-appearance';
 
 export interface FieldDiagnostic {
   field: string;
   code: DiagnosticCode;
+  pageNumbers: number[];
+  choices?: FieldChoice[];
   widgetIndex?: number;
   requiredFontSizePt?: number;
   maxLengthExcess?: number;
@@ -26,6 +32,7 @@ export interface FieldDiagnostic {
 export interface RowPreflightResult {
   status: 'pass' | 'flagged';
   diagnostics: FieldDiagnostic[];
+  pageNumbers: number[];
   fontSizes: Record<string, number[]>;
   pdfBytes?: Uint8Array;
 }
@@ -52,49 +59,100 @@ export async function preflightRow(
   const custom = customFont && loadCustomFont(customFont);
   let shaper: ReturnType<typeof createShaper> | undefined;
   const knownFields = new Set(fields.map(({ meta }) => meta.name));
-  const diagnostics: FieldDiagnostic[] = Object.keys(valuesByField).filter((field) => !knownFields.has(field)).map((field) => ({ field, code: 'unknown-field' }));
-  const plans = [];
-  const checkboxPlans: { canonical: PDFDict; widgets: WidgetTarget[]; state: PDFName }[] = [];
+  const diagnostics: FieldDiagnostic[] = Object.keys(valuesByField).filter((field) => !knownFields.has(field))
+    .map((field) => ({ field, code: 'unknown-field', pageNumbers: [] }));
+  const plans: {
+    field: PDFTextField | PDFDropdown;
+    canonicalValue: PDFString | PDFHexString;
+    choiceIndex?: number;
+    placed: { widget: WidgetTarget; placement: Placement }[];
+  }[] = [];
+  const buttonPlans: { canonical: PDFDict; widgets: WidgetTarget[]; state: PDFName; selectedIndex?: number }[] = [];
   const sizes: [string, number[]][] = [];
   const fontKeys = new Set<FontKey>();
   const customGlyphIds = new Set<number>();
 
-  for (const { field, widgets, meta, alignment, completeWidgetList } of fields) {
+  for (const { field, widgets, meta, alignment, completeWidgetList, pageNumbers, dropdownOptions } of fields) {
     const { name } = meta;
     const mapped = Object.hasOwn(valuesByField, name);
-    const value = mapped ? valuesByField[name]! : meta.value;
+    let value = mapped ? valuesByField[name]! : meta.value;
+    const canonical = field.acroField.dict;
+    const flag = (issue: Omit<FieldDiagnostic, 'field' | 'pageNumbers'>) => {
+      const widgetPage = issue.widgetIndex === undefined ? undefined : widgets[issue.widgetIndex]!.meta.pageIndex;
+      diagnostics.push({ field: name, ...issue, pageNumbers: widgetPage === undefined ? pageNumbers : widgetPage < 0 ? [] : [widgetPage + 1] });
+    };
     if (mapped && meta.readOnly) {
-      diagnostics.push({ field: name, code: 'readonly-field' });
+      flag({ code: 'readonly-field' });
       continue;
     }
     if (field instanceof PDFCheckBox && mapped) {
       const checked = parseCheckbox(value);
-      if (checked === undefined) diagnostics.push({ field: name, code: 'invalid-checkbox-value' });
-      else if (!widgets.length || widgets.every(({ meta }) => meta.pageIndex < 0)) diagnostics.push({ field: name, code: 'no-widget' });
-      else if (!completeWidgetList) diagnostics.push({ field: name, code: 'unsupported-checkbox-appearance' });
+      if (checked === undefined) flag({ code: 'invalid-checkbox-value' });
+      else if (!completeWidgetList) flag({ code: 'unsupported-checkbox-appearance' });
+      else if (!pageNumbers.length) flag({ code: 'no-widget' });
       else {
-        const canonical = field.acroField.dict;
         const { problems, state } = planCheckbox(canonical, widgets, checked);
         if (problems.length) {
-          for (const widgetIndex of problems) diagnostics.push({ field: name, widgetIndex, code: 'unsupported-checkbox-appearance' });
-        } else checkboxPlans.push({ canonical, widgets, state: state! });
+          for (const widgetIndex of problems) flag({ widgetIndex, code: 'unsupported-checkbox-appearance' });
+        } else buttonPlans.push({ canonical, widgets, state: state! });
       }
       continue;
     }
-    if (!(field instanceof PDFTextField)) continue;
-    if (meta.required && !value.trim()) {
-      diagnostics.push({ field: name, code: 'missing-required' });
+    if (field instanceof PDFTextField && meta.required && !value.trim()) {
+      flag({ code: 'missing-required' });
       continue;
     }
     if (!mapped) continue;
-    const firstDiagnostic = diagnostics.length;
-    const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
-    if (excess > 0) diagnostics.push({ field: name, code: 'exceeds-maxlen', maxLengthExcess: excess });
-    if (field.isCombed() || field.isPassword() || field.isFileSelector() || field.isRichFormatted()) diagnostics.push({ field: name, code: 'unsupported-field-mode' });
-    if (diagnostics.length > firstDiagnostic) continue;
-    const reason = textInputDiagnostic(value) ?? (!widgets.length || widgets.every(({ meta }) => meta.pageIndex < 0) ? 'no-widget' : undefined);
+    if (field instanceof PDFRadioGroup) {
+      if (!completeWidgetList) {
+        flag({ code: 'unsupported-radio-appearance' });
+        continue;
+      }
+      if (!pageNumbers.length) {
+        flag({ code: 'no-widget' });
+        continue;
+      }
+      const { states, problems, consistent } = planRadio(canonical, widgets);
+      if (!consistent) flag({ code: 'unsupported-radio-appearance' });
+      for (const widgetIndex of problems) flag({ code: 'unsupported-radio-appearance', widgetIndex });
+      if (!consistent || problems.length) continue;
+      const choices = meta.choices!;
+      const selectedIndex = matchChoice(choices, value);
+      if (!choices.length) flag({ code: 'unsupported-radio-appearance' });
+      else if (selectedIndex === undefined) flag({ code: 'invalid-choice', choices });
+      else buttonPlans.push({ canonical, widgets, state: states[selectedIndex]!, selectedIndex });
+      continue;
+    }
+    let canonicalValue: PDFString | PDFHexString;
+    let choiceIndex: number | undefined;
+    if (field instanceof PDFDropdown) {
+      if (field.isMultiselect() || !dropdownOptions?.length) {
+        flag({ code: 'unsupported-field-mode' });
+        continue;
+      }
+      const choices = meta.choices!;
+      const index = matchChoice(choices, value);
+      if (index === undefined) {
+        flag({ code: 'invalid-choice', choices });
+        continue;
+      }
+      const selected = dropdownOptions[index]!;
+      value = selected.label;
+      canonicalValue = selected.exportString;
+      // Keep the index in sync if the template uses it or two labels share an export value.
+      if (canonical.has(key('I')) || widgets.some(({ widget }) => widget.dict.has(key('I')))
+        || choices.some((choice, ordinal) => ordinal !== index && choice.value === selected.value)) choiceIndex = index;
+    } else if (field instanceof PDFTextField) {
+      const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
+      const unsupportedMode = field.isCombed() || field.isPassword() || field.isFileSelector() || field.isRichFormatted();
+      if (excess > 0) flag({ code: 'exceeds-maxlen', maxLengthExcess: excess });
+      if (unsupportedMode) flag({ code: 'unsupported-field-mode' });
+      if (excess > 0 || unsupportedMode) continue;
+      canonicalValue = PDFHexString.fromText(value);
+    } else continue;
+    const reason = textInputDiagnostic(value) ?? (!completeWidgetList ? 'unsupported-widget' : !pageNumbers.length ? 'no-widget' : undefined);
     if (reason) {
-      diagnostics.push({ field: name, code: reason });
+      flag({ code: reason });
       continue;
     }
 
@@ -116,7 +174,7 @@ export async function preflightRow(
         if (custom) throw new Error('invalid-custom-font', { cause });
         throw cause;
       }
-      if ('code' in placement) diagnostics.push({ field: name, widgetIndex, ...placement });
+      if ('code' in placement) flag({ widgetIndex, ...placement });
       else placed.push({ widget, placement });
     }
     if (placed.length !== widgets.length) continue;
@@ -129,12 +187,13 @@ export async function preflightRow(
         }
       }
     }
-    plans.push({ field, value, placed });
+    plans.push({ field, canonicalValue, choiceIndex, placed });
   }
 
   const fontSizes = Object.fromEntries(sizes);
-  if (diagnostics.length) return { status: 'flagged', diagnostics, fontSizes };
-  if (!plans.length && !checkboxPlans.length) return { status: 'pass', diagnostics, fontSizes, pdfBytes: new Uint8Array(bytes) };
+  const pageNumbers = [...new Set(diagnostics.flatMap((issue) => issue.pageNumbers))].sort((first, second) => first - second);
+  if (diagnostics.length) return { status: 'flagged', diagnostics, pageNumbers, fontSizes };
+  if (!plans.length && !buttonPlans.length) return { status: 'pass', diagnostics, pageNumbers, fontSizes, pdfBytes: new Uint8Array(bytes) };
 
   doc.registerFontkit(fontkit);
   const embedded: Partial<Record<FontKey, AppearanceFont>> = {};
@@ -162,12 +221,16 @@ export async function preflightRow(
     rawForm.set(key('DR'), globalResources);
   }
   rawForm.set(key('NeedAppearances'), PDFBool.False);
-  for (const { canonical, widgets, state } of checkboxPlans) applyCheckbox(canonical, widgets, state);
-  for (const { field, value, placed } of plans) {
-    const canonicalValue = PDFHexString.fromText(value);
-    field.acroField.setValue(canonicalValue);
+  for (const { canonical, widgets, state, selectedIndex } of buttonPlans) applyButton(canonical, widgets, state, selectedIndex);
+  for (const { field, canonicalValue, choiceIndex, placed } of plans) {
+    const canonical = field.acroField.dict;
+    canonical.set(key('V'), canonicalValue);
+    const choiceIndices = choiceIndex === undefined ? undefined : doc.context.obj([choiceIndex]);
+    if (choiceIndices) canonical.set(key('I'), choiceIndices);
     for (const { widget, placement } of placed) {
-      if (widget.widget.dict !== field.acroField.dict && widget.widget.dict.has(key('V'))) widget.widget.dict.set(key('V'), canonicalValue);
+      const dict = widget.widget.dict;
+      if (dict !== canonical && dict.has(key('V'))) dict.set(key('V'), canonicalValue);
+      if (choiceIndices && dict !== canonical && dict.has(key('I'))) dict.set(key('I'), choiceIndices);
       const mainGlyph = placement.lines.find(({ line }) => line.painted)?.line.glyphs[0];
       const mainFont = mainGlyph && embedded[mainGlyph.font];
       if (mainFont) widget.widget.setDefaultAppearance(`/${mainFont.name} ${placement.size} Tf 0 g`);
@@ -178,5 +241,5 @@ export async function preflightRow(
     const mainFont = mainGlyph && embedded[mainGlyph.font];
     if (first && mainFont) field.acroField.setDefaultAppearance(`/${mainFont.name} ${first.placement.size} Tf 0 g`);
   }
-  return { status: 'pass', diagnostics, fontSizes, pdfBytes: await doc.save({ updateFieldAppearances: false }) };
+  return { status: 'pass', diagnostics, pageNumbers, fontSizes, pdfBytes: await doc.save({ updateFieldAppearances: false }) };
 }

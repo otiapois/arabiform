@@ -1,4 +1,4 @@
-import { createMergedPdf, createZip, preflightRow, type RowPreflightResult } from '../pdf';
+import { createFlattenedZip, createMergedPdf, createZip, preflightRow, type RowPreflightResult } from '../pdf';
 import type { BatchProgress, BatchRequest, BatchResponse, BatchResult } from './protocol';
 
 // This file is loaded only as a dedicated module worker. The project also compiles DOM UI code.
@@ -27,7 +27,7 @@ scope.addEventListener('message', async ({ data: request }) => {
         progress(results.length, rows.length);
       }
       cached = results;
-      result = results.map(({ status, diagnostics, fontSizes }) => ({ status, diagnostics, fontSizes }));
+      result = results.map(({ status, diagnostics, fontSizes, pageNumbers }) => ({ status, diagnostics, fontSizes, pageNumbers }));
     } else {
       if (!cached) throw new Error('batch-not-ready');
       if (phase === 'preview') {
@@ -38,7 +38,8 @@ scope.addEventListener('message', async ({ data: request }) => {
           filename: phase === 'zip' ? request.filenames[index]! : '', pdfBytes,
         }] : []);
         if (!ready.length) throw new Error('empty-export');
-        result = phase === 'zip' ? createZip(ready, progress) : await createMergedPdf(ready, progress);
+        if (phase === 'zip') result = request.flattenZip ? await createFlattenedZip(ready, progress) : createZip(ready, progress);
+        else result = await createMergedPdf(ready, progress);
       }
     }
     scope.postMessage({ id, kind: 'result', result }, result instanceof Uint8Array ? [result.buffer as ArrayBuffer] : []);

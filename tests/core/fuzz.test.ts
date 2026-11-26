@@ -198,7 +198,7 @@ describe('seeded adversarial files and PDF geometry', () => {
       // Checkbox-only rows never need to parse or embed bundled text fonts.
       const result = await preflightRow(template, { Consent: padding + (upper ? token.toUpperCase() : token) + padding }, { fonts });
       if (!expected) {
-        expect(result.diagnostics).toEqual([{ field: 'Consent', code: 'invalid-checkbox-value' }]);
+        expect(result.diagnostics).toEqual([{ field: 'Consent', code: 'invalid-checkbox-value', pageNumbers: [1] }]);
         expect(result.pdfBytes).toBeUndefined();
         return;
       }
@@ -222,7 +222,7 @@ describe('seeded adversarial files and PDF geometry', () => {
       const latin = `#${String(id).padStart(5, '0')} Alex`;
       const value = reversed ? `${latin} (${arabic})` : `${arabic} ${latin}`;
       const result = await preflightRow(template, { Name: value }, { fonts, customFont });
-      expect(result.diagnostics).toEqual([{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0 }]);
+      expect(result.diagnostics).toEqual([{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0, pageNumbers: [1] }]);
       expect(result.pdfBytes).toBeUndefined();
     }), 420);
     console.info(`fast-check seed ${seed}: 1400 M3 font and checkbox cases, 2560 total cases, 0 discarded.`);

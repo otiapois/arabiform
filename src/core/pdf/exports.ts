@@ -1,4 +1,4 @@
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFString, PDFWidgetAnnotation } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFWidgetAnnotation } from 'pdf-lib';
 import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
@@ -16,7 +16,7 @@ export interface AuditRow {
 
 type ExportProgress = (completed: number, total: number) => void;
 
-export function createZip(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Uint8Array {
+function openZip(rows: readonly PdfExportRow[], onProgress?: ExportProgress) {
   const filenames = new Set<string>();
   for (const { filename } of rows) {
     const normalized = filenameKey(filename);
@@ -25,27 +25,44 @@ export function createZip(rows: readonly PdfExportRow[], onProgress?: ExportProg
   }
   const chunks: Uint8Array[] = [];
   let size = 0;
+  let index = 0;
   const zip = new Zip((error, data) => {
     if (error) throw error;
     chunks.push(data);
     size += data.length;
   });
   onProgress?.(0, rows.length);
-  for (const [index, { filename, pdfBytes }] of rows.entries()) {
-    const entry = new ZipPassThrough(filename);
-    entry.mtime = new Date(2000, 0, 1, 12);
-    zip.add(entry);
-    entry.push(pdfBytes, true);
-    onProgress?.(index + 1, rows.length);
-  }
-  zip.end();
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
+  return {
+    add(filename: string, pdfBytes: Uint8Array) {
+      const entry = new ZipPassThrough(filename);
+      entry.mtime = new Date(2000, 0, 1, 12);
+      zip.add(entry);
+      entry.push(pdfBytes, true);
+      onProgress?.(++index, rows.length);
+    },
+    finish() {
+      zip.end();
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return bytes;
+    },
+  };
+}
+
+export function createZip(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Uint8Array {
+  const zip = openZip(rows, onProgress);
+  for (const { filename, pdfBytes } of rows) zip.add(filename, pdfBytes);
+  return zip.finish();
+}
+
+export async function createFlattenedZip(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Promise<Uint8Array> {
+  const zip = openZip(rows, onProgress);
+  for (const row of rows) zip.add(row.filename, await createMergedPdf([row]));
+  return zip.finish();
 }
 
 function activeAppearance(widget: PDFDict) {
@@ -53,7 +70,8 @@ function activeAppearance(widget: PDFDict) {
   const normal = appearances?.lookup(key('N'));
   if (normal instanceof PDFStream) return { stream: normal, ref: appearances!.get(key('N')) };
   if (!(normal instanceof PDFDict)) return undefined;
-  const state = widget.lookupMaybe(key('AS'), PDFName) ?? key('Off');
+  const state = widget.lookupMaybe(key('AS'), PDFName);
+  if (!state) return undefined;
   const stream = normal.lookup(state);
   return stream instanceof PDFStream ? { stream, ref: normal.get(state), stateful: true } : undefined;
 }
@@ -72,13 +90,9 @@ function flattenWidgets(doc: PDFDocument) {
       if (flags & (1 | 2 | 32)) continue;
       if (page.getRotation().angle && flags & 16) throw new Error('unflattenable-widget');
       const appearance = activeAppearance(annot);
-      if (!appearance) {
-        const parent = annot.lookupMaybe(key('Parent'), PDFDict);
-        const value = annot.lookup(key('V')) ?? parent?.lookup(key('V'));
-        if ((value instanceof PDFString || value instanceof PDFHexString) && value.decodeText()) throw new Error('unflattenable-widget');
-        if (value instanceof PDFName && value !== key('Off')) throw new Error('unflattenable-widget');
-        continue;
-      }
+      // Viewers can synthesize appearances from /V or /MK. Dropping a visible
+      // widget without a reusable active stream can remove printed content.
+      if (!appearance) throw new Error('unflattenable-widget');
       const { stream, ref } = appearance;
       // PDF annotation renderers calculate stateful appearance placement with
       // single-precision rectangle coordinates. Retain that edge alignment.
