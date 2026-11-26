@@ -1,6 +1,6 @@
 {
   "name": "arabiform",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:fuzz": "vitest run tests/core/fuzz.test.ts",
     "build": "vite build && node scripts/prerender.mjs",
+    "verify:release": "node scripts/verify-release-bundle.mjs",
     "preview": "node scripts/serve-dist.mjs",
     "verify:pixels": "tsx scripts/verify-pdf-pixels.ts && python scripts/verify-pdf-pixels.py",
     "test:e2e": "playwright test",

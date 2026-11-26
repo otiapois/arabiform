@@ -33,6 +33,7 @@ npm test
 npm run test:fuzz
 npm run verify:pixels
 npm run build
+npm run verify:release
 ```
 
 The committed synthetic PDFs, CSV, and workbook support offline testing after install. Run `npm run generate:fixtures -- --check` to compare the generated fixture bytes against the tracked copies. See the [fixture guide](fixtures/README.md) for cases and optional public blank-template checks.
@@ -53,7 +54,7 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 - `/preserve-leading-zeros-pdf`
 - `/privacy-and-proof`
 
-Set `SITE_URL` to the actual site's origin before a release build. `https://arabiform.example` is the local placeholder. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`.
+Set `SITE_URL` to the actual site's origin before a release build. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL` to reject any leftover `https://arabiform.example` placeholder. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`.
 
 See the [Cloudflare Pages checklist](docs/launch/cloudflare-and-7day-plan.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [M4 brief](docs/tasks/M4-dropdowns-radios-print-pack.md), and [M5 release candidate brief](docs/tasks/M5-rc-a11y-bundle-and-5k-fuzz.md). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
