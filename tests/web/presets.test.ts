@@ -53,6 +53,16 @@ describe('local mapping preset boundary', () => {
     }
   });
 
+  it('roundtrips v4 alignment on exact mapped keys and rejects invalid overrides', () => {
+    const v4 = { ...preset, version: 4, flattenZip: false, includeCoverSheet: true,
+      alignOverrides: { Name: 'center', ID: 'ltr', Consent: 'auto' } };
+    expect(parseMappingPreset(JSON.stringify(v4))).toEqual(v4);
+    for (const alignOverrides of [undefined, null, [], { Name: 'middle' }, { Unknown: 'rtl' }, { Sentinel: 'center' }]) {
+      expect(() => parseMappingPreset(JSON.stringify({ ...v4, alignOverrides }))).toThrow('invalid-mapping-preset');
+    }
+    expect(() => parseMappingPreset(JSON.stringify({ ...v4, version: 3 }))).toThrow('invalid-mapping-preset');
+  });
+
   it('reports current missing fields, mapped columns and filename tokens once', () => {
     expect(presetMismatches(preset.mapping, '{{ Badge }}-{{Missing}}.pdf', ['Name', 'ID', 'Consent'], ['الاسم'])).toEqual({
       missingFields: ['Sentinel'], missingColumns: ['Badge', 'موافقة', 'Missing'],

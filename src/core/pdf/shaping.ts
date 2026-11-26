@@ -1,5 +1,6 @@
 import fontkit, { type Font, type GlyphRun } from '@pdf-lib/fontkit';
 import createBidi from 'bidi-js';
+import { explicitQuadding, type AlignOverride } from './alignment';
 
 type BundledFontKey = 'arabic' | 'latin';
 export type FontKey = BundledFontKey | 'custom';
@@ -8,7 +9,7 @@ type Direction = 'rtl' | 'ltr';
 
 interface Bounds { minX: number; maxX: number; minY: number; maxY: number }
 interface Glyph { id: number; font: FontKey; x: number; y: number }
-interface Line { text: string; direction: Direction; bounds: Bounds; painted: boolean; glyphs: Glyph[] }
+interface Line { text: string; direction: Direction; bounds: Bounds; inkX: readonly [number, number]; painted: boolean; glyphs: Glyph[] }
 export interface PlacedLine { line: Line; origin: number; baseline: number }
 export interface Placement { size: number; lines: PlacedLine[] }
 
@@ -102,6 +103,8 @@ export function createShaper(bytes: FontBytes, preferred: BundledFontKey | 'auto
 
     const glyphs: Glyph[] = [];
     const bounds = { minX: 0, maxX: 0, minY: Infinity, maxY: -Infinity };
+    let inkLeft = Infinity;
+    let inkRight = -Infinity;
     let pen = 0;
     for (const run of runs) {
       if (!run.chunks.length) continue;
@@ -120,8 +123,8 @@ export function createShaper(bytes: FontBytes, preferred: BundledFontKey | 'auto
         const y = offset.yOffset / face.unitsPerEm;
         const { minX, maxX, minY, maxY } = glyph.bbox;
         if (Number.isFinite(minX) && maxX > minX && maxY > minY) {
-          bounds.minX = Math.min(bounds.minX, x + minX / face.unitsPerEm);
-          bounds.maxX = Math.max(bounds.maxX, x + maxX / face.unitsPerEm);
+          inkLeft = Math.min(inkLeft, x + minX / face.unitsPerEm);
+          inkRight = Math.max(inkRight, x + maxX / face.unitsPerEm);
           bounds.minY = Math.min(bounds.minY, y + minY / face.unitsPerEm);
           bounds.maxY = Math.max(bounds.maxY, y + maxY / face.unitsPerEm);
           glyphs.push({ id: glyph.id, font: run.font, x, y });
@@ -129,9 +132,11 @@ export function createShaper(bytes: FontBytes, preferred: BundledFontKey | 'auto
         pen += offset.xAdvance / face.unitsPerEm;
       }
     }
-    bounds.maxX = Math.max(bounds.maxX, pen);
-    if (!glyphs.length) bounds.minY = bounds.maxY = 0;
-    const shaped: Line = { text, direction, bounds, painted: glyphs.length > 0, glyphs };
+    const painted = glyphs.length > 0;
+    if (!painted) inkLeft = inkRight = bounds.minY = bounds.maxY = 0;
+    bounds.minX = Math.min(0, inkLeft);
+    bounds.maxX = Math.max(0, inkRight, pen);
+    const shaped: Line = { text, direction, bounds, inkX: [inkLeft, inkRight], painted, glyphs };
     cache.set(key, shaped);
     return shaped;
   }
@@ -147,9 +152,9 @@ type FitError = 'too-narrow' | 'too-low' | 'unsupported-glyph' | 'missing-glyphs
 interface FitFailure { code: FitError; requiredFontSizePt?: number }
 
 export function fitText(shaper: Shaper, value: string, multiline: boolean, options: {
-  innerWidth: number; innerHeight: number; padding: number; min: number; max: number; alignment?: number;
+  innerWidth: number; innerHeight: number; padding: number; min: number; max: number; alignment?: number; alignOverride?: AlignOverride;
 }): Placement | FitFailure {
-  const { innerWidth, innerHeight, padding, min, max, alignment } = options;
+  const { innerWidth, innerHeight, padding, min, max, alignment, alignOverride = 'auto' } = options;
   if (innerWidth <= 0) return { code: 'too-narrow' };
   if (innerHeight <= 0 || max < MIN_FONT_SIZE) return { code: 'too-low' };
   if (!multiline && paragraphBreak.test(value)) return { code: 'unsupported-line-break' };
@@ -209,9 +214,10 @@ export function fitText(shaper: Shaper, value: string, multiline: boolean, optio
     return {
       size,
       lines: wrapped.map((line, index) => {
-        const room = innerWidth - (line.bounds.maxX - line.bounds.minX) * size;
-        const align = alignment ?? (line.direction === 'rtl' ? 2 : 0);
-        const origin = padding + (align === 1 ? room / 2 : align === 2 ? room : 0) - line.bounds.minX * size;
+        const [left, right] = alignOverride === 'auto' ? [line.bounds.minX, line.bounds.maxX] : line.inkX;
+        const room = innerWidth - (right - left) * size;
+        const align = alignOverride === 'auto' ? alignment ?? (line.direction === 'rtl' ? 2 : 0) : explicitQuadding[alignOverride];
+        const origin = padding + (align === 1 ? room / 2 : align === 2 ? room : 0) - left * size;
         const baseline = padding + (innerHeight - lineHeight) / 2 + (baselines[index]! - bottom) * size;
         return { line, origin, baseline };
       }),

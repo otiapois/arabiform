@@ -21,7 +21,9 @@ interface ExpectedChoices {
   radios?: Record<string, { state: string; widgets: string[] }>;
 }
 
-const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean } & ExpectedChoices)[] = [];
+type AlignmentMode = 'auto' | 'rtl' | 'ltr' | 'center';
+type ExpectedAlignment = Record<string, { mode: AlignmentMode; anchor: 'rtl' | 'ltr' | 'center' }>;
+const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean; alignments?: ExpectedAlignment } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
@@ -105,8 +107,10 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
 }
 
 async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
-  { customFont, expected = values, ...choices }: ExpectedChoices & { customFont?: Uint8Array; expected?: Record<string, string> } = {}) {
-  const result = await preflightRow(source, values, { ...settings, minFontSize, customFont });
+  { customFont, expected = values, alignments, ...choices }: ExpectedChoices & { customFont?: Uint8Array; expected?: Record<string, string>; alignments?: ExpectedAlignment } = {}) {
+  const alignOverrides = alignments && Object.fromEntries(Object.entries(alignments).map(([name, { mode }]) => [name, mode]));
+  const options = { ...settings, minFontSize, customFont, alignOverrides };
+  const result = await preflightRow(source, values, options);
   assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
   assert(result.pdfBytes);
   await compareRawPdf(source, result.pdfBytes, expected, choices);
@@ -116,7 +120,7 @@ async function passingCase(source: Buffer, values: Record<string, string>, filen
     originalSnapshots.add(before);
   }
   await writeFile(resolve(root, filename), result.pdfBytes);
-  cases.push({ before, after: filename, values: expected, label, ...choices, ...(customFont && { customFont: true }) });
+  cases.push({ before, after: filename, values: expected, label, alignments, ...choices, ...(customFont && { customFont: true }) });
   return { filename, pdfBytes: result.pdfBytes, fontSizes: result.fontSizes };
 }
 
@@ -173,6 +177,15 @@ const edgeMetadata = await inspectTemplate(edge);
 assert.deepEqual(edgeMetadata.pages.map(({ rotation }) => rotation), [0, 90, 180, 270]);
 assert.equal(edgeMetadata.fields.find(({ name }) => name === 'Repeated')?.widgets.length, 4);
 await passingCase(edge, { Repeated: 'رُقَيَّة نَاجِي', Multiline: 'سَلْمَى بِنْت يَاسِين\nReview the workshop handout before check-in. Reference 00007.', 'Widget Rotate': 'A-7' }, 'edge-pass.pdf', 'Repeated and rotated widgets');
+for (const mode of ['auto', 'rtl', 'ltr', 'center'] as const) {
+  const values = { Repeated: '  بَنِي يَمَن #00123 ', 'Widget Rotate': ' A-7  ' };
+  await passingCase(edge, values, `align-${mode}.pdf`, `${mode} alignment on repeated and rotated widgets`, settings.minFontSize, {
+    alignments: {
+      Repeated: { mode, anchor: mode === 'auto' ? 'rtl' : mode },
+      'Widget Rotate': { mode, anchor: mode === 'auto' ? 'ltr' : mode },
+    },
+  });
+}
 const rejected = await preflightRow(edge, { AtomicRepeat: 'رُقَيَّة نَاجِي', 'Too Narrow': 'ليلى حسن', 'Too Low': 'مُحَمَّد', 'Exceeds MaxLen': '00123' }, settings);
 assert.equal(rejected.status, 'flagged');
 assert.deepEqual(rejected.diagnostics, [
