@@ -11,6 +11,8 @@ const Diagnostics = lazy(() => import('./Diagnostics').then(({ Diagnostics }) =>
 const PdfPreview = lazy(() => import('./PdfPreview'));
 const Hygiene = lazy(() => import('./Hygiene'));
 const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
+const CustodyPanel = lazy(() => import('./CustodyPanel'));
+const PrintMarginAdvisory = lazy(() => import('./PrintMarginAdvisory'));
 
 type AppProps = {
   arabic: boolean;
@@ -76,6 +78,10 @@ export function App({ arabic, heading, summary, details }: AppProps) {
     && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
   const fontCheck = !desk.results || !textMapped ? labels.customFontCoverage
     : missingCustomGlyphs ? labels.customFontMissing : labels.customFontChecked;
+  const custodyLabel = arabic
+    ? <>نزّل بيان سلسلة الحيازة <bdi dir="ltr">(.json)</bdi></>
+    : 'Download Custody Manifest (.json)';
+  const custodyPending = <button type="button" className="button secondary" data-testid="custody-download" disabled>{custodyLabel}</button>;
 
   return (
     <>
@@ -248,6 +254,13 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
                     <span>{labels.includeCoverSheet}</span>
                   </label>
+                  {desk.includeCoverSheet && (
+                    <label className="output-mode custody-cover-option">
+                      <input type="checkbox" data-testid="custody-cover-footer" checked={desk.includeCustody} disabled={desk.exporting}
+                        onChange={(event) => desk.changeIncludeCustody(event.currentTarget.checked)} />
+                      <span>{arabic ? 'أدرج بصمات الملفات المصدرية على صفحة الغلاف' : 'Include source fingerprints on cover sheet'}</span>
+                    </label>
+                  )}
                   <WatermarkControls settings={desk.watermark} change={desk.changeWatermark} disabled={desk.exporting}
                     invalid={desk.watermarkBlocked} arabic={arabic} />
                   <div className="preset-controls">
@@ -292,6 +305,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 </div>
                 {selectedResult && <span className={`tag tag-${selectedResult.status}`}>{fillLabel(labels.selected, { row: desk.selected + 1 })}</span>}
               </header>
+              {desk.template && desk.hasMapping && (
+                <Suspense>
+                  <PrintMarginAdvisory template={desk.template.info} mapping={desk.mapping} arabic={arabic} />
+                </Suspense>
+              )}
               {!!selectedResult?.diagnostics.length && (
                 <div className="preview-diagnostics">
                   <Suspense>
@@ -345,6 +363,14 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               <div className="actions audit-actions" aria-label={labels.audit}>
                 <button type="button" className="button secondary" disabled={!desk.results || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
                 <button type="button" className="button secondary" disabled={!desk.results || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
+              </div>
+              <div className="custody-controls">
+                {desk.custody ? (
+                  <Suspense fallback={custodyPending}>
+                    <CustodyPanel sources={desk.custody} outputs={desk.custodyOutputs} disabled={desk.exporting}
+                      label={custodyLabel} arabic={arabic} />
+                  </Suspense>
+                ) : custodyPending}
               </div>
               {desk.exporting && <p role="status">{labels.exporting}</p>}
               {desk.exportError && <p className="alert" role="alert">{problem(desk.exportError) ?? labels.exportError}</p>}
