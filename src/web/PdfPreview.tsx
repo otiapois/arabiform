@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import { PRINT_MARGIN_THRESHOLD_PT } from '../core/pdf/margin-preflight';
 import { diagnosticText } from './Diagnostics';
 import { fillLabel, type translator } from './labels';
 import type { RowResult, TemplateInfo } from './useWorkbench';
@@ -10,6 +11,7 @@ const en = {
   previewCanvas: 'Rendered PDF page',
   zoom: 'Preview zoom',
   fit: 'Fit',
+  marginGuide: '9 pt margin guide',
   previousPage: 'Previous page',
   nextPage: 'Next page',
   pageCount: 'Page {page} of {total}',
@@ -24,6 +26,7 @@ const ar: typeof en = {
   previewCanvas: 'صفحة PDF المعروضة',
   zoom: 'تكبير المعاينة',
   fit: 'ملاءمة الصفحة',
+  marginGuide: 'دليل هامش 9 نقاط',
   previousPage: 'الصفحة السابقة',
   nextPage: 'الصفحة التالية',
   pageCount: 'الصفحة {page} من {total}',
@@ -70,9 +73,11 @@ export default function PdfPreview({
     diagnostics?: RowResult['diagnostics'];
     complete: boolean;
     ratio?: number;
+    marginInset?: string;
     positions?: Position[];
   }>();
   const [zoom, setZoom] = useState('fit');
+  const [marginGuide, setMarginGuide] = useState(false);
   const [frameWidth, setFrameWidth] = useState(0);
   const frame = useRef<HTMLDivElement>(null);
   const pageRail = useRef<HTMLDivElement>(null);
@@ -183,7 +188,12 @@ export default function PdfPreview({
           });
         });
       }
-      setRendered({ pdf: document, page, size, width: viewport.width, diagnostics, complete: true, ratio: viewport.width / viewport.height, positions });
+      // The scale-1 rotated CropBox viewport measures physical points, including /UserUnit.
+      const margin = PRINT_MARGIN_THRESHOLD_PT;
+      const marginInset = Math.min(base.width, base.height) > margin * 2
+        ? `${100 * margin / base.height}% ${100 * margin / base.width}%` : '0';
+      setRendered({ pdf: document, page, size, width: viewport.width, diagnostics, complete: true,
+        ratio: viewport.width / viewport.height, positions, marginInset });
     }
 
     void draw(pdf, target).catch(() => {
@@ -213,6 +223,11 @@ export default function PdfPreview({
           <option value="1.25">125%</option>
           <option value="1.5">150%</option>
         </select>
+        <label className="margin-guide-option">
+          <input type="checkbox" role="switch" checked={marginGuide} disabled={!pdf} data-testid="margin-guide-toggle"
+            onChange={(event) => setMarginGuide(event.currentTarget.checked)} />
+          <span>{copy.marginGuide}</span>
+        </label>
       </div>
       {pageCount > 0 && (
         <div className="preview-page-rail" ref={pageRail} role="group" aria-label={copy.previewPages} data-testid="preview-pages">
@@ -244,6 +259,10 @@ export default function PdfPreview({
             data-rendered={raster?.complete ? 'true' : undefined}
             ref={canvas}
           />
+          {marginGuide && raster?.marginInset && (
+            <span className="margin-guide" style={{ inset: raster.marginInset }} aria-hidden="true" data-testid="margin-guide"
+              data-inset-pt={PRINT_MARGIN_THRESHOLD_PT} data-all-margin={raster.marginInset === '0' || undefined} />
+          )}
           {raster?.positions?.map(({ key, field, issues, ...style }) => (
             <span
               key={key}
