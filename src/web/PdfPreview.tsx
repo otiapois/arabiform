@@ -14,18 +14,23 @@ type PreviewProps = {
   minSize: number;
   unavailable: boolean;
   language: ReturnType<typeof translator>;
+  requestedPage: number;
+  onPageChange: (page: number) => void;
 };
 
 type Position = {
   key: string;
   field: string;
+  issues: RowResult['diagnostics'];
   left: string;
   top: string;
   width: string;
   height: string;
 };
 
-export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavailable, language }: PreviewProps) {
+export default function PdfPreview({
+  bytes, fields, diagnostics, minSize, unavailable, language, requestedPage, onPageChange,
+}: PreviewProps) {
   const { labels } = language;
   const [loaded, setLoaded] = useState<{ bytes: Uint8Array; pdf?: PDFDocumentProxy }>();
   const [rendered, setRendered] = useState<{
@@ -37,7 +42,6 @@ export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavai
     ratio?: number;
     positions?: Position[];
   }>();
-  const [requestedPage, setRequestedPage] = useState(1);
   const [zoom, setZoom] = useState('fit');
   const [frameWidth, setFrameWidth] = useState(0);
   const frame = useRef<HTMLDivElement>(null);
@@ -50,6 +54,13 @@ export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavai
   const raster = rendered && rendered.pdf === pdf && rendered.page === page && rendered.width === width
     && rendered.diagnostics === diagnostics ? rendered : undefined;
   const failed = unavailable || (bytes && loaded?.bytes === bytes && !pdf) || (raster && !raster.complete);
+  const issuePages = new Map<number, number>();
+  for (const issue of diagnostics ?? []) {
+    for (const pageNumber of issue.pageNumbers) {
+      issuePages.set(pageNumber, (issuePages.get(pageNumber) ?? 0) + 1);
+    }
+  }
+  const pageIssues = Array.from(issuePages).sort(([first], [second]) => first - second);
 
   useEffect(() => {
     const host = frame.current!;
@@ -113,14 +124,16 @@ export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavai
       const positions: Position[] = [];
       for (const field of fields) {
         field.widgets.forEach((widget, index) => {
-          if (widget.pageIndex !== page - 1 || !diagnostics?.some(
-            (issue) => issue.field === field.name && (issue.widgetIndex === undefined || issue.widgetIndex === index),
-          )) return;
+          if (widget.pageIndex !== page - 1) return;
+          const issues = diagnostics?.filter((issue) => issue.field === field.name
+            && issue.pageNumbers.includes(page) && (issue.widgetIndex === undefined || issue.widgetIndex === index));
+          if (!issues?.length) return;
           const [x1, y1] = viewport.convertToViewportPoint(widget.x, widget.y);
           const [x2, y2] = viewport.convertToViewportPoint(widget.x + widget.width, widget.y + widget.height);
           positions.push({
             key: `${field.name}-${index}`,
             field: field.name,
+            issues,
             left: `${100 * Math.min(x1, x2) / viewport.width}%`,
             top: `${100 * Math.min(y1, y2) / viewport.height}%`,
             width: `${100 * Math.abs(x2 - x1) / viewport.width}%`,
@@ -144,11 +157,11 @@ export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavai
     <>
       <div className="preview-toolbar">
         <div className="page-controls" aria-label={labels.preview}>
-          <button type="button" className="icon-button" aria-label={labels.previousPage} disabled={page <= 1 || !pdf} onClick={() => setRequestedPage(page - 1)}>
+          <button type="button" className="icon-button" aria-label={labels.previousPage} disabled={page <= 1 || !pdf} onClick={() => onPageChange(page - 1)}>
             <span aria-hidden="true" className="chevron previous" />
           </button>
           <span className="page-counter">{fillLabel(labels.pageCount, { page: pdf ? page : 0, total: pdf?.numPages ?? 0 })}</span>
-          <button type="button" className="icon-button" aria-label={labels.nextPage} disabled={!pdf || page >= pdf.numPages} onClick={() => setRequestedPage(page + 1)}>
+          <button type="button" className="icon-button" aria-label={labels.nextPage} disabled={!pdf || page >= pdf.numPages} onClick={() => onPageChange(page + 1)}>
             <span aria-hidden="true" className="chevron next" />
           </button>
         </div>
@@ -160,6 +173,16 @@ export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavai
           <option value="1.5">150%</option>
         </select>
       </div>
+      {pageIssues.length > 0 && (
+        <div className="preview-issue-pages" role="group" aria-label={labels.issuePages}>
+          {pageIssues.map(([pageNumber, count]) => (
+            <button type="button" className="issue-page" data-testid="issue-page" data-page={pageNumber} key={pageNumber}
+              aria-current={pageNumber === page ? 'page' : undefined} onClick={() => onPageChange(pageNumber)}>
+              {fillLabel(count === 1 ? labels.issuePageOne : labels.issuePageMany, { page: pageNumber, count })}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="preview-bed" ref={frame}>
         {failed && <p className="alert" role="alert">{labels.previewError}</p>}
         {!failed && !raster && <p className="preview-message" role="status">{labels.previewBusy}</p>}
@@ -171,13 +194,13 @@ export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavai
             data-rendered={raster?.complete ? 'true' : undefined}
             ref={canvas}
           />
-          {raster?.positions?.map(({ key, field, ...style }) => (
+          {raster?.positions?.map(({ key, field, issues, ...style }) => (
             <span
               key={key}
               className="widget-overlay"
               data-testid="flagged-widget"
               data-field={field}
-              title={diagnostics?.filter((issue) => issue.field === field).map((issue) => diagnosticText(issue, minSize, language)).join(' · ')}
+              title={issues.map((issue) => diagnosticText(issue, minSize, language)).join(' · ')}
               style={style}
             />
           ))}

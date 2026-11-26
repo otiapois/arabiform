@@ -1,12 +1,16 @@
 export type FontMode = 'auto' | 'arabic' | 'latin';
 
-export type MappingPreset = {
-  version: 1;
+type PresetSettings = {
   mapping: Record<string, string>;
   filenamePattern: string;
   minFontSize: number;
   font: FontMode;
 };
+
+export type MappingPreset = PresetSettings & (
+  | { version: 1 }
+  | { version: 2; flattenZip: boolean }
+);
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -16,8 +20,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseMappingPreset(text: string): MappingPreset {
   const data: unknown = JSON.parse(text);
-  if (!isRecord(data) || Object.keys(data).length !== presetKeys.length
-    || !presetKeys.every((key) => Object.hasOwn(data, key)) || data.version !== 1
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2)
+    || Object.keys(data).length !== presetKeys.length + (data.version === 2 ? 1 : 0)
+    || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
     || data.minFontSize < 6 || data.minFontSize > 10
@@ -33,10 +38,16 @@ export function parseMappingPreset(text: string): MappingPreset {
     }
     mapping.push([field, column]);
   }
-  return {
-    version: 1, mapping: Object.fromEntries(mapping), filenamePattern: data.filenamePattern,
+  const settings: PresetSettings = {
+    mapping: Object.fromEntries(mapping), filenamePattern: data.filenamePattern,
     minFontSize: data.minFontSize, font: data.font,
   };
+  if (data.version === 1) return { version: 1, ...settings };
+  const flattenZip = data.flattenZip;
+  if (!Object.hasOwn(data, 'flattenZip') || typeof flattenZip !== 'boolean') {
+    throw new Error('invalid-mapping-preset');
+  }
+  return { version: 2, ...settings, flattenZip };
 }
 
 export function presetMismatches(

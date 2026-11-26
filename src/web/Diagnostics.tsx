@@ -1,3 +1,4 @@
+import { ChoiceList } from './Choices';
 import { fillLabel, type translator } from './labels';
 import type { RowResult } from './useWorkbench';
 
@@ -30,10 +31,16 @@ export function Diagnostics({ issues, minSize, language, testId }: {
   language: Language;
   testId: string;
 }) {
+  const { labels } = language;
   return (
-    <ul className="diagnostics" aria-label={language.labels.diagnostics} data-testid={testId}>
+    <ul className="diagnostics" aria-label={labels.diagnostics} data-testid={testId}>
       {issues.map((issue, index) => (
-        <li key={index}><bdi dir="auto">{issue.field}</bdi>{' · '}{diagnosticText(issue, minSize, language)}</li>
+        <li key={index}>
+          <bdi dir="auto">{issue.field}</bdi>{' · '}{diagnosticText(issue, minSize, language)}
+          {issue.choices?.length
+            ? <ChoiceList choices={issue.choices} label={labels.allowedChoices} blank={labels.blankChoice} />
+            : null}
+        </li>
       ))}
     </ul>
   );

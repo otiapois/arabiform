@@ -26,7 +26,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
   const [preview, setPreview] = useState<{ results: BatchRowResult[]; row: number; bytes?: Uint8Array }>();
   const [progress, setProgress] = useState<BatchProgress>();
   const [exporting, setExporting] = useState<ExportKind>();
-  const [exportError, setExportError] = useState(false);
+  const [exportError, setExportError] = useState<string>();
   const current = checked?.batch === batch ? checked : undefined;
   const results = current?.results;
   const currentPreview = preview?.results === results && preview?.row === selected ? preview : undefined;
@@ -45,7 +45,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
     setPreview(undefined);
     setProgress(undefined);
     setExporting(undefined);
-    setExportError(false);
+    setExportError(undefined);
     if (unpause) setPaused(false);
   }
 
@@ -122,17 +122,17 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
 
   function changeFilenames() {
     if (exportLock.current) invalidate();
-    else setExportError(false);
+    else setExportError(undefined);
   }
 
-  async function download(kind: ExportKind, filenames: readonly string[], ready: number) {
+  async function download(kind: ExportKind, filenames: readonly string[], ready: number, flattenZip: boolean) {
     const client = worker.current;
     if (!client || !results || exportLock.current) return;
     if ((kind === 'zip' || kind === 'merged') && !ready) return;
     const operation = Symbol();
     exportLock.current = operation;
     setExporting(kind);
-    setExportError(false);
+    setExportError(undefined);
     try {
       if (kind === 'csv' || kind === 'json') {
         const { createAudit } = await import('../core/pdf');
@@ -149,13 +149,13 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         const onProgress = trackProgress(client);
         setProgress({ phase: kind, completed: 0, total: ready });
         const isZip = kind === 'zip';
-        const data = await (isZip ? client.zip(filenames, onProgress) : client.merged(onProgress));
+        const data = await (isZip ? client.zip(filenames, onProgress, flattenZip) : client.merged(onProgress));
         if (exportLock.current === operation && worker.current === client) {
           saveDownload(data, isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', isZip ? 'application/zip' : 'application/pdf');
         }
       }
-    } catch {
-      if (exportLock.current === operation) setExportError(true);
+    } catch (error) {
+      if (exportLock.current === operation) setExportError(errorCode(error, 'exportError') || 'exportError');
     } finally {
       if (exportLock.current === operation) {
         exportLock.current = undefined;
@@ -168,7 +168,8 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
   return {
     results, checking, paused, progress: activeProgress, preflightError: current?.error,
     previewBytes: currentPreview?.bytes, previewError: Boolean(currentPreview && !currentPreview.bytes),
-    exporting: Boolean(exporting), exportError, invalidate, changeFilenames, cancel,
+    exporting: Boolean(exporting), exportingZip: exporting === 'zip', exportError,
+    invalidate, changeFilenames, clearExportError: () => setExportError(undefined), cancel,
     resume: () => invalidate(true), download,
   };
 }

@@ -25,8 +25,17 @@ describe('local mapping preset boundary', () => {
       { ...preset, minFontSize: '7.58' }, { ...preset, minFontSize: 5.99 },
       { ...preset, minFontSize: 10.01 }, { ...preset, font: 'other' },
       { ...preset, font: 'custom' }, { ...preset, customFont: { family: 'Example', bytes: [0, 1, 0, 0] } },
+      { ...preset, flattenZip: true }, { ...preset, version: 2, flattenZip: 'false' },
+      { ...preset, version: 2, flattenZip: true, roster: { Clinic: 'RIY' } },
     ]) expect(() => parseMappingPreset(JSON.stringify(invalid))).toThrow();
     expect(() => parseMappingPreset('{')).toThrow();
+  });
+
+  it('roundtrips choice mappings and an explicit boolean ZIP mode in v2', () => {
+    for (const flattenZip of [true, false]) {
+      const v2 = { ...preset, version: 2, flattenZip, mapping: { ...preset.mapping, Clinic: 'العيادة', Contact: 'Contact' } };
+      expect(parseMappingPreset(JSON.stringify(v2))).toEqual(v2);
+    }
   });
 
   it('reports current missing fields, mapped columns and filename tokens once', () => {
