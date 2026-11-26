@@ -155,9 +155,25 @@ button:disabled { cursor: default; }
 [dir="rtl"] .hero h1 { letter-spacing: 0; line-height: 1.24; max-width: 20ch; }
 .hero-summary { max-width: 55ch; color: var(--muted); line-height: 1.6; margin-block-start: .85rem; }
 .hero-actions { display: grid; justify-items: end; gap: .65rem; flex: none; }
-.sample-gallery { display: grid; gap: .4rem; margin-block-end: 1rem; }
-.sample-gallery h2 { font-size: .92rem; }
-.sample-gallery .button, .batch-font-suggestion .button { white-space: normal; text-align: start; }
+.sample-gallery { display: grid; gap: .55rem; margin-block-end: 1.2rem; }
+.sample-gallery h2 { font-size: .92rem; color: var(--forest); }
+.sample-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; }
+.sample-gallery .sample-card {
+  display: grid;
+  justify-content: stretch;
+  align-items: start;
+  align-content: space-between;
+  gap: .34rem;
+  min-inline-size: 0;
+  min-block-size: 4.6rem;
+  padding: .66rem .8rem;
+  border-block-start: 2px solid #8ca894;
+  text-align: start;
+  white-space: normal;
+}
+.sample-card[aria-current="true"] { background: var(--green-soft); border-color: #7da089; }
+.sample-card small { font-size: .73rem; }
+.batch-font-suggestion .button { white-space: normal; text-align: start; }
 .batch-font-suggestion { padding: .65rem 1rem 0; }
 .privacy-badge {
   display: inline-flex;
@@ -319,7 +335,7 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
 }
 .custom-font { display: grid; gap: .3rem; }
 .custom-font-help { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .2rem .55rem; }
-.zip-mode {
+.output-mode {
   display: flex;
   align-items: flex-start;
   gap: .65rem;
@@ -328,7 +344,8 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
   font-weight: 650;
   cursor: pointer;
 }
-.zip-mode input { flex: none; inline-size: 1rem; block-size: 1rem; margin-block-start: .2rem; accent-color: var(--forest); }
+.output-mode input { flex: none; inline-size: 1rem; block-size: 1rem; margin-block-start: .2rem; accent-color: var(--forest); }
+.output-mode:has(input:disabled), .preset-picker:has(input:disabled) { cursor: default; color: var(--muted); }
 
 .button {
   border: 1px solid transparent;
@@ -635,6 +652,63 @@ tbody tr[data-selected="true"] { background: #f0f5ed; }
 .route-details ul { margin-block: .5rem; padding-inline-start: 1.2rem; list-style: disc; }
 .route-details a { text-decoration: underline; text-underline-offset: .19em; color: var(--forest); }
 .route-details dt, .route-details summary { font-weight: 650; }
+.ink-specimen {
+  margin: .75rem 0 1rem;
+  padding: clamp(.65rem, 2vw, 1rem);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+}
+.ink-specimen figcaption { margin-block-end: .6rem; font-weight: 650; }
+.ink-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  position: relative;
+  gap: .45rem;
+  min-inline-size: 0;
+}
+.ink-mode {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.7rem;
+  padding: .42rem .55rem;
+  gap: .5rem;
+  border: 1px solid var(--line);
+  border-radius: .35rem;
+  font-size: .86rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.ink-mode input { appearance: auto; flex: none; accent-color: var(--forest); }
+.ink-mode:has(:checked) { background: var(--green-soft); color: var(--forest); border-color: #8bad97; }
+.ink-field, .ink-note { grid-column: 1 / -1; }
+.ink-field {
+  display: grid;
+  place-items: center;
+  min-block-size: 4.5rem;
+  color: var(--error);
+  border: 1px solid currentColor;
+  border-radius: .28rem;
+  background: var(--error-soft);
+  font: clamp(1.25rem, 4.3vw, 1.85rem) / 1.55 "Workbench Naskh", "Segoe UI", serif;
+}
+.ink-frame { position: relative; }
+.ink-frame::before, .ink-frame::after {
+  content: "";
+  position: absolute;
+  inset-inline: -.3em;
+  border-block-start: 1px dashed currentColor;
+}
+.ink-frame::before { inset-block-start: .49em; }
+.ink-frame::after { inset-block-end: .43em; }
+.ink-glyphs { display: block; clip-path: inset(.49em 0 .43em); white-space: nowrap; }
+.ink-comparison:has([value="bounds"]:checked) .ink-field { color: var(--forest); background: var(--green-soft); }
+.ink-comparison:has([value="bounds"]:checked) .ink-frame::before { inset-block-start: .1em; }
+.ink-comparison:has([value="bounds"]:checked) .ink-frame::after { inset-block-end: .1em; }
+.ink-comparison:has([value="bounds"]:checked) .ink-glyphs { clip-path: none; }
+.ink-specimen .ink-note { margin: 0; color: var(--muted); font-size: .82rem; }
+.ink-note-bounds, .ink-comparison:has([value="bounds"]:checked) .ink-note-naive { display: none; }
+.ink-comparison:has([value="bounds"]:checked) .ink-note-bounds { display: block; }
 .site-footer { border-block-start: 1px solid var(--line); color: var(--muted); }
 .footer-inner { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem 1rem; padding-block: .8rem; font-size: .8rem; }
 
@@ -654,6 +728,7 @@ tbody tr[data-selected="true"] { background: #f0f5ed; }
   .hero-actions { justify-items: start; gap: .5rem; }
   .hero h1 { font-size: clamp(2.3rem, 9vw, 4rem); }
   .hero-summary { margin-block-start: .6rem; }
+  .sample-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workbench, .workbench-grid, .setup { gap: .75rem; }
   .workbench-grid { grid-template-columns: minmax(0, 1fr); }
   .preview-bed { min-height: 18rem; max-height: 32rem; }

@@ -27,6 +27,12 @@ describe('local mapping preset boundary', () => {
       { ...preset, font: 'custom' }, { ...preset, customFont: { family: 'Example', bytes: [0, 1, 0, 0] } },
       { ...preset, flattenZip: true }, { ...preset, version: 2, flattenZip: 'false' },
       { ...preset, version: 2, flattenZip: true, roster: { Clinic: 'RIY' } },
+      { ...preset, version: 2, includeCoverSheet: true },
+      { ...preset, version: 3, includeCoverSheet: true },
+      { ...preset, version: 3, flattenZip: false },
+      { ...preset, version: 3, flattenZip: false, includeCoverSheet: 'true' },
+      { ...preset, version: 3, flattenZip: 1, includeCoverSheet: true },
+      { ...preset, version: 3, flattenZip: false, includeCoverSheet: true, templateName: 'private.pdf' },
     ]) expect(() => parseMappingPreset(JSON.stringify(invalid))).toThrow();
     expect(() => parseMappingPreset('{')).toThrow();
   });
@@ -35,6 +41,15 @@ describe('local mapping preset boundary', () => {
     for (const flattenZip of [true, false]) {
       const v2 = { ...preset, version: 2, flattenZip, mapping: { ...preset.mapping, Clinic: 'العيادة', Contact: 'Contact' } };
       expect(parseMappingPreset(JSON.stringify(v2))).toEqual(v2);
+    }
+  });
+
+  it('roundtrips the independent cover sheet and ZIP options in v3', () => {
+    for (const flattenZip of [true, false]) {
+      for (const includeCoverSheet of [true, false]) {
+        const v3 = { ...preset, version: 3, flattenZip, includeCoverSheet };
+        expect(parseMappingPreset(JSON.stringify(v3))).toEqual(v3);
+      }
     }
   });
 

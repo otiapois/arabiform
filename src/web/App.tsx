@@ -12,7 +12,7 @@ type AppProps = {
   arabic: boolean;
   heading?: string;
   summary?: string;
-  details?: string;
+  details?: { __html: string };
 };
 
 type FilePickerProps = {
@@ -59,7 +59,7 @@ function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isL
 export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
   const { labels, problem } = language;
-  const desk = useWorkbench();
+  const desk = useWorkbench(arabic ? 'ar' : 'en');
   const { ready, flagged, customFont } = desk;
   const selectedResult = desk.results?.[desk.selected];
   const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
@@ -108,13 +108,16 @@ export function App({ arabic, heading, summary, details }: AppProps) {
           </div>
         </section>
 
-        <section className="sample-gallery" aria-labelledby="sample-workflows-heading">
+        <section className="sample-gallery" aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
           <h2 id="sample-workflows-heading">{labels.sampleWorkflows}</h2>
-          <div className="actions compact">
+          <div className="sample-cards">
             {sampleWorkflows.map(workflow => (
-              <button key={workflow} type="button" className="button secondary" data-testid={`sample-${workflow}`}
+              <button key={workflow} type="button" className="button secondary sample-card" data-testid={`sample-${workflow}`}
+                aria-label={`${labels[workflow]} · ${labels.synthetic}`}
+                aria-current={desk.loadedSample === workflow ? 'true' : undefined}
                 disabled={desk.busy.pdf || desk.busy.roster} onClick={() => void desk.loadSample(workflow)}>
-                {`${labels[workflow]} · ${labels.synthetic}`}
+                <span>{labels[workflow]}</span>
+                <small>{labels.synthetic}{' · '}{labels[`${workflow}Feature`]}</small>
               </button>
             ))}
           </div>
@@ -257,13 +260,18 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                   <label className="full-control">
                     {labels.pattern}
                     <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern}
-                      disabled={desk.exportingFilenames} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
+                      disabled={desk.exporting} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                     <small>{labels.patternHelp}</small>
                   </label>
-                  <label className="zip-mode">
+                  <label className="output-mode zip-mode">
                     <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exportingZip}
                       onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
                     <span>{labels.flattenZip}</span>
+                  </label>
+                  <label className="output-mode">
+                    <input type="checkbox" data-testid="include-cover-sheet" checked={desk.includeCoverSheet} disabled={desk.exporting}
+                      onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
+                    <span>{labels.includeCoverSheet}</span>
                   </label>
                   <div className="preset-controls">
                     <h3>{labels.preset}</h3>
@@ -271,7 +279,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     <div className="actions compact">
                       <label className="button secondary preset-picker">
                         {labels.presetImport}
-                        <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json"
+                        <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
                           onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
                       </label>
                       <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet}
@@ -353,7 +361,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
           </section>
         </div>
 
-        {details && <div className="route-details" dangerouslySetInnerHTML={{ __html: details }} />}
+        {details && <div className="route-details" dangerouslySetInnerHTML={details} />}
         <section className="checklist" aria-labelledby="checklist-heading">
           <div><h2 id="checklist-heading">{labels.checklistTitle}</h2><p>{labels.checklistSummary}</p></div>
           <button type="button" className="button secondary" onClick={() => saveDownload(labels.checklistText, 'arabiform-scope-checklist.txt', 'text/plain;charset=utf-8')}>

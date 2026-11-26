@@ -10,6 +10,7 @@ type PresetSettings = {
 export type MappingPreset = PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
+  | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
 );
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
@@ -20,8 +21,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseMappingPreset(text: string): MappingPreset {
   const data: unknown = JSON.parse(text);
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2)
-    || Object.keys(data).length !== presetKeys.length + (data.version === 2 ? 1 : 0)
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3)
+    || Object.keys(data).length !== presetKeys.length + data.version - 1
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
@@ -47,7 +48,12 @@ export function parseMappingPreset(text: string): MappingPreset {
   if (!Object.hasOwn(data, 'flattenZip') || typeof flattenZip !== 'boolean') {
     throw new Error('invalid-mapping-preset');
   }
-  return { version: 2, ...settings, flattenZip };
+  if (data.version === 2) return { version: 2, ...settings, flattenZip };
+  const includeCoverSheet = data.includeCoverSheet;
+  if (!Object.hasOwn(data, 'includeCoverSheet') || typeof includeCoverSheet !== 'boolean') {
+    throw new Error('invalid-mapping-preset');
+  }
+  return { version: 3, ...settings, flattenZip, includeCoverSheet };
 }
 
 export function presetMismatches(

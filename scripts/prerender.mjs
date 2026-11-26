@@ -32,8 +32,9 @@ const routes = [
     heading: 'Fill Arabic PDF forms with a roster',
     summary: 'Fill interactive PDF fields with Arabic and mixed-script text. The workbench measures the drawn letters and diacritics to catch clipping before export.',
     guide: 'Why ink-bounds preflight matters',
+    inkSpecimen: true,
     paragraphs: [
-      'Synthetic specimen: بَنِي يَمَن. The marks above the letters and strokes below the baseline take up space. ArabiForm shapes the text in bundled Noto fonts and checks the edges of the drawn letters and marks against the space inside each field.',
+      'The marks above the letters and strokes below the baseline take up space. ArabiForm shapes the text in bundled Noto fonts and checks the edges of the drawn letters and marks against the space inside each field.',
       'Select the deliberately long name in the synthetic roster to see a field outlined in red. If the text fits at a smaller size within the supported range, the workbench shows the required size. Edit the value or adjust the minimum and check again. PDF exports include rows that pass.',
     ],
     faq: [
@@ -53,8 +54,9 @@ const routes = [
     heading: 'املأ نماذج PDF من جدول بيانات',
     summary: 'اربط أعمدة جدول CSV أو Excel بالحقول النصية وخانات الاختيار والقوائم المنسدلة وأزرار الاختيار في نموذج PDF. يفحص المتصفح مساحة الحروف والتشكيل داخل الحقل قبل التنزيل.',
     guide: 'لماذا نفحص حدود الحروف قبل التصدير؟',
+    inkSpecimen: true,
     paragraphs: [
-      'من العينة الاصطناعية «بَنِي يَمَن». يشغل التشكيل فوق الحروف وأجزاء الحروف تحت السطر مساحةً داخل الحقل. يرسم ArabiForm النص بخطوط نوتو المضمّنة ويقارن حدود الحروف وعلامات التشكيل بمساحة الحقل المتاحة.',
+      'يشغل التشكيل فوق الحروف وأجزاء الحروف تحت السطر مساحةً داخل الحقل. يرسم ArabiForm النص بخطوط نوتو المضمّنة ويقارن حدود الحروف وعلامات التشكيل بمساحة الحقل المتاحة.',
       'اختر الصف الذي يتعمّد عرض اسم طويل في العينة لترى الحقل محاطًا بإطار أحمر. إذا أمكن احتواء النص بحجم خط أصغر ضمن النطاق المدعوم، فسترى الحجم المطلوب. عدّل القيمة أو غيّر الحد الأدنى للحجم وأعد الفحص. تُصدَّر ملفات PDF للصفوف التي تجتاز الفحص.',
     ],
     faq: [
@@ -134,6 +136,44 @@ function structuredData(data) {
   return `<script type="application/ld+json">${json}</script>`
 }
 
+function inkSpecimen(lang) {
+  const names = 'بَنِي يَمَن / سَلْمَى بِنْت يَاسِين'
+  const copy = lang === 'ar' ? {
+    caption: 'من العينة الاصطناعية «بَنِي يَمَن» و«سَلْمَى بِنْت يَاسِين»',
+    legend: 'قارن موضع النص داخل الحقل',
+    naive: 'تموضع تقليدي (مع قصّ)',
+    bounds: 'فحص حدود الحروف في ArabiForm (بلا قصّ)',
+    clipped: 'رسم توضيحي يبيّن كيف تُقصّ أجزاء من الحروف والتشكيل عند حدود الحقل.',
+    fitted: 'رسم توضيحي يبيّن كيف يتّسع الحقل لكامل الحروف والتشكيل.',
+  } : {
+    caption: 'Synthetic specimen: ' + names,
+    legend: 'Compare text placement in the field',
+    naive: 'Naive baseline (clipped)',
+    bounds: 'ArabiForm ink-bounds (0 clipped)',
+    clipped: 'Illustration: the field cuts off parts of the letters and diacritics.',
+    fitted: 'Illustration: the letters and diacritics fit inside the field.',
+  }
+  return `<figure class="ink-specimen" data-testid="ink-specimen">
+    <figcaption>${escapeHtml(copy.caption)}</figcaption>
+    <fieldset class="ink-comparison">
+      <legend class="sr-only">${escapeHtml(copy.legend)}</legend>
+      <label class="ink-mode">
+        <input type="radio" name="ink-mode" value="naive" data-testid="ink-mode-naive" checked>
+        <span>${escapeHtml(copy.naive)}</span>
+      </label>
+      <label class="ink-mode">
+        <input type="radio" name="ink-mode" value="bounds" data-testid="ink-mode-bounds">
+        <span>${escapeHtml(copy.bounds)}</span>
+      </label>
+      <div class="ink-field" data-testid="ink-field" aria-hidden="true">
+        <span class="ink-frame"><span class="ink-glyphs" lang="ar" dir="rtl">${names}</span></span>
+      </div>
+      <p class="ink-note ink-note-naive">${escapeHtml(copy.clipped)}</p>
+      <p class="ink-note ink-note-bounds">${escapeHtml(copy.fitted)}</p>
+    </fieldset>
+  </figure>`
+}
+
 async function writeRoute(route) {
   const lang = route.lang ?? 'en'
   const canonical = `${site.origin}${route.path}`
@@ -169,6 +209,7 @@ async function writeRoute(route) {
   <p data-route-summary>${escapeHtml(route.summary)}</p>
   <div data-route-details>
     <h2>${escapeHtml(route.guide)}</h2>
+    ${route.inkSpecimen ? inkSpecimen(lang) : ''}
     ${paragraphs}
     <h3>${lang === 'ar' ? 'أسئلة شائعة' : 'Frequently asked questions'}</h3>
     <dl>${faq}</dl>
