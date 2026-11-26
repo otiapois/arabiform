@@ -419,6 +419,7 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
   overflow-wrap: anywhere;
 }
 .print-margin-advisory ul { margin: 0; padding-inline-start: 1.15rem; max-block-size: 10rem; overflow: auto; list-style: disc; }
+.print-margin-advisory strong bdi { white-space: break-spaces; }
 .preview-diagnostics {
   padding: .55rem 1rem;
   border-block-end: 1px solid #eabfb6;
@@ -707,7 +708,7 @@ tbody tr[data-selected="true"] { background: #f0f5ed; }
 .export-actions { display: grid; gap: .6rem; }
 .audit-actions .button { min-height: 2.2rem; font-size: .82rem; }
 .custody-controls { display: grid; justify-items: start; gap: .5rem; padding-block-start: .65rem; border-block-start: 1px solid var(--line); }
-.custody-controls .button { min-height: 2.2rem; font-size: .82rem; }
+.custody-controls .button { min-height: 2.2rem; column-gap: .3rem; font-size: .82rem; }
 .custody-fingerprints {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
