@@ -3,7 +3,7 @@ import { parseMappingPreset, presetMismatches } from '../../src/web/presets';
 
 const preset = {
   version: 1,
-  mapping: { Name: 'الاسم', ID: 'Badge', Sentinel: '' },
+  mapping: { Name: 'الاسم', ID: 'Badge', Consent: 'موافقة', Sentinel: '' },
   filenamePattern: 'AR-{{Badge}}-{{الاسم}}.pdf',
   minFontSize: 7.58,
   font: 'arabic',
@@ -24,13 +24,14 @@ describe('local mapping preset boundary', () => {
       { ...preset, mapping: { Name: ' ' } }, { ...preset, filenamePattern: [] },
       { ...preset, minFontSize: '7.58' }, { ...preset, minFontSize: 5.99 },
       { ...preset, minFontSize: 10.01 }, { ...preset, font: 'other' },
+      { ...preset, font: 'custom' }, { ...preset, customFont: { family: 'Example', bytes: [0, 1, 0, 0] } },
     ]) expect(() => parseMappingPreset(JSON.stringify(invalid))).toThrow();
     expect(() => parseMappingPreset('{')).toThrow();
   });
 
   it('reports current missing fields, mapped columns and filename tokens once', () => {
-    expect(presetMismatches(preset.mapping, '{{ Badge }}-{{Missing}}.pdf', ['Name', 'ID'], ['الاسم'])).toEqual({
-      missingFields: ['Sentinel'], missingColumns: ['Badge', 'Missing'],
+    expect(presetMismatches(preset.mapping, '{{ Badge }}-{{Missing}}.pdf', ['Name', 'ID', 'Consent'], ['الاسم'])).toEqual({
+      missingFields: ['Sentinel'], missingColumns: ['Badge', 'موافقة', 'Missing'],
     });
     expect(presetMismatches(preset.mapping, preset.filenamePattern)).toEqual({ missingFields: [], missingColumns: [] });
   });
