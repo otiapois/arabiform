@@ -761,13 +761,14 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
       const observed: number[] = [];
       const rows = values.map((Consent) => ({ Consent }));
       const rowIndex = index % rows.length;
-      const result = await process({ phase: 'preflight', input: { template, rows, options: { fonts } } },
+      const roster = encoder.encode(['Consent', ...values].join('\n'));
+      const result = await process({ phase: 'preflight', input: { template, roster, rows, options: { fonts } } },
         ({ completed }) => observed.push(completed));
       expect(observed).toEqual([0, ...Array.from({ length: Math.ceil(rows.length / 25) }, (_, chunk) =>
         Math.min(rows.length, (chunk + 1) * 25))]);
-      if (!Array.isArray(result)) throw new Error('Expected metadata');
-      expect(result.map(({ status }) => status)).toEqual(values.map((value) => value === 'invalid' ? 'flagged' : 'pass'));
-      expect(result.every((row) => !Object.hasOwn(row, 'pdfBytes'))).toBe(true);
+      if (!result || !('rows' in result)) throw new Error('Expected metadata');
+      expect(result.rows.map(({ status }) => status)).toEqual(values.map((value) => value === 'invalid' ? 'flagged' : 'pass'));
+      expect(result.rows.every((row) => !Object.hasOwn(row, 'pdfBytes'))).toBe(true);
       if (values[rowIndex] === 'invalid' || index % 5 === 0) {
         const bytes = await process({ phase: 'preview', rowIndex }, () => {});
         expect(bytes instanceof Uint8Array).toBe(values[rowIndex] !== 'invalid');

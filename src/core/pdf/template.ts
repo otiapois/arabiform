@@ -119,7 +119,7 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
     const pdfPages = doc.getPages();
     const cropBoxes = pdfPages.map((page) => page.getCropBox());
     const pages = pdfPages.map((page, index) => {
-      const userUnit = page.node.get(key('UserUnit'));
+      const userUnit = page.node.lookup(key('UserUnit'));
       const unit = userUnit instanceof PDFNumber ? userUnit.asNumber() : 1;
       return {
         ...page.getSize(), rotation: rotationOf(page.getRotation().angle),

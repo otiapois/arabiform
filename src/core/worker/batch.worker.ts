@@ -12,7 +12,8 @@ scope.addEventListener('message', async ({ data: request }) => {
   const { id } = request;
   try {
     const result = await processBatch(request, (progress) => scope.postMessage({ id, kind: 'progress', progress }));
-    scope.postMessage({ id, kind: 'result', result }, result instanceof Uint8Array ? [result.buffer as ArrayBuffer] : []);
+    const bytes = result instanceof Uint8Array ? result : result && 'bytes' in result ? result.bytes : undefined;
+    scope.postMessage({ id, kind: 'result', result }, bytes ? [bytes.buffer as ArrayBuffer] : []);
   } catch (error) {
     scope.postMessage({ id, kind: 'error', message: error instanceof Error ? error.message : 'batch-worker-failed' });
   }
