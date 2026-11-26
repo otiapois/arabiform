@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { unzipSync } from 'fflate';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import { expect, it, vi } from 'vitest';
-import { preflightRow } from '../../src/core/pdf';
+import { createZip, preflightRow } from '../../src/core/pdf';
 import { BATCH_CHUNK_SIZE, createBatchProcessor } from '../../src/core/worker/batch';
 import type { BatchProgress } from '../../src/core/worker/protocol';
 
@@ -97,6 +97,7 @@ it('isolates batches, preserves editable bytes, stages one row at a time and rec
     if (!(editable instanceof Uint8Array)) throw new Error('Expected editable archive');
     const members = unzipSync(editable);
     expect(Object.keys(members)).toEqual(['first.pdf', 'last.pdf']);
+    expect(editable).toEqual(createZip(Object.entries(members).map(([filename, pdfBytes]) => ({ filename, pdfBytes }))));
     for (const index of [0, 2]) {
       expect(members[filenames[index]!]).toEqual(await processBatch({ phase: 'preview', rowIndex: index }, notify));
     }
