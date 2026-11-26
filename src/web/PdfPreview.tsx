@@ -36,7 +36,8 @@ export default function PdfPreview({
   const [rendered, setRendered] = useState<{
     pdf: PDFDocumentProxy;
     page: number;
-    width: number;
+    size: number | string;
+    width?: number;
     diagnostics?: RowResult['diagnostics'];
     complete: boolean;
     ratio?: number;
@@ -45,13 +46,14 @@ export default function PdfPreview({
   const [zoom, setZoom] = useState('fit');
   const [frameWidth, setFrameWidth] = useState(0);
   const frame = useRef<HTMLDivElement>(null);
+  const pageRail = useRef<HTMLDivElement>(null);
+  const activePill = useRef<HTMLButtonElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const pdf = loaded && loaded.bytes === bytes ? loaded.pdf : undefined;
   const page = Math.min(requestedPage, pdf?.numPages ?? requestedPage);
-  const width = zoom === 'fit'
-    ? Math.min(470, Math.max(120, frameWidth - 32))
-    : Math.round(550 * Number(zoom));
-  const raster = rendered && rendered.pdf === pdf && rendered.page === page && rendered.width === width
+  const pageCount = pdf?.numPages ?? 0;
+  const size = zoom === 'fit' ? frameWidth && Math.min(470, Math.max(120, frameWidth - 32)) : zoom;
+  const raster = rendered && rendered.pdf === pdf && rendered.page === page && rendered.size === size
     && rendered.diagnostics === diagnostics ? rendered : undefined;
   const failed = unavailable || (bytes && loaded?.bytes === bytes && !pdf) || (raster && !raster.complete);
   const issuePages = new Map<number, number>();
@@ -60,7 +62,18 @@ export default function PdfPreview({
       issuePages.set(pageNumber, (issuePages.get(pageNumber) ?? 0) + 1);
     }
   }
-  const pageIssues = Array.from(issuePages).sort(([first], [second]) => first - second);
+
+  useEffect(() => {
+    frame.current?.scrollTo(0, 0);
+    const rail = pageRail.current;
+    const pill = activePill.current;
+    if (!rail || !pill) return;
+    const railBox = rail.getBoundingClientRect();
+    const pillBox = pill.getBoundingClientRect();
+    const left = pillBox.left - railBox.left - 8;
+    const right = pillBox.right - railBox.right + 8;
+    if (left < 0 || right > 0) rail.scrollBy({ left: left < 0 ? left : right });
+  }, [page, pageCount]);
 
   useEffect(() => {
     const host = frame.current!;
@@ -100,7 +113,7 @@ export default function PdfPreview({
 
   useEffect(() => {
     const target = canvas.current;
-    if (!pdf || !target || frameWidth === 0) return;
+    if (!pdf || !target || size === 0) return;
     let active = true;
     let task: RenderTask | undefined;
 
@@ -108,8 +121,8 @@ export default function PdfPreview({
       const docPage = await document.getPage(page);
       if (!active) return;
       const base = docPage.getViewport({ scale: 1 });
-      const viewport = docPage.getViewport({ scale: width / base.width });
-      const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+      const viewport = docPage.getViewport({ scale: typeof size === 'number' ? size / base.width : Number(size) * 96 / 72 });
+      const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1), 4096 / Math.max(viewport.width, viewport.height));
       element.width = Math.ceil(viewport.width * outputScale);
       element.height = Math.ceil(viewport.height * outputScale);
 
@@ -141,17 +154,17 @@ export default function PdfPreview({
           });
         });
       }
-      setRendered({ pdf: document, page, width, diagnostics, complete: true, ratio: viewport.width / viewport.height, positions });
+      setRendered({ pdf: document, page, size, width: viewport.width, diagnostics, complete: true, ratio: viewport.width / viewport.height, positions });
     }
 
     void draw(pdf, target).catch(() => {
-      if (active) setRendered({ pdf, page, width, diagnostics, complete: false });
+      if (active) setRendered({ pdf, page, size, diagnostics, complete: false });
     });
     return () => {
       active = false;
       task?.cancel();
     };
-  }, [pdf, page, width, frameWidth, fields, diagnostics]);
+  }, [pdf, page, size, fields, diagnostics]);
 
   return (
     <>
@@ -160,33 +173,41 @@ export default function PdfPreview({
           <button type="button" className="icon-button" aria-label={labels.previousPage} disabled={page <= 1 || !pdf} onClick={() => onPageChange(page - 1)}>
             <span aria-hidden="true" className="chevron previous" />
           </button>
-          <span className="page-counter">{fillLabel(labels.pageCount, { page: pdf ? page : 0, total: pdf?.numPages ?? 0 })}</span>
+          <span className="page-counter">{fillLabel(labels.pageCount, { page: pdf ? page : 0, total: pageCount })}</span>
           <button type="button" className="icon-button" aria-label={labels.nextPage} disabled={!pdf || page >= pdf.numPages} onClick={() => onPageChange(page + 1)}>
             <span aria-hidden="true" className="chevron next" />
           </button>
         </div>
         <select aria-label={labels.zoom} value={zoom} onChange={(event) => setZoom(event.currentTarget.value)}>
           <option value="fit">{labels.fit}</option>
-          <option value="0.75">75%</option>
           <option value="1">100%</option>
           <option value="1.25">125%</option>
           <option value="1.5">150%</option>
         </select>
       </div>
-      {pageIssues.length > 0 && (
-        <div className="preview-issue-pages" role="group" aria-label={labels.issuePages}>
-          {pageIssues.map(([pageNumber, count]) => (
-            <button type="button" className="issue-page" data-testid="issue-page" data-page={pageNumber} key={pageNumber}
-              aria-current={pageNumber === page ? 'page' : undefined} onClick={() => onPageChange(pageNumber)}>
-              {fillLabel(count === 1 ? labels.issuePageOne : labels.issuePageMany, { page: pageNumber, count })}
-            </button>
-          ))}
+      {pageCount > 0 && (
+        <div className="preview-page-rail" ref={pageRail} role="group" aria-label={labels.previewPages} data-testid="preview-pages">
+          {Array.from({ length: pageCount }, (_, index) => {
+            const pageNumber = index + 1;
+            const count = issuePages.get(pageNumber);
+            const active = pageNumber === page;
+            return (
+              <button type="button" className={count ? 'page-pill issue-page' : 'page-pill'} ref={active ? activePill : undefined}
+                data-testid={count ? 'issue-page' : undefined} data-page={pageNumber} key={pageNumber}
+                aria-current={active ? 'page' : undefined} onClick={() => onPageChange(pageNumber)}>
+                {count && <span className="page-issue-dot" aria-hidden="true" />}
+                {count
+                  ? fillLabel(count === 1 ? labels.issuePageOne : labels.issuePageMany, { page: pageNumber, count })
+                  : fillLabel(labels.pageNumber, { page: pageNumber })}
+              </button>
+            );
+          })}
         </div>
       )}
       <div className="preview-bed" ref={frame}>
         {failed && <p className="alert" role="alert">{labels.previewError}</p>}
         {!failed && !raster && <p className="preview-message" role="status">{labels.previewBusy}</p>}
-        <div className="canvas-paper" style={{ width, aspectRatio: raster?.ratio }} hidden={!raster?.complete}>
+        <div className="canvas-paper" style={{ width: raster?.width, aspectRatio: raster?.ratio }} hidden={!raster?.complete}>
           <canvas
             aria-label={labels.previewCanvas}
             role="img"

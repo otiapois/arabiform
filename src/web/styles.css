@@ -225,6 +225,7 @@ button:disabled { cursor: default; }
 }
 [dir="rtl"] .file-box { padding-inline: .55rem .42rem; }
 .file-box bdi { overflow-wrap: anywhere; }
+.file-box .quiet bdi[dir="ltr"] { white-space: nowrap; }
 .loaded-filename {
   color: var(--forest);
   font-size: .83rem;
@@ -314,6 +315,8 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
 .mapping-field > bdi { font-size: .85rem; font-weight: 600; overflow-wrap: anywhere; }
 .mapping-field .tag { font-size: .68rem; padding: .08rem .34rem; }
 .mapping-target { display: grid; gap: .2rem; min-inline-size: 0; }
+.align-control { display: flex; align-items: center; gap: .35rem; color: var(--muted); font-size: .74rem; }
+.align-control select { flex: 1; min-inline-size: 0; min-block-size: 1.85rem; padding-block: .18rem; font-size: .78rem; }
 .choice-options { flex-basis: 100%; min-inline-size: 0; font-size: .74rem; color: var(--muted); }
 .choice-options summary { cursor: pointer; }
 .choice-list {
@@ -399,23 +402,31 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
 .preview-toolbar select { max-inline-size: 9.3rem; width: auto; min-inline-size: 5.5rem; }
 .page-controls { display: flex; align-items: center; gap: .44rem; }
 .page-counter { color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
-.preview-issue-pages {
+.preview-page-rail {
   display: flex;
-  flex-wrap: wrap;
+  overflow-x: auto;
   gap: .35rem;
-  padding: .42rem .85rem;
+  padding: .48rem .85rem;
   border-block-end: 1px solid var(--line);
 }
-.issue-page {
-  border: 1px solid #eabfb6;
+.page-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: .35rem;
+  border: 1px solid var(--line);
   border-radius: 1rem;
   background: var(--surface);
   padding: .28rem .65rem;
   min-block-size: 2rem;
   font-size: .82rem;
-  color: var(--error);
+  color: var(--forest);
 }
+.page-pill:hover, .page-pill[aria-current="page"] { background: var(--green-soft); }
+.page-pill[aria-current="page"] { border-color: currentColor; font-weight: 670; }
+.issue-page { border-color: #eabfb6; color: var(--error); }
 .issue-page:hover, .issue-page[aria-current="page"] { background: var(--error-soft); }
+.page-issue-dot { inline-size: .42rem; block-size: .42rem; border-radius: 50%; background: currentColor; }
 .icon-button {
   display: grid;
   place-items: center;
@@ -632,6 +643,20 @@ tbody tr[data-selected="true"] { background: #f0f5ed; }
 .edit-cells bdi { overflow-wrap: anywhere; }
 .edit-cells textarea, .edit-cells select { margin-block-start: .22rem; }
 
+.hygiene-summary { padding: .8rem 1rem; font-weight: 670; cursor: pointer; }
+.hygiene > .panel-body { display: grid; gap: .65rem; border-block-start: 1px solid var(--line); }
+.hygiene fieldset { min-inline-size: 0; margin: 0; padding: .38rem .58rem .52rem; border: 1px solid var(--line); border-radius: .38rem; }
+.hygiene legend { padding-inline: .28rem; font-size: .85rem; font-weight: 650; }
+.hygiene-options { display: flex; flex-wrap: wrap; gap: .3rem .8rem; }
+.hygiene-options label { display: flex; align-items: baseline; gap: .33rem; max-inline-size: 100%; font-size: .83rem; overflow-wrap: anywhere; }
+.hygiene-options input { flex: none; accent-color: var(--forest); }
+.hygiene-find { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: .5rem .7rem; }
+.hygiene-samples { display: grid; gap: .3rem; margin: 0; padding-inline-start: 1.15rem; font-size: .84rem; }
+.hygiene-samples li { overflow-wrap: anywhere; }
+.hygiene-samples bdi { white-space: break-spaces; }
+.hygiene-samples del { color: var(--error); }
+.hygiene-samples ins { color: var(--forest); text-decoration: none; }
+
 .export-actions { display: grid; gap: .6rem; }
 .audit-actions .button { min-height: 2.2rem; font-size: .82rem; }
 .checklist {
@@ -752,4 +777,5 @@ tbody tr[data-selected="true"] { background: #f0f5ed; }
 
 @media (prefers-reduced-motion: no-preference) {
   html { scroll-behavior: smooth; }
+  .preview-page-rail { scroll-behavior: smooth; }
 }

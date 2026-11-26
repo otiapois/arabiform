@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { AlignOverride } from '../core/pdf/alignment';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
@@ -12,6 +13,7 @@ type BatchSettings = {
   template: Uint8Array;
   rows: readonly RosterRow[];
   mapping: Record<string, string>;
+  alignOverrides: Record<string, AlignOverride>;
   minFontSize: number;
   font: FontMode;
   customFont?: Uint8Array;
@@ -77,7 +79,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         ));
         const results = await client.preflight({
           template: batch.template, rows,
-          options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont },
+          options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides },
         }, trackProgress(client));
         if (worker.current === client) {
           setChecked({ batch, results });

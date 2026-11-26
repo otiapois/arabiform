@@ -1,4 +1,5 @@
-import { lazy, Suspense, type ChangeEvent } from 'react';
+import { lazy, Suspense, type ChangeEvent, type ReactNode } from 'react';
+import type { AlignOverride } from '../core/pdf/alignment';
 import { ChoiceList } from './Choices';
 import { Diagnostics } from './Diagnostics';
 import { fillLabel, translator } from './labels';
@@ -7,6 +8,8 @@ import { saveDownload } from './resources';
 import { sampleWorkflows, useWorkbench } from './useWorkbench';
 
 const PdfPreview = lazy(() => import('./PdfPreview'));
+const Hygiene = lazy(() => import('./Hygiene'));
+const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
 
 type AppProps = {
   arabic: boolean;
@@ -21,7 +24,7 @@ type FilePickerProps = {
   pickerLabel: string;
   accept: string;
   filename?: string;
-  placeholder: string;
+  placeholder: ReactNode;
   isLoading: boolean;
   loadingLabel: string;
   onChoose: (file: File) => void;
@@ -39,7 +42,9 @@ function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isL
       <label className="field-label" htmlFor={id}>{label}</label>
       <div className="file-box">
         <span className="file-icon" aria-hidden="true" />
-        <bdi dir="auto" className={filename ? 'loaded-filename' : 'quiet'}>{isLoading ? loadingLabel : filename ?? placeholder}</bdi>
+        {filename && !isLoading
+          ? <bdi dir="auto" className="loaded-filename">{filename}</bdi>
+          : <span className="quiet">{isLoading ? loadingLabel : placeholder}</span>}
         <label className="file-action">
           <span>{pickerLabel}</span>
           <input
@@ -147,7 +152,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     pickerLabel={labels.chooseRoster}
                     accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     filename={desk.roster?.name}
-                    placeholder={labels.noRoster}
+                    placeholder={<>{labels.noRoster}{' '}<bdi dir="ltr">.xlsx</bdi></>}
                     isLoading={desk.busy.roster}
                     loadingLabel={labels.loading}
                     onChoose={desk.loadRoster}
@@ -202,6 +207,19 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                                     <option value="">{labels.unmapped}</option>
                                     {desk.sheet?.headers.map((column) => <option key={column} value={column}>{column}</option>)}
                                   </select>
+                                  {field.kind === 'text' && desk.mapping[field.name] && (
+                                    <label className="align-control">
+                                      {labels.align}
+                                      <select aria-label={`${labels.align} ${field.name}`} data-align-field={field.name}
+                                        value={Object.hasOwn(desk.alignOverrides, field.name) ? desk.alignOverrides[field.name] : 'auto'}
+                                        onChange={(event) => desk.changeAlignment(field.name, event.currentTarget.value as AlignOverride)}>
+                                        <option value="auto">{labels.alignAuto}</option>
+                                        <option value="rtl">{labels.alignRtl}</option>
+                                        <option value="ltr">{labels.alignLtr}</option>
+                                        <option value="center">{labels.alignCenter}</option>
+                                      </select>
+                                    </label>
+                                  )}
                                   {field.choices && !desk.mapping[field.name] && <small className="quiet">{labels.preserved}</small>}
                                 </div>
                               ) : <span className="quiet">{labels.preserved}</span>}
@@ -298,6 +316,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       </div>
                     )}
                   </div>
+                  {desk.template && desk.sheet && (
+                    <Suspense>
+                      <BatchDraftControls desk={desk} arabic={arabic} />
+                    </Suspense>
+                  )}
                 </div>
               </section>
             </div>
@@ -339,6 +362,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             </section>
           </div>
 
+          {desk.rows.length > 0 && (
+            <Suspense>
+              <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
+            </Suspense>
+          )}
           <Queue key={desk.roster?.name + ':' + desk.sheetIndex} desk={desk} language={language} />
 
           <section className="panel exports" aria-labelledby="export-heading">
