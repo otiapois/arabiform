@@ -56,8 +56,10 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
   function trackProgress(client: BatchWorker) {
     let lastPaint = -Infinity;
     return (update: BatchProgress) => {
+      // The UI already shows zero before the worker reports progress.
+      if (update.completed === 0 || worker.current !== client) return;
       const now = performance.now();
-      if (worker.current === client && (now - lastPaint >= 80 || update.completed === update.total)) {
+      if (now - lastPaint >= 80 || update.completed === update.total) {
         lastPaint = now;
         setProgress(update);
       }
