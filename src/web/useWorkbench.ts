@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { FilenamePlan } from '../core/roster';
 import type { BatchRowResult } from '../core/worker/client';
+import type { MergeCoverSheet } from '../core/worker/protocol';
 import { parseMappingPreset, presetMismatches, type FontMode, type MappingPreset } from './presets';
 import { decodeBase64, errorCode, saveDownload } from './resources';
 import { useBatch } from './useBatch';
@@ -36,7 +37,7 @@ type CustomFont = { status: 'loading' } | { status: 'invalid'; maxMiB?: number }
   status: 'ready'; family: string; bytes: Uint8Array;
 };
 
-export function useWorkbench() {
+export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [template, setTemplate] = useState<{ name: string; bytes: Uint8Array; info: TemplateInfo }>();
   const [roster, setRoster] = useState<{ name: string; data: Roster; engine: RosterEngine }>();
   const [loadedSample, setLoadedSample] = useState<SampleWorkflow>();
@@ -56,6 +57,7 @@ export function useWorkbench() {
   const [customFont, setCustomFont] = useState<CustomFont>();
   const [pattern, setPattern] = useState('{{ID}}-{{Name}}.pdf');
   const [flattenZip, setFlattenZip] = useState(false);
+  const [includeCoverSheet, setIncludeCoverSheet] = useState(false);
   const [presetError, setPresetError] = useState(false);
 
   const sheet = roster?.data.sheets[sheetIndex];
@@ -95,7 +97,7 @@ export function useWorkbench() {
     ? { template: template.bytes, rows, mapping, minFontSize, font, customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
     : null, [template, rows, mapping, minFontSize, font, customFont, hasMapping, fontBlocked]);
   const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
-  const { invalidate, clearExportError, download, cancel, ...job } = useBatch(batch, selected);
+  const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected);
   const results = useMemo(() => job.results?.map((result, index): RowResult => ({
     ...result, ...filenamePlans[index]!,
   })), [job.results, filenamePlans]);
@@ -182,6 +184,7 @@ export function useWorkbench() {
       setFont('auto');
       setPattern(sample.pattern);
       setFlattenZip(false);
+      setIncludeCoverSheet(false);
     }
     setPresetError(false);
     setTemplate(undefined);
@@ -283,6 +286,7 @@ export function useWorkbench() {
   }
 
   function changePattern(value: string) {
+    if (exportLocked()) return;
     clearExportError();
     setPattern(value);
   }
@@ -292,7 +296,14 @@ export function useWorkbench() {
     setFlattenZip(value);
   }
 
+  function changeIncludeCoverSheet(value: boolean) {
+    if (exportLocked()) return;
+    clearExportError();
+    setIncludeCoverSheet(value);
+  }
+
   async function importPreset(file: File) {
+    if (exportLocked()) return;
     const id = ++request.current.preset;
     const customFontId = request.current.customFont;
     setPresetError(false);
@@ -305,7 +316,8 @@ export function useWorkbench() {
       setPattern(preset.filenamePattern);
       setMinFontSize(preset.minFontSize);
       setFont(preset.font);
-      setFlattenZip(preset.version === 2 && preset.flattenZip);
+      setFlattenZip(preset.version !== 1 && preset.flattenZip);
+      setIncludeCoverSheet(preset.version === 3 && preset.includeCoverSheet);
     } catch {
       if (id === request.current.preset) setPresetError(true);
     }
@@ -317,21 +329,22 @@ export function useWorkbench() {
         kind === 'text' || kind === 'checkbox' || mapping[name] ? [[name, mapping[name]!]] : [])),
       filenamePattern: pattern, minFontSize, font,
     };
-    const preset: MappingPreset = flattenZip
-      ? { version: 2, ...settings, flattenZip }
-      : { version: 1, ...settings };
+    const preset: MappingPreset = includeCoverSheet
+      ? { version: 3, ...settings, flattenZip, includeCoverSheet }
+      : flattenZip ? { version: 2, ...settings, flattenZip } : { version: 1, ...settings };
     saveDownload(JSON.stringify(preset, null, 2), 'arabiform-mapping-preset.json', 'application/json');
   }
 
   return {
     template, roster, loadedSample, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
-    minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip,
+    minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
     ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
     rowEdit: edits[selected], restoreRowEdit,
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
-    download: (kind: Parameters<typeof download>[0]) => download(kind, filenamePlans, ready, flattenZip),
+    download: (kind: Parameters<typeof download>[0]) => download(kind, filenamePlans, ready, flattenZip,
+      kind === 'merged' && includeCoverSheet && template ? { locale, templateName: template.name } : undefined),
   };
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
+import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { FontMode } from './presets';
 import { errorCode, loadFonts, saveDownload } from './resources';
 
@@ -120,7 +121,8 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
     setPaused(true);
   }
 
-  async function download(kind: ExportKind, filenamePlans: readonly FilenamePlan[], ready: number, flattenZip: boolean) {
+  async function download(kind: ExportKind, filenamePlans: readonly FilenamePlan[], ready: number, flattenZip: boolean,
+    cover?: Pick<MergeCoverSheet, 'locale' | 'templateName'>) {
     const client = worker.current;
     if (!client || !results || exportLock.current) return;
     if ((kind === 'zip' || kind === 'merged') && !ready) return;
@@ -144,9 +146,10 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         const onProgress = trackProgress(client);
         setProgress({ phase: kind, completed: 0, total: ready });
         const isZip = kind === 'zip';
+        const filenames = isZip || cover ? filenamePlans.map(({ filename }) => filename) : [];
         const data = await (isZip
-          ? client.zip(filenamePlans.map(({ filename }) => filename), onProgress, flattenZip)
-          : client.merged(onProgress));
+          ? client.zip(filenames, onProgress, flattenZip)
+          : client.merged(onProgress, cover ? { ...cover, filenames } : undefined));
         if (exportLock.current === operation && worker.current === client) {
           saveDownload(data, isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', isZip ? 'application/zip' : 'application/pdf');
         }
@@ -166,7 +169,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
     results, checking, paused, progress: activeProgress, preflightError: current?.error,
     previewBytes: currentPreview?.bytes, previewError: Boolean(currentPreview && !currentPreview.bytes),
     exporting: Boolean(exporting), exportingZip: exporting === 'zip', exportError,
-    exportingFilenames: Boolean(exporting && exporting !== 'merged'),
+    exportLocked: () => Boolean(exportLock.current),
     invalidate, clearExportError: () => setExportError(undefined), cancel,
     resume: () => invalidate(true), download,
   };
