@@ -1,8 +1,8 @@
-import fontkit from '@pdf-lib/fontkit';
 import { PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
 import { explicitQuadding, type AlignOverride } from './alignment';
 import { installAppearance, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
+import { copyBundledFont } from './bundled-fonts';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
@@ -237,7 +237,6 @@ export async function preflightRow(
   const { doc, rawForm } = template;
   const { custom, fonts } = layout;
 
-  doc.registerFontkit(fontkit);
   const embedded: Partial<Record<FontKey, AppearanceFont>> = {};
   const globalResources = rawForm.lookupMaybe(key('DR'), PDFDict)?.clone(doc.context) ?? doc.context.obj({});
   const globalFonts = globalResources.lookupMaybe(key('Font'), PDFDict)?.clone(doc.context) ?? doc.context.obj({});
@@ -253,8 +252,7 @@ export async function preflightRow(
         throw new Error('invalid-custom-font', { cause });
       }
     } else {
-      const font = await doc.embedFont(fonts[family], { subset: false, customName: name });
-      embedded[family] = { name, ref: font.ref };
+      embedded[family] = { name, ref: await copyBundledFont(doc, fonts, family, prefix) };
     }
     globalFonts.set(key(name), embedded[family].ref);
   }

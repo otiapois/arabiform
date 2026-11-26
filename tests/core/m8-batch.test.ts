@@ -22,6 +22,7 @@ it('checks 500 real bilingual mapped rows in 25-row chunks without serializing a
   }));
   const save = vi.spyOn(PDFDocument.prototype, 'save');
   const load = vi.spyOn(PDFDocument, 'load');
+  const embed = vi.spyOn(PDFDocument.prototype, 'embedFont');
   try {
     const processBatch = createBatchProcessor();
     const progress: BatchProgress[] = [];
@@ -35,6 +36,7 @@ it('checks 500 real bilingual mapped rows in 25-row chunks without serializing a
     });
     const elapsed = performance.now() - start;
     expect(save).not.toHaveBeenCalled();
+    expect(embed).not.toHaveBeenCalled();
     expect(load).toHaveBeenCalledTimes(1);
     expect(progress).toEqual(Array.from({ length: 21 }, (_, chunk) => ({
       phase: 'preflight', completed: chunk * BATCH_CHUNK_SIZE, total: 500,
@@ -51,9 +53,9 @@ it('checks 500 real bilingual mapped rows in 25-row chunks without serializing a
     expect(await preview(49)).toBeUndefined();
     expect(await preview(500)).toBeUndefined();
     expect(save).not.toHaveBeenCalled();
-    const [first, last] = await Promise.all([preview(0), preview(498)]);
+    const [first, last] = await Promise.all([preview(0), preview(497)]);
     expect(save).toHaveBeenCalledTimes(2);
-    for (const [bytes, index] of [[first, 0], [last, 498]] as const) {
+    for (const [bytes, index] of [[first, 0], [last, 497]] as const) {
       if (!(bytes instanceof Uint8Array)) throw new Error('Expected preview bytes');
       const document = await PDFDocument.load(bytes);
       expect(document.getForm().getTextField('ID').getText()).toBe(rows[index]!.ID);
@@ -61,10 +63,12 @@ it('checks 500 real bilingual mapped rows in 25-row chunks without serializing a
       expect(document.getForm().getTextField('Sentinel').getText()).toBe('KEEP 00109');
       expect(bytes).toEqual((await preflightRow(template, rows[index]!, options)).pdfBytes);
     }
+    expect(embed).toHaveBeenCalledTimes(2);
     console.info('M8 batch: 500 actual rows, 490 ready, 10 flagged, 20 chunks, one parse, zero preflight PDF saves, %s ms.', elapsed.toFixed(0));
   } finally {
     load.mockRestore();
     save.mockRestore();
+    embed.mockRestore();
   }
 }, 60_000);
 
