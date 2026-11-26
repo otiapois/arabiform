@@ -229,7 +229,7 @@ test('portable preset, isolated filenames, safe downloaded members and local res
   await expect(page.getByTestId('preset-warning')).toContainText('RetiredField');
   await expect(page.getByTestId('preset-error')).toHaveCount(0);
   await expect(page.getByTestId('ready-count')).toHaveText('9');
-  const filenames = page.getByTestId('queue-row').locator('bdi.filename[dir="auto"]');
+  const filenames = page.getByTestId('queue-row').locator('bdi.filename[dir="ltr"]');
   await expect(filenames).toHaveText(expected);
   const zip = await download(page, zipButton, info.outputPath('filenames'), 'arabiform-clean.zip');
   const members = unzipSync(await readFile(zip));
@@ -261,7 +261,7 @@ test('English and RTL ink guides label the same synthetic specimen and display l
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   await page.getByRole('button', { name: 'جرّب العينة العربية الاصطناعية' }).click();
   await expect(page.getByTestId('ready-count')).toHaveText('4');
-  const mixed = page.locator('[data-row="4"] bdi.filename[dir="auto"]');
+  const mixed = page.locator('[data-row="4"] bdi.filename[dir="ltr"]');
   await expect(mixed).toContainText('AR-00042');
   await expect(mixed).toContainText('ق');
   expect(await mixed.evaluate(node => getComputedStyle(node).unicodeBidi)).toBe('isolate');
