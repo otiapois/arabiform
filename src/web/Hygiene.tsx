@@ -8,9 +8,9 @@ const en = {
   columns: 'Columns to change',
   cleanup: 'Text cleanup',
   normalizeSpaces: 'Clean spaces and stray invisible characters',
-  normalizeAlef: 'Normalize Alef (أ إ آ → ا)',
-  normalizeTaaMarbuta: 'Normalize Taa Marbuta (ة → ه)',
-  normalizeAlefMaqsura: 'Normalize Alef Maqsura (ى → ي)',
+  normalizeAlef: 'Normalize Alef',
+  normalizeTaaMarbuta: 'Normalize Taa Marbuta',
+  normalizeAlefMaqsura: 'Normalize Alef Maqsura',
   stripHarakat: 'Remove Arabic vowel marks (harakat)',
   find: 'Find',
   replace: 'Replace with',
@@ -56,6 +56,11 @@ const ar: typeof en = {
 };
 
 const cleanup = ['normalizeSpaces', 'normalizeAlef', 'normalizeTaaMarbuta', 'normalizeAlefMaqsura', 'stripHarakat'] as const;
+const examples: Partial<Record<typeof cleanup[number], readonly [string, string]>> = {
+  normalizeAlef: ['أ إ آ', 'ا'],
+  normalizeTaaMarbuta: ['ة', 'ه'],
+  normalizeAlefMaqsura: ['ى', 'ي'],
+};
 
 export default function Hygiene({ desk, arabic }: { desk: ReturnType<typeof useWorkbench>; arabic: boolean }) {
   const labels = arabic ? ar : en;
@@ -105,13 +110,20 @@ export default function Hygiene({ desk, arabic }: { desk: ReturnType<typeof useW
             <fieldset>
               <legend>{labels.cleanup}</legend>
               <div className="hygiene-options">
-                {cleanup.map((key) => (
-                  <label key={key}>
-                    <input type="checkbox" checked={Boolean(operation[key])} onChange={(event) =>
-                      setOperation({ ...operation, [key]: event.currentTarget.checked })} />
-                    {labels[key]}
-                  </label>
-                ))}
+                {cleanup.map((key) => {
+                  const example = arabic ? undefined : examples[key];
+                  return (
+                    <label key={key}>
+                      <input type="checkbox" checked={Boolean(operation[key])} onChange={(event) =>
+                        setOperation({ ...operation, [key]: event.currentTarget.checked })} />
+                      <span>
+                        {labels[key]}{example && (
+                          <>{' '}<bdi dir="ltr">(<bdi dir="rtl">{example[0]}</bdi>{' → '}<bdi dir="rtl">{example[1]}</bdi>)</bdi></>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             </fieldset>
             <div className="hygiene-find">
