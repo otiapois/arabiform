@@ -4,6 +4,7 @@
 
 | Version | Changes |
 | --- | --- |
+| v0.7.0 (M7) | Preview and apply optional Arabic text cleanup or literal find and replace in selected roster columns. Undo the last transform. Set text-field alignment to Auto, Right (RTL), Left (LTR), or Center. Version 4 mapping presets save explicit alignment, and versions 1–3 still import. Save edits, applied cleanup summaries, mapping, and output settings to a local JSON draft and reopen it with the matching PDF, roster, and worksheet. The PDF preview has Fit, 100%, 125%, and 150% zoom and a page strip that marks flagged pages. The Arabic source hint displays `.xlsx` with its dot on the left. |
 | v0.6.0 (M6) | Added an optional English or Arabic cover for the merged printable PDF. It includes a batch summary and a paginated index with the final filenames and page ranges. Mapping presets save the cover setting in version 3 and still read versions 1 and 2. The English and Arabic guides add an interactive synthetic ink-bounds specimen. The sample gallery shows four workflows, including the landscape badge to try the batch font-size suggestion. |
 | v0.5.0 (M5-RC) | The queue shows why a filename was adjusted before export. Slash focuses search, and Escape cancels the current edit and restores focus. The Arabic page loads display fonts locally and defers packaged PDF font data until preflight. Added a release bundle check. |
 | v0.4.0 (M4) | Added dropdown and radio mappings, optional flattened PDFs within ZIP, and preview navigation to the first page with a flagged field. |
@@ -13,6 +14,7 @@
 
 ## ملخص بالعربية
 
+- **v0.7.0 (M7)** يمكنك معاينة تنقيح النص العربي أو البحث والاستبدال الحرفي في أعمدة تحدّدها، ثم تطبيق التغييرات والتراجع عن آخر عملية. يمكنك اختيار المحاذاة التلقائية لكل حقل نصي أو ضبطها إلى اليمين أو اليسار أو الوسط. يحفظ الإصدار 4 من إعدادات الربط المحاذاة المحدّدة، ويستمر دعم استيراد الإصدارات 1 إلى 3. احفظ تعديلات الخلايا وملخّص عمليات التنقيح وإعدادات الربط والإخراج في مسودة JSON محلية، واستعدها باستخدام ملف PDF وجدول البيانات وورقة العمل المطابقة. تتيح المعاينة ملاءمة الصفحة للمساحة المتاحة أو عرضها بنسبة 100٪ أو 125٪ أو 150٪، ويشير شريط الصفحات إلى الصفحات التي تحتاج إلى مراجعة. تظهر نقطة امتداد `.xlsx` على يسار الأحرف في تلميح اختيار الجدول بالعربية.
 - **v0.6.0 (M6)** غلاف اختياري بالعربية أو الإنجليزية لملف PDF المدمج للطباعة. يعرض ملخّص الدفعة وفهرسًا قد يمتدّ إلى عدّة صفحات، وفيه أسماء الملفات النهائية ونطاقات الصفحات. يحفظ الإصدار 3 من إعدادات الربط خيار الغلاف مع استمرار دعم استيراد الإصدارين 1 و2. يتضمّن الدليلان العربي والإنجليزي مثالًا اصطناعيًا تفاعليًا يقارن طريقتَين لوضع النص داخل الحقل. يعرض المعرض أربع عينات، منها بطاقة الزائر الأفقية لتجربة اقتراح حجم الخط للدفعة.
 - **v0.5.0 (M5-RC)** يظهر سبب تعديل اسم الملف قبل التنزيل. ينقل زر الشرطة المائلة التركيز إلى البحث، ويلغي Escape التعديل الجاري ويعيد التركيز إلى زر التحرير. تُحمَّل خطوط عرض الواجهة محليًا، وتُؤجَّل بيانات خطوط PDF إلى الفحص المسبق. أضيف فحص لملفات الإصدار.
 - **v0.4.0 (M4)** ربط القوائم المنسدلة وأزرار الاختيار، وخيار تسطيح ملفات PDF داخل ZIP، والانتقال مباشرة إلى أول صفحة فيها حقل يحتاج إلى مراجعة.
