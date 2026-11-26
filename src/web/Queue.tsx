@@ -25,13 +25,14 @@ export function Queue({ desk, language }: QueueProps) {
   const { labels, problem } = language;
   const { ready, flagged, warningRows, progress } = desk;
   const [editSession, setEditSession] = useState<{
-    sheet: typeof desk.sheet; row: number; original: typeof desk.rowEdit;
+    sheet: typeof desk.sheet; row: number; revision: number; original: typeof desk.rowEdit;
   }>();
   const [search, setSearch] = useState('');
   const [pageIndex, setPageIndex] = useState(0);
   const searchInput = useRef<HTMLInputElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
-  const activeEdit = editSession?.sheet === desk.sheet && editSession?.row === desk.selected ? editSession : undefined;
+  const activeEdit = editSession?.sheet === desk.sheet && editSession?.row === desk.selected
+    && editSession.revision === desk.cellRevision ? editSession : undefined;
   const editing = activeEdit !== undefined;
   const row = desk.rows[desk.selected];
   const result = desk.results?.[desk.selected];
@@ -57,7 +58,7 @@ export function Queue({ desk, language }: QueueProps) {
   }, []);
 
   function beginEdit() {
-    setEditSession({ sheet: desk.sheet, row: desk.selected, original: desk.rowEdit });
+    setEditSession({ sheet: desk.sheet, row: desk.selected, revision: desk.cellRevision, original: desk.rowEdit });
   }
 
   function updateCell(column: string, value: string) {
