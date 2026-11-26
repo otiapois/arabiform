@@ -62,7 +62,9 @@ export default function Hygiene({ desk, arabic }: { desk: ReturnType<typeof useW
   const [expanded, setExpanded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [engine, setEngine] = useState<typeof import('../core/roster/hygiene')>();
-  const [operation, setOperation] = useState<HygieneOperation>({ columns: [], normalizeSpaces: true, matchCase: true });
+  const [operation, setOperation] = useState<HygieneOperation>({
+    columns: [], normalizeSpaces: true, find: '', replace: '', matchCase: true,
+  });
   const [notice, setNotice] = useState<{ kind: 'applied' | 'undone'; revision: number }>();
   const sheet = desk.sheet!;
   const preview = useMemo(() => expanded && operation.columns.length

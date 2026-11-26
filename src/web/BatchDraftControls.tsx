@@ -45,7 +45,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
 
   async function run(file?: File) {
     if (pending || desk.exporting || (!file && desk.fontBlocked)) return;
-    const current = desk.beginDraftLoad();
+    const current = desk.beginDraft(Boolean(file));
     const { template, roster, sheet, customFont } = desk;
     setNotice(file ? 'loading' : 'saving');
     try {
@@ -65,7 +65,11 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
         sheetName: sheet!.name, columns: sheet!.headers, rowCount: sheet!.rows.length,
       };
       if (text !== undefined) {
-        desk.restoreDraft(engine.parseBatchDraft(text, source, fontSha256));
+        const draft = engine.parseBatchDraft(text, source, fontSha256);
+        if (Object.keys(draft.settings.alignOverrides).some((field) => !desk.fields.some(({ name, kind }) => name === field && kind === 'text'))) {
+          throw new Error('invalid-batch-draft');
+        }
+        desk.restoreDraft(draft);
         setNotice('restored');
       } else {
         const data = engine.serializeBatchDraft({
@@ -92,7 +96,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
         <label className="button secondary preset-picker">
           {labels.load}{'\u00A0'}<bdi dir="ltr">(.json)</bdi>
           <input type="file" data-testid="draft-upload" aria-label={`${labels.load} (.json)`} accept=".json,application/json"
-            disabled={pending || desk.exporting} onChange={(event) => {
+            disabled={pending || desk.exporting || desk.customFont?.status === 'loading'} onChange={(event) => {
               const file = event.currentTarget.files?.[0];
               event.currentTarget.value = '';
               if (file) void run(file);

@@ -5,7 +5,7 @@ import type { FilenamePlan } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
-import { presetMismatches, type FontMode, type MappingPreset } from './presets';
+import { parseMappingPreset, presetMismatches, type FontMode, type MappingPreset } from './presets';
 import { decodeBase64, errorCode, saveDownload } from './resources';
 import { useBatch } from './useBatch';
 
@@ -360,12 +360,12 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   async function importPreset(file: File) {
     if (exportLocked()) return;
+    request.current.draft++;
     const id = ++request.current.preset;
     const customFontId = request.current.customFont;
     setPresetError(false);
     try {
-      const [{ parseMappingPreset }, text] = await Promise.all([import('./presets'), file.text()]);
-      const preset = parseMappingPreset(text);
+      const preset = parseMappingPreset(await file.text());
       if (id !== request.current.preset) return;
       if (customFontId === request.current.customFont) clearCustomFont();
       else recheck();
@@ -381,7 +381,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
     setFlattenZip(preset.version !== 1 && preset.flattenZip);
-    setIncludeCoverSheet(preset.version >= 3 && 'includeCoverSheet' in preset && preset.includeCoverSheet);
+    setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
   }
 
   function draftSettings(): BatchDraft['settings'] {
@@ -401,13 +401,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     saveDownload(JSON.stringify(preset, null, 2), 'arabiform-mapping-preset.json', 'application/json');
   }
 
-  function beginDraftLoad() {
+  function beginDraft(loading: boolean) {
+    if (loading) request.current.preset++;
     const id = ++request.current.draft;
     return () => id === request.current.draft && !exportLocked();
   }
 
   function restoreDraft(draft: BatchDraft) {
-    request.current.preset++;
     if (draft.customFontSha256 === null) clearCustomFont();
     else recheck();
     setPresetError(false);
@@ -419,7 +419,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     template, roster, loadedSample, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
     sourceRevision: `${request.current.roster}:${sheetIndex}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,
-    draftSettings, beginDraftLoad, restoreDraft,
+    draftSettings, beginDraft, restoreDraft,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
     ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,
