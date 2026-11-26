@@ -10,14 +10,16 @@
 - **Row-Level Preflight Queue & Inline Fix**:
   - Summary bar: `Total rows` | `Ready (Clean)` | `Flagged (Needs Review)` | `Active Font` | `Min Font Size (6–10pt slider)`.
   - Filterable row table showing exact field diagnostics; clicking any flagged row lets the user **edit the cell text inline** OR **adjust min font size** and immediately re-renders the live PDF preview until `Flagged = 0`!
-  - Search row numbers, filenames and cell values. The `All`, `Ready`, `Flagged` and `Source warnings` filters paginate at 20 rows per page. Filenames use `<bdi dir="auto">` in both locales.
+  - Search row numbers, filenames and cell values. The `All`, `Ready`, `Flagged` and `Source warnings` filters paginate at 20 rows per page. In the queue and selected-row summary, filenames use `<bdi dir="ltr">` with isolated Unicode stem runs. The stem can wrap while the `.pdf` extension stays at its right edge. The title, selection text, audit and ZIP use the logical filename.
+  - Source warnings show spreadsheet cell coordinates. Mapped Excel formula cells warn whether a stored result is present, so the operator can verify stale results or enter a verified value for an empty cell.
   - Show a proven font-size threshold or MaxLen excess beside the red preview highlights and in the selected row editor. Offer `Set min font to X pt` when each failure in the selected row can be resolved within the 6 pt floor. Changing that setting checks the full batch again.
 - **Local Worker Lifecycle**:
   - A dedicated, first-party Web Worker runs preflight, ZIP creation and merged PDF creation. It retains the PDF bytes between operations and sends row metadata, the requested single-row preview, and the completed file back to the interface.
   - Show the current phase and completed/total count. `Cancel batch` terminates the worker and clears the results and pending downloads. `Resume batch` rechecks the retained files and edits in a fresh worker. Replacing inputs or editing preflight settings also invalidates the previous worker.
 - **Local Mapping Presets**:
-  - The version 1 JSON file contains the field-to-column `mapping`, `filenamePattern`, `minFontSize` (6–10 pt), and `font` (`auto`, `arabic` or `latin`). An empty mapping value leaves the original PDF field unchanged.
-  - Export stores settings only. Import validates the entire file before applying settings, skips missing or read-only fields and unavailable columns, and reports mismatches with the current files. Presets can be imported before source files are chosen.
+  - The mapping panel tags text, checkbox, radio and dropdown fields. Editable text and checkbox fields can be mapped. Other listed fields stay untouched. An empty mapping leaves the PDF field unchanged.
+  - The version 1 JSON file stores the field-to-column `mapping` (including checkboxes), `filenamePattern`, `minFontSize` (6–10 pt), and bundled `font` (`auto`, `arabic` or `latin`). Import validates the entire file, skips unavailable fields and columns, and reports mismatches. Presets can be imported before source files are chosen.
+  - Custom TTF/OTF bytes stay in this tab's memory. The picker rejects files above 16 MiB before reading them. Output Settings displays the parsed family name and preflight glyph coverage feedback. Selecting a replacement invalidates existing results immediately. Loading or rejecting a font disables exports until a valid font is selected or the custom font is cleared. Clearing it uses the selected bundled font. A valid preset import uses its bundled font setting and clears a prior custom selection.
 - **Export Controls**:
   - `Download Clean PDFs (.zip)` (only exports passing rows by default, with clear count badge if flagged rows are excluded — never silently ships broken/clipped PDFs!)
   - `Download Merged Printable PDF (.pdf)` (1-click print-all file!)

@@ -13,6 +13,7 @@ type BatchSettings = {
   mapping: Record<string, string>;
   minFontSize: number;
   font: FontMode;
+  customFont?: Uint8Array;
 };
 
 export function useBatch(batch: BatchSettings | null, selected: number) {
@@ -75,7 +76,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         ));
         const results = await client.preflight({
           template: batch.template, rows,
-          options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font },
+          options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont },
         }, trackProgress(client));
         if (worker.current === client) {
           setChecked({ batch, results });

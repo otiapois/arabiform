@@ -59,11 +59,17 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
   const { labels, problem } = language;
   const desk = useWorkbench();
-  const { ready, flagged } = desk;
+  const { ready, flagged, customFont } = desk;
   const selectedResult = desk.results?.[desk.selected];
   const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
   const { missingFields, missingColumns } = desk.presetWarnings ?? { missingFields: [], missingColumns: [] };
   const presetMismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
+  const fieldKinds = { text: labels.kindText, checkbox: labels.kindCheckbox, radio: labels.kindRadio, dropdown: labels.kindDropdown };
+  const textMapped = desk.fields.some(({ kind, name }) => kind === 'text' && desk.mapping[name]);
+  const missingCustomGlyphs = customFont?.status === 'ready'
+    && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
+  const fontCheck = !desk.results || !textMapped ? labels.customFontCoverage
+    : missingCustomGlyphs ? labels.customFontMissing : labels.customFontChecked;
 
   useEffect(() => {
     if (arabic) void loadFonts().catch(() => undefined);
@@ -157,7 +163,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                   )}
                 </header>
                 <div className="panel-body">
-                  {desk.fields.length > 0 && desk.sheet
+                  {desk.templateFields.length > 0 && desk.sheet
                     ? (
                       <>
                         <p className="quiet mapping-help">{labels.mappingHelp}</p>
@@ -165,14 +171,20 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                           <span>{labels.pdfField}</span><span>{labels.rosterColumn}</span>
                         </div>
                         <div className="mapping-rows">
-                          {desk.fields.map((field) => (
-                            <label key={field.name} className="mapping-row">
-                              <bdi title={field.name}>{field.name}</bdi>
-                              <select dir="auto" data-pdf-field={field.name} value={desk.mapping[field.name] ?? ''} onChange={(event) => desk.changeMapping(field.name, event.currentTarget.value)}>
-                                <option value="">{labels.unmapped}</option>
-                                {desk.sheet?.headers.map((column) => <option key={column} value={column}>{column}</option>)}
-                              </select>
-                            </label>
+                          {desk.templateFields.map((field) => (
+                            <div key={field.name} className="mapping-row">
+                              <span className="mapping-field">
+                                <bdi title={field.name}>{field.name}</bdi>
+                                <span className="tag tag-pending">{fieldKinds[field.kind]}</span>
+                              </span>
+                              {Object.hasOwn(desk.mapping, field.name) ? (
+                                <select dir="auto" aria-label={field.name} data-pdf-field={field.name} value={desk.mapping[field.name]}
+                                  onChange={(event) => desk.changeMapping(field.name, event.currentTarget.value)}>
+                                  <option value="">{labels.unmapped}</option>
+                                  {desk.sheet?.headers.map((column) => <option key={column} value={column}>{column}</option>)}
+                                </select>
+                              ) : <span className="quiet">{labels.preserved}</span>}
+                            </div>
                           ))}
                         </div>
                       </>
@@ -192,12 +204,38 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                   </label>
                   <label className="full-control">
                     {labels.font}
-                    <select value={desk.font} onChange={(event) => desk.changeFont(event.currentTarget.value as typeof desk.font)}>
+                    <select value={desk.font} disabled={Boolean(customFont)} onChange={(event) => desk.changeFont(event.currentTarget.value as typeof desk.font)}>
                       <option value="auto">{labels.fontAuto}</option>
                       <option value="arabic">{labels.fontNaskh}</option>
                       <option value="latin">{labels.fontSans}</option>
                     </select>
                   </label>
+                  <div className="custom-font">
+                    <FilePicker
+                      id="custom-font-upload"
+                      label={labels.customFont}
+                      pickerLabel={labels.chooseFont}
+                      accept=".ttf,.otf"
+                      filename={customFont?.status === 'ready' ? customFont.family : undefined}
+                      placeholder={labels.noCustomFont}
+                      isLoading={customFont?.status === 'loading'}
+                      loadingLabel={labels.customFontLoading}
+                      onChoose={desk.loadCustomFont}
+                    />
+                    <div className="custom-font-help">
+                      <small>{labels.customFontLocal}</small>
+                      {customFont && <button type="button" className="text-button" data-testid="custom-font-clear" onClick={desk.clearCustomFont}>{labels.clearFont}</button>}
+                    </div>
+                    {customFont?.status === 'ready' && (
+                      <small role="status" data-testid="custom-font-status">{fontCheck}</small>
+                    )}
+                    {customFont?.status === 'invalid' && (
+                      <p className="alert" role="alert" data-testid="custom-font-error">
+                        {customFont.maxMiB === undefined ? problem('invalid-custom-font')
+                          : fillLabel(labels.customFontTooLarge, { limit: customFont.maxMiB })}
+                      </p>
+                    )}
+                  </div>
                   <label className="full-control">
                     {labels.pattern}
                     <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern} onChange={(event) => desk.changePattern(event.currentTarget.value)} />

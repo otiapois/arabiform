@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Diagnostics, diagnosticText, safeRowMinSize } from './Diagnostics';
+import { Filename } from './Filename';
 import { fillLabel, type translator } from './labels';
 import type { RowFilter, useWorkbench } from './useWorkbench';
 
@@ -79,7 +80,7 @@ export function Queue({ desk, language }: QueueProps) {
       {desk.paused && (
         <div className="batch-state">
           <p role="status">{labels.pausedBatch}</p>
-          <button type="button" className="button secondary" data-testid="resume-batch" disabled={!desk.hasMapping} onClick={desk.resume}>
+          <button type="button" className="button secondary" data-testid="resume-batch" disabled={!desk.hasMapping || desk.fontBlocked} onClick={desk.resume}>
             {labels.resumeBatch}
           </button>
         </div>
@@ -125,7 +126,7 @@ export function Queue({ desk, language }: QueueProps) {
                             {String(index + 1).padStart(2, '0')}
                           </button>
                         </th>
-                        <td><bdi dir="auto" className="filename" title={desk.filenames[index]}>{desk.filenames[index]}</bdi></td>
+                        <td><Filename name={desk.filenames[index]!} /></td>
                         <td><span className={`tag tag-${result?.status ?? 'pending'}`}>{!result ? labels.waiting : result.status === 'pass' ? labels.ready : labels.flagged}</span></td>
                         <td className="review-cell">
                           {issue && (
@@ -161,8 +162,9 @@ export function Queue({ desk, language }: QueueProps) {
             {row && (
               <section className="row-editor" aria-label={fillLabel(labels.selected, { row: desk.selected + 1 })}>
                 <div className="row-editor-head">
-                  <div>
+                  <div className="row-summary">
                     <h3>{fillLabel(labels.selected, { row: desk.selected + 1 })}</h3>
+                    <Filename name={desk.filenames[desk.selected]!} />
                     {result?.status === 'pass' && <p>{labels.cleanRow}</p>}
                     {desk.checking && <p>{labels.unresolved}</p>}
                   </div>
@@ -192,7 +194,13 @@ export function Queue({ desk, language }: QueueProps) {
                     <p>{labels.warningHelp}</p>
                     <ul>
                       {row.warnings.map((warning, index) => (
-                        <li key={index}><bdi>{warning.column}</bdi>{' · '}{problem(warning.code) ?? labels.sourceWarnings}</li>
+                        <li key={index}>
+                          <bdi>{warning.column}</bdi>
+                          {warning.source && <> (<bdi dir="ltr">{warning.source.column}{warning.source.row}</bdi>)</>}
+                          {' · '}{warning.code === 'excel-formula-warning'
+                            ? (warning.formulaHasCachedValue ? labels.formulaCached : labels.formulaUncached)
+                            : problem(warning.code) ?? labels.sourceWarnings}
+                        </li>
                       ))}
                     </ul>
                   </div>

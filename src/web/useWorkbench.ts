@@ -13,6 +13,11 @@ export type SourceRow = Roster['sheets'][number]['rows'][number];
 export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
 
 const emptyRows: SourceRow[] = [];
+const emptyFields: TemplateInfo['fields'] = [];
+
+type CustomFont = { status: 'loading' } | { status: 'invalid'; maxMiB?: number } | {
+  status: 'ready'; family: string; bytes: Uint8Array;
+};
 
 export function useWorkbench() {
   const [template, setTemplate] = useState<{ name: string; bytes: Uint8Array; info: TemplateInfo }>();
@@ -20,7 +25,7 @@ export function useWorkbench() {
   const [synthetic, setSynthetic] = useState(false);
   const [busy, setBusy] = useState({ pdf: false, roster: false });
   const [errors, setErrors] = useState<{ pdf?: string; roster?: string }>({});
-  const request = useRef({ pdf: 0, roster: 0, preset: 0 });
+  const request = useRef({ pdf: 0, roster: 0, preset: 0, customFont: 0 });
   const [sheetIndex, setSheetIndex] = useState(0);
   const [mappingSettings, setMappingSettings] = useState<{ fromPreset: boolean; values: Record<string, string> }>({
     fromPreset: false, values: {},
@@ -30,15 +35,15 @@ export function useWorkbench() {
   const [filter, setFilter] = useState<RowFilter>('all');
   const [minFontSize, setMinFontSize] = useState(8);
   const [font, setFont] = useState<FontMode>('auto');
+  const [customFont, setCustomFont] = useState<CustomFont>();
   const [pattern, setPattern] = useState('{{ID}}-{{Name}}.pdf');
   const [presetError, setPresetError] = useState(false);
 
   const sheet = roster?.data.sheets[sheetIndex];
-  const rows = useMemo(() => sheet?.rows.map((row, index) =>
-    edits[index] ? { ...row, values: { ...row.values, ...edits[index] } } : row,
-  ) ?? emptyRows, [sheet, edits]);
-  const fields = useMemo(() =>
-    template?.info.fields.filter((field) => !field.readOnly) ?? [], [template]);
+  const templateFields = template?.info.fields ?? emptyFields;
+  const fields = useMemo(() => templateFields.filter((field) =>
+    !field.readOnly && (field.kind === 'text' || field.kind === 'checkbox')),
+  [templateFields]);
   const mapping = useMemo(() => {
     const names = fields.map((field) => field.name);
     const headers = sheet?.headers ?? [];
@@ -49,14 +54,27 @@ export function useWorkbench() {
     });
     return Object.fromEntries(entries);
   }, [fields, sheet, roster, mappingSettings]);
+  const rows = useMemo(() => {
+    if (!sheet) return emptyRows;
+    const mappedColumns = new Set(Object.values(mapping));
+    return sheet.rows.map((row, index) => {
+      const warnings = row.warnings.filter(({ code, column }) =>
+        code !== 'excel-formula-warning' || mappedColumns.has(column));
+      const edit = edits[index];
+      return edit || warnings.length !== row.warnings.length
+        ? { ...row, values: edit ? { ...row.values, ...edit } : row.values, warnings }
+        : row;
+    });
+  }, [sheet, mapping, edits]);
   const presetWarnings = useMemo(() => mappingSettings.fromPreset
     ? presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined, sheet?.headers)
     : undefined, [fields, mappingSettings, pattern, sheet, template]);
 
   const hasMapping = fields.some((field) => Boolean(mapping[field.name]));
-  const batch = useMemo(() => template && rows.length && hasMapping
-    ? { template: template.bytes, rows, mapping, minFontSize, font } : null,
-  [template, rows, mapping, minFontSize, font, hasMapping]);
+  const fontBlocked = customFont?.status === 'loading' || customFont?.status === 'invalid';
+  const batch = useMemo(() => template && rows.length && hasMapping && !fontBlocked
+    ? { template: template.bytes, rows, mapping, minFontSize, font, customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
+    : null, [template, rows, mapping, minFontSize, font, customFont, hasMapping, fontBlocked]);
   const filenames = useMemo(() => roster?.engine.makeFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
   const { invalidate, changeFilenames, download, ...job } = useBatch(batch, selected);
   const ready = useMemo(() => job.results?.filter(({ status }) => status === 'pass').length ?? 0, [job.results]);
@@ -176,6 +194,33 @@ export function useWorkbench() {
     setFont(value);
   }
 
+  async function loadCustomFont(file: File) {
+    const id = ++request.current.customFont;
+    invalidate();
+    setCustomFont({ status: 'loading' });
+    try {
+      if (!/\.(?:ttf|otf)$/i.test(file.name)) throw new Error('invalid-custom-font');
+      const { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } = await import('../core/pdf');
+      if (id !== request.current.customFont) return;
+      if (file.size > MAX_CUSTOM_FONT_BYTES) {
+        setCustomFont({ status: 'invalid', maxMiB: MAX_CUSTOM_FONT_BYTES / 1024 ** 2 });
+        return;
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (id !== request.current.customFont) return;
+      const { family } = inspectCustomFont(bytes);
+      setCustomFont({ status: 'ready', family, bytes });
+    } catch {
+      if (id === request.current.customFont) setCustomFont({ status: 'invalid' });
+    }
+  }
+
+  function clearCustomFont() {
+    request.current.customFont++;
+    invalidate();
+    setCustomFont(undefined);
+  }
+
   function changePattern(value: string) {
     changeFilenames();
     setPattern(value);
@@ -183,11 +228,13 @@ export function useWorkbench() {
 
   async function importPreset(file: File) {
     const id = ++request.current.preset;
+    const customFontId = request.current.customFont;
     setPresetError(false);
     try {
       const preset = parseMappingPreset(await file.text());
       if (id !== request.current.preset) return;
-      invalidate();
+      if (customFontId === request.current.customFont) clearCustomFont();
+      else invalidate();
       setMappingSettings({ fromPreset: true, values: preset.mapping });
       setPattern(preset.filenamePattern);
       setMinFontSize(preset.minFontSize);
@@ -203,11 +250,11 @@ export function useWorkbench() {
   }
 
   return {
-    template, roster, synthetic, busy, errors, sheet, sheetIndex, rows, fields, mapping,
-    hasMapping, selected, setSelected, filter, setFilter, minFontSize, font, pattern, filenames,
+    template, roster, synthetic, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping,
+    hasMapping, selected, setSelected, filter, setFilter, minFontSize, font, customFont, fontBlocked, pattern, filenames,
     ...job, ready, flagged: job.results ? job.results.length - ready : 0, warningRows,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
-    changeSize, changeFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
+    changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     download: (kind: Parameters<typeof download>[0]) => download(kind, filenames, ready),
   };
 }
