@@ -22,8 +22,8 @@
 
 - **规则**　修改模板字体嵌入或子集策略后，在 PDF.js 和 PyMuPDF 中查看模板标题与保留字段，再验写入字段的值。
 - **原因**　首次构建样本时，字体子集丢失了可见拉丁字母。标题和 `KEEP 00109` 字段的值仍可读取。改用完整静态字体后，1.2 倍渲染的两个取样区域分别从 1,270 增到 4,547 个深色像素，从 79 增到 201 个。
-- **证据**　样本生成与字体验收见提交 `0487483` 及 [模板说明](fixtures/README.md)。本轮 QA 在 [Edge 截图](docs/reports/screenshots/desktop-preview-flagged.png) 复核了完整标题和保留字段，分别用 PDF-lib 和 PyMuPDF 核过下载文件。
-- **Seen: 1**（同一缺陷，2026-11-26）
+- **证据**　M1 样本生成与字体验收见提交 `0487483` 及 [模板说明](fixtures/README.md)。QA 在 [Edge 截图](docs/reports/screenshots/desktop-preview-flagged.png) 复核了完整标题和保留字段。M4 合成模板的阿语静态标题遗漏组合附标的字形偏移，标题靠边的墨迹遭到裁切。提交 `9faff65` 按字形偏移放置两页标题。两页标题裁图均已打开核对，第二页的标题也可在[浏览器截图](docs/reports/screenshots/m4/desktop-m4-choices-ready.png)核对。
+- **Seen: 2**（ArabiForm M1、M4，各计一次）
 
 ### 用 PDF trailer 判断加密状态（2026-11-26）
 
@@ -77,5 +77,12 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 | 规则 | 失败证据与修正 | Seen |
 |---|---|---|
 | 对混排文件名，用浏览器 Range 测量数字前缀、词干和扩展名。移动端发生折行时，每个前缀只与同一行的文字比较。 | M2 文件名逻辑字符串正确，旧 `dir="auto"` 在两个语种和视口的 8 组原布局观测中有 6 组后缀错位。现在队列和所选行共用显式 LTR 容器，阿语词组隔离，`.pdf` 单独固定在右端。[组件](src/web/Filename.tsx) · [Edge 测量](tests/e2e/m3-pro.spec.ts) | 1 |
-| 核对交互控件转为打印页面前后的整页像素，尤其是非整数坐标上的复选框。 | 旧候选合并页的 3 个复选框各差 66 个像素，字段值与外观流均能正常读回。修正注释外观放置矩阵的单精度运算后，合并页与可编辑单页的 4 倍渲染完全相同。[打印导出](src/core/pdf/exports.ts) · [逐页校验](scripts/verify-pdf-pixels.py) | 1 |
+| 核对交互控件转为打印页面前后的整页像素。可见控件缺少所需外观或其活动状态不明确时，阻止打印导出并保留可编辑导出。 | M3 旧合并页的 3 个复选框各差 66 个像素。修正非整数坐标的外观放置矩阵后，4 倍渲染完全相同。M4 回放发现旧打印路径遇到缺少 `/AP`、`/V` 为数组的下拉框时改变 86,832 个像素，遇到已选中却缺少 `/AS` 的复选框时改变 350 个像素。修正后，两种样本均阻止生成合并 PDF 和压平 ZIP，可编辑 ZIP 的成员字节完整保留。[打印回归](tests/core/choices.test.ts) · [逐页校验](scripts/verify-pdf-pixels.py) · [M4 验收](docs/reports/M4-verification.md) | 2（M3、M4） |
 | 验证自定义字体子集时，同时读取嵌入数据、检查渲染器警告并测量实际墨迹。 | Adobe Source Serif 4 的 CFF 子集头曾写出无效的 `offSize=0x0e`。FreeType 回退后仍有墨迹。改为合法值 `0x04` 后，字形像素随之改变，PyMuPDF 渲染无警告。[字体嵌入](src/core/pdf/custom-font.ts) · [CFF 像素案例](scripts/verify-pdf-pixels.ts) | 1 |
+
+### 导出的审计文件保持既有字段契约（2026-11-27）
+
+- **规则**　给预览诊断添加数据时，在审计序列化边界核对 JSON 与 CSV 的既有公开字段，同时验证浏览器下载和预览跳页。
+- **原因**　M4 给诊断新增从 1 起算的 `pageNumbers`。导出直接复用内部对象后，旧版的 `too-narrow` 审计记录多出 `pageNumbers: [1]`，违反既有 JSON 和 CSV 下载格式。
+- **证据**　在 `05d8a9e`，两种浏览器视口的 CSV、XLSX 上传流程同时在原有下载断言处失败，共 4 项。提交 `9b4a414` 让两种审计输出共用同一序列化边界，预览继续使用页码，选择诊断继续提供合法选项。[审计回归](tests/core/pdf.test.ts) · [原有下载断言](tests/e2e/downloads.ts) · [M4 独立验收](docs/reports/M4-verification.md)
+- **Seen: 1**（同一次契约变更，ArabiForm M4）
