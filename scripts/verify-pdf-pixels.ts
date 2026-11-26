@@ -304,6 +304,64 @@ m4Rows.push(await passingCase(duplicateBytes, { ...exportMatch, Clinic: arabicCl
 
 const m4Merged = { pdf: 'choices-merged.pdf', rows: m4Rows.map(({ filename }) => filename) };
 await writeFile(resolve(root, m4Merged.pdf), await createMergedPdf(m4Rows));
+
+const coverSource = await PDFDocument.create();
+const coverSourcePage = coverSource.addPage([180, 140]);
+const coverSourceField = coverSource.getForm().createTextField('ID');
+coverSourceField.addToPage(coverSourcePage, { x: 20, y: 60, width: 120, height: 20 });
+const singlePageCoverRow = await passingCase(Buffer.from(await coverSource.save()), { ID: 'بَنِي يَمَن 00123' },
+  'cover-index-source.pdf', 'M6 compact one-page filled form for covered merge parity');
+const longFilename = `00123-${'يَاسِين'.repeat(10)}-${'W'.repeat(50)}.pdf`;
+const templateName = 'نَمُوذَج HR (00123).pdf';
+const coveredMerged = [];
+for (const locale of ['en', 'ar'] as const) {
+  const en = locale === 'en';
+  const sources = en ? [m4Rows[0]!, singlePageCoverRow] : Array.from({ length: 25 }, (_, index) => (
+    index === 0 ? m4Rows[1]! : index === 24 ? m4Rows[2]! : singlePageCoverRow
+  ));
+  const filenames = sources.map((_, index) => en ? [longFilename, 'Layla 00007.pdf'][index]! : `${index + 1}-${longFilename}`);
+  const rows = sources.map(({ pdfBytes }, index) => ({ pdfBytes, filename: filenames[index]! }));
+  const rowNumbers = rows.map((_, index) => index + 2);
+  const fontOptions = { ...settings, minFontSize: 7.25, preferredFont: 'latin' as const,
+    ...(en ? {} : { customFont: settings.fonts.latin }) };
+  const coverPages = en ? 1 : 2;
+  const spec = {
+    pdf: `m6-covered-${locale}.pdf`, plainPdf: `m6-plain-${locale}.pdf`,
+    rows: sources.map(({ filename }) => filename), coverPages,
+    expectedText: {
+      title: en ? 'ArabiForm · Batch Print Manifest' : 'ArabiForm · سجل طباعة الدفعة',
+      headings: en ? ['#', 'Row', 'Filename', 'Pages'] : ['#', 'الصف', 'اسم الملف', 'الصفحات'],
+      details: en ? ['Export date', '2026-11-27', 'Template', templateName,
+        'Ready: 2   ·   Flagged: 1   ·   Skipped: 1', 'Min font size: 7.25 pt   ·   Font mode: Latin']
+        : ['تاريخ التصدير', '2026-11-27', 'القالب', templateName,
+          'جاهز: 25   ·   يحتاج إلى مراجعة: 1   ·   تم تخطيه: 1', 'الحد الأدنى لحجم الخط: 7.25 نقطة   ·   وضع الخط: مخصص'],
+      filenames, rowNumbers, wrappedFilenames: filenames.filter((name) => name.includes(longFilename)),
+    },
+  };
+  const plain = await createMergedPdf(rows);
+  const covered = await createMergedPdf(rows, undefined, {
+    locale, templateName, exportedAt: new Date(2026, 10, 27, 23, 59),
+    preflight: fontOptions, rowNumbers, flagged: 1, skipped: 1,
+  });
+  const plainDoc = await PDFDocument.load(plain);
+  const coveredDoc = await PDFDocument.load(covered);
+  assert.equal(coveredDoc.getPageCount(), plainDoc.getPageCount() + coverPages);
+  assert(!coveredDoc.catalog.has(key('AcroForm')));
+  for (const page of coveredDoc.getPages().slice(0, coverPages)) {
+    const resources = page.node.Resources()!.lookup(key('Font'), PDFDict);
+    for (const [name, bytes] of [['ArabiFormCoverArabic', settings.fonts.arabic], ['ArabiFormCoverLatin', settings.fonts.latin]] as const) {
+      const descriptor = resources.lookup(key(name), PDFDict).lookup(key('DescendantFonts'), PDFArray)
+        .lookup(0, PDFDict).lookup(key('FontDescriptor'), PDFDict);
+      const file = descriptor.lookup(key('FontFile2'));
+      assert(file instanceof PDFRawStream);
+      assert.deepEqual(Buffer.from(decodePDFRawStream(file).decode()), bytes);
+    }
+  }
+  await writeFile(resolve(root, spec.pdf), covered);
+  await writeFile(resolve(root, spec.plainPdf), plain);
+  coveredMerged.push(spec);
+}
+
 const choiceZip = { editable: 'choices-editable.zip', flattened: 'choices-flattened.zip', rows: m4Merged.rows };
 const editableZip = createZip(m4Rows);
 const flattenedZip = await createFlattenedZip(m4Rows);
@@ -360,5 +418,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, choiceZip, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

@@ -4,7 +4,7 @@ import { borderWidth, installAppearance, type AppearanceFont } from './appearanc
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
-import { createShaper, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
+import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
 import { key, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
 
 export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './exports';
@@ -12,6 +12,7 @@ export { matchChoice } from './choice-match';
 export type { FieldChoice } from './choice-match';
 export { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } from './custom-font';
 export type { AuditRow, PdfExportRow } from './exports';
+export type { MergeCoverOptions } from './merge-cover';
 export { PdfIntakeError } from './template';
 export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } from './template';
 
@@ -52,7 +53,7 @@ export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<
 export async function preflightRow(
   bytes: Uint8Array | ArrayBuffer,
   valuesByField: Record<string, string>,
-  { fonts, minFontSize = 8, preferredFont = 'auto', customFont }: PreflightOptions,
+  { fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont }: PreflightOptions,
 ): Promise<RowPreflightResult> {
   if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
   const { doc, rawForm, fields } = await openTemplate(bytes);

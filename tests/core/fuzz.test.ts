@@ -7,6 +7,8 @@ import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow } from '../../src/core/pdf';
+import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
+import { paginateCoverRows } from '../../src/core/pdf/merge-cover';
 import { makeFilenames, planFilenames, readRoster } from '../../src/core/roster';
 
 const seed = 0x4a216d32;
@@ -232,6 +234,65 @@ describe('seeded adversarial files and PDF geometry', () => {
       expect(result.pdfBytes).toBeUndefined();
     }), 420);
   }, 60_000);
+});
+
+describe('seeded cover pagination and batch font recommendations', () => {
+  it('checks 620 cover indexes with uneven page counts and just-fitting rows', async () => {
+    const count = fc.oneof(fc.constantFrom(1, 25, 80), fc.integer({ min: 1, max: 80 }));
+    const geometry = count.chain((length) => fc.array(fc.record({
+      height: fc.integer({ min: 20, max: 115 }),
+      pageCount: fc.integer({ min: 1, max: 12 }),
+    }), { minLength: length, maxLength: length }));
+    await verify(fc.asyncProperty(geometry, fc.integer({ min: 160, max: 740 }), async (rows, firstTop) => {
+      const nextTop = 780;
+      const bottom = 40;
+      const pages = paginateCoverRows(rows, firstTop, nextTop, bottom);
+      let expectedPage = pages.length + 1;
+      let index = 0;
+      for (const [page, positions] of pages.entries()) {
+        expect(positions.length).toBeGreaterThan(0);
+        let top = page === 0 ? firstTop : nextTop;
+        for (const entry of positions) {
+          const row = rows[index]!;
+          expect(entry).toEqual({ index, top, startPage: expectedPage, endPage: expectedPage + row.pageCount - 1 });
+          expectedPage += row.pageCount;
+          top -= row.height;
+          expect(top).toBeGreaterThanOrEqual(bottom);
+          index++;
+        }
+        if (page < pages.length - 1) expect(top - rows[index]!.height).toBeLessThan(bottom);
+      }
+      expect(index).toBe(rows.length);
+      expect(expectedPage).toBe(pages.length + rows.reduce((sum, row) => sum + row.pageCount, 1));
+    }), 620);
+  });
+
+  it('checks 400 optimizer batches around the floor with mixed diagnoses', async () => {
+    const mode = fc.constantFrom('pass', 'empty', 'size', 'missing', 'mixed', 'bad-value');
+    const options = fc.array(fc.record({
+      mode, width: fc.integer({ min: 550, max: 1050 }), height: fc.integer({ min: 550, max: 1050 }),
+    }), { minLength: 1, maxLength: 20 });
+    await verify(fc.asyncProperty(fc.integer({ min: 600, max: 1000 }), options, async (current, options) => {
+      const rows = options.map(({ mode, width, height }) => {
+        const narrow = { code: 'too-narrow' as const, requiredFontSizePt: width / 100 };
+        const low = { code: 'too-low' as const, requiredFontSizePt: height / 100 };
+        const invalid = { code: 'exceeds-maxlen' as const, requiredFontSizePt: 6 };
+        const diagnostics = {
+          pass: [narrow, low], empty: [], size: [narrow, low], missing: [narrow, { code: 'too-low' as const }],
+          mixed: [narrow, invalid], 'bad-value': [{ ...narrow, requiredFontSizePt: NaN }],
+        }[mode];
+        return { status: mode === 'pass' ? 'pass' as const : 'flagged' as const, diagnostics };
+      });
+      const floors = options.flatMap(({ mode, width, height }) => {
+        const min = Math.min(width, height);
+        const max = Math.max(width, height);
+        return mode === 'size' && min >= 600 && max < current ? [min] : [];
+      });
+      expect(suggestBatchFontSize(rows, current / 100)).toEqual(floors.length ? {
+        minFontSizePt: Math.min(...floors) / 100, fixableRows: floors.length,
+      } : undefined);
+    }), 400);
+  });
 });
 
 describe('seeded choice fields and individual print ZIPs', () => {
