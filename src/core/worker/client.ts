@@ -1,3 +1,4 @@
+import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { BatchCommand, BatchInput, BatchProgress, BatchRequest, BatchResponse, BatchResult, BatchRowResult, MergeCoverSheet } from './protocol';
 
 export type { BatchInput, BatchProgress, BatchRowResult } from './protocol';
@@ -51,10 +52,10 @@ export function createBatchWorker() {
   return {
     preflight: (input: BatchInput, onProgress?: ProgressListener) => send({ phase: 'preflight', input }, onProgress) as Promise<BatchRowResult[]>,
     preview: (rowIndex: number) => send({ phase: 'preview', rowIndex }) as Promise<Uint8Array | undefined>,
-    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false) =>
-      send({ phase: 'zip', filenames, flattenZip }, onProgress) as Promise<Uint8Array>,
-    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet) =>
-      send({ phase: 'merged', coverSheet }, onProgress) as Promise<Uint8Array>,
+    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings) =>
+      send({ phase: 'zip', filenames, flattenZip, watermark }, onProgress) as Promise<Uint8Array>,
+    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings) =>
+      send({ phase: 'merged', coverSheet, watermark }, onProgress) as Promise<Uint8Array>,
     dispose: () => stop(new DOMException('Batch canceled', 'AbortError')),
   };
 }

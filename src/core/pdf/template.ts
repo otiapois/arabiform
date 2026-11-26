@@ -14,6 +14,9 @@ export interface WidgetMetadata {
   height: number;
   rotation: number;
   defaultFontSize: number;
+  innerWidth: number | null;
+  innerHeight: number | null;
+  usable: boolean;
 }
 
 export interface FieldMetadata {
@@ -21,6 +24,7 @@ export interface FieldMetadata {
   kind: 'text' | 'checkbox' | 'radio' | 'dropdown';
   required: boolean;
   multiline: boolean;
+  supportsTextCapacity: boolean;
   readOnly: boolean;
   maxLength?: number;
   defaultFontSize: number;
@@ -82,7 +86,8 @@ export interface WidgetTarget {
   widget: PDFWidgetAnnotation;
   meta: WidgetMetadata;
   appearance: string;
-  usable: boolean;
+  border: number;
+  padding: number;
 }
 
 export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
@@ -164,7 +169,18 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
           && rect.x >= crop.x - 0.01 && rect.y >= crop.y - 0.01
           && rect.x + rect.width <= crop.x + crop.width + 0.01 && rect.y + rect.height <= crop.y + crop.height + 0.01
           && linked && !(flags & (1 | 2 | 32)) && !(pageRotation && flags & 16) && pageRotation % 90 === 0);
-        return { widget, appearance: widgetAppearance, usable, meta: { ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance) } };
+        const legacyBorder = widget.dict.lookupMaybe(key('Border'), PDFArray);
+        const border = Math.max(0, widget.getBorderStyle()?.getWidth()
+          ?? (legacyBorder && legacyBorder.size() >= 3 ? Number(legacyBorder.get(2).toString()) : 0));
+        const padding = 1.6 + border;
+        const quarterTurn = rotation === 90 || rotation === 270;
+        const supportedGeometry = rotation % 90 === 0 && [rect.width, rect.height, padding].every(Number.isFinite);
+        const meta: WidgetMetadata = {
+          ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance), usable,
+          innerWidth: supportedGeometry ? (quarterTurn ? rect.height : rect.width) - 2 * padding : null,
+          innerHeight: supportedGeometry ? (quarterTurn ? rect.width : rect.height) - 2 * padding : null,
+        };
+        return { widget, appearance: widgetAppearance, border, padding, meta };
       });
       const maxLenAttribute = kind === 'text' ? fieldAttributes(canonical, 'MaxLen') : undefined;
       const maxLength = maxLenAttribute instanceof PDFNumber ? maxLenAttribute.asNumber() : undefined;
@@ -177,9 +193,11 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
       const dropdownOptions = kind === 'dropdown' ? dropdownChoices(canonical) : undefined;
       const choices = dropdownOptions?.map(({ value, label }) => ({ value, label }))
         ?? (kind === 'radio' ? radioChoices(widgets, fieldAttributes(canonical, 'Opt')) : undefined);
+      const supportsTextCapacity = field instanceof PDFTextField && !field.isReadOnly()
+        && !field.isCombed() && !field.isPassword() && !field.isFileSelector() && !field.isRichFormatted();
       const meta: FieldMetadata = {
         name, kind, required: field.isRequired(), readOnly: field.isReadOnly(),
-        multiline: field instanceof PDFTextField && field.isMultiline(), maxLength,
+        multiline: field instanceof PDFTextField && field.isMultiline(), supportsTextCapacity, maxLength,
         defaultFontSize: fontSize(appearance), value, widgets: widgets.map((entry) => entry.meta), choices,
       };
       const declared = new Set(widgets.map(({ widget }) => widget.dict));

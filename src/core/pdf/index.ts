@@ -1,7 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFBool, PDFCheckBox, PDFDict, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
 import { explicitQuadding, type AlignOverride } from './alignment';
-import { borderWidth, installAppearance, type AppearanceFont } from './appearances';
+import { installAppearance, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
@@ -165,16 +165,14 @@ export async function preflightRow(
     const quadding = alignOverride && alignOverride !== 'auto' ? explicitQuadding[alignOverride] : undefined;
     const placed: { widget: WidgetTarget; placement: Placement }[] = [];
     for (const [widgetIndex, widget] of widgets.entries()) {
-      const { width, height, rotation, defaultFontSize } = widget.meta;
-      const padding = 1.6 + borderWidth(widget);
-      const quarterTurn = rotation === 90 || rotation === 270;
+      const { rotation, defaultFontSize, innerWidth, innerHeight, usable } = widget.meta;
+      const { padding } = widget;
       let placement;
       try {
-        placement = !widget.usable || !Number.isFinite(padding) ? { code: 'unsupported-widget' as const }
+        placement = !usable || !Number.isFinite(padding) ? { code: 'unsupported-widget' as const }
           : rotation % 90 !== 0 ? { code: 'widget-rotated-unsupported' as const }
           : fitText(shaper ??= createShaper(fonts, preferredFont, custom?.face), value, meta.multiline, {
-            innerWidth: (quarterTurn ? height : width) - 2 * padding,
-            innerHeight: (quarterTurn ? width : height) - 2 * padding,
+            innerWidth: innerWidth!, innerHeight: innerHeight!,
             padding, alignment, alignOverride, min: minFontSize, max: defaultFontSize,
           });
       } catch (cause) {
