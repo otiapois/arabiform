@@ -17,14 +17,38 @@ function csvFile(lines: string[]) {
   return { name: 'synthetic-roster.csv', mimeType: 'text/csv', buffer: Buffer.from(lines.join('\r\n')) };
 }
 
-async function upload200(page: Page) {
+async function observePreflight(page: Page, cancel: boolean) {
+  // Several genuine worker messages can arrive between Edge animation frames.
+  // Observe the rendered progress element on the workbench before the batch starts.
+  const state = await page.evaluateHandle(cancel => {
+    const state = { first: 0 };
+    const observer = new MutationObserver(() => {
+      const meter = document.querySelector<HTMLProgressElement>('[data-testid="batch-progress"][data-phase="preflight"]');
+      if (!meter || meter.max !== 200 || meter.value <= 0 || meter.value >= meter.max) return;
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="cancel-batch"]');
+      if (cancel && (!button || button.disabled || !button.getClientRects().length)) return;
+      state.first = meter.value;
+      observer.disconnect();
+      if (cancel) button!.click();
+    });
+    observer.observe(document.getElementById('workbench')!, { subtree: true, attributes: true, childList: true });
+    return state;
+  }, cancel);
+  return async () => {
+    const result = await page.waitForFunction(state => state.first || false, state);
+    return Number(await result.jsonValue());
+  };
+}
+
+async function upload200(page: Page, cancel = false) {
   await page.goto('/');
   await page.getByTestId('pdf-upload').setInputFiles(asset('hr-onboarding.pdf'));
   const roster = csvFile(['Employee ID,Name,Filename', ...ids.map((id, i) => [id, nameAt(i), 'specimen-' + id].join(','))]);
   await page.getByRole('textbox', { name: 'PDF filename pattern' }).fill('{{Employee ID}}-{{Name}}.pdf');
+  const firstProgress = await observePreflight(page, cancel);
   const started = performance.now();
   await page.getByTestId('roster-upload').setInputFiles(roster);
-  return started;
+  return { started, firstProgress };
 }
 
 async function liveProgress(page: Page, phase: string) {
@@ -54,8 +78,8 @@ async function evidence(info: TestInfo, name: string, data: object) {
 
 test('200 live worker rows, responsive search and paging, verified PDFs, cancel a merged export', async ({ page, traffic, baseURL }, info) => {
   test.setTimeout(180_000);
-  const started = await upload200(page);
-  const first = await liveProgress(page, 'preflight');
+  const { started, firstProgress } = await upload200(page);
+  const first = await firstProgress();
   const search = page.getByTestId('queue-search');
   const rows = page.getByTestId('queue-row');
   const interactionStart = performance.now();
@@ -126,18 +150,19 @@ test('200 live worker rows, responsive search and paging, verified PDFs, cancel 
 });
 
 test('cancel active preflight, resume retained data, replace with a fresh roster and verify its ZIP', async ({ page }, info) => {
-  await upload200(page);
-  const canceledAt = await liveProgress(page, 'preflight');
-  const worker = page.workers().find(item => batchWorker.test(new URL(item.url()).pathname))!;
-  const closed = worker.waitForEvent('close');
-  await page.getByTestId('cancel-batch').click();
+  const starting = page.waitForEvent('worker', worker => batchWorker.test(new URL(worker.url()).pathname))
+    .then(worker => ({ worker, closed: worker.waitForEvent('close') }));
+  const { firstProgress } = await upload200(page, true);
+  const { worker, closed } = await starting;
+  const canceledAt = await firstProgress();
   await closed;
   await expect(page.getByTestId('resume-batch')).toBeEnabled();
   await expect(page.getByText(/Batch canceled/)).toBeVisible();
   await expect(page.getByTestId('batch-progress')).toHaveCount(0);
   await expect(page.getByRole('button', { name: zipButton })).toBeDisabled();
+  const resumedProgress = await observePreflight(page, false);
   await page.getByTestId('resume-batch').click();
-  const resumedAt = await liveProgress(page, 'preflight');
+  const resumedAt = await resumedProgress();
   const resumed = page.workers().find(item => batchWorker.test(new URL(item.url()).pathname))!;
   expect(resumed).not.toBe(worker);
   const replaced = resumed.waitForEvent('close');
