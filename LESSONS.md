@@ -69,3 +69,13 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **原因**　M2 核心像素套件已通过，原有浏览器清单使用 `before.pdf`，新加的强制命名断言却让两种视口的 CSV/XLSX 下载验收全部报错。
 - **证据**　独立 QA 在集成版本 `b420ac8` 收到 `source snapshot hash changed: before.pdf`。提交 `9722b07` 修正共享校验器后，同一套原有浏览器断言通过。[校验入口](scripts/verify-pdf-pixels.py) · [浏览器清单](tests/e2e/downloads.ts)
 - **Seen: 1**（四个失败场景对应同一原因，2026-11-26）
+
+### M3 浏览器文件名与 PDF 外观（2026-11-27）
+
+以下三个缺陷分别计一个里程碑周期。桌面和移动视口复现同一个缺陷，只计一次。[M3 独立验收](docs/reports/M3-verification.md)
+
+| 规则 | 失败证据与修正 | Seen |
+|---|---|---|
+| 对混排文件名，用浏览器 Range 测量数字前缀、词干和扩展名。移动端发生折行时，每个前缀只与同一行的文字比较。 | M2 文件名逻辑字符串正确，旧 `dir="auto"` 在两个语种和视口的 8 组原布局观测中有 6 组后缀错位。现在队列和所选行共用显式 LTR 容器，阿语词组隔离，`.pdf` 单独固定在右端。[组件](src/web/Filename.tsx) · [Edge 测量](tests/e2e/m3-pro.spec.ts) | 1 |
+| 核对交互控件转为打印页面前后的整页像素，尤其是非整数坐标上的复选框。 | 旧候选合并页的 3 个复选框各差 66 个像素，字段值与外观流均能正常读回。修正注释外观放置矩阵的单精度运算后，合并页与可编辑单页的 4 倍渲染完全相同。[打印导出](src/core/pdf/exports.ts) · [逐页校验](scripts/verify-pdf-pixels.py) | 1 |
+| 验证自定义字体子集时，同时读取嵌入数据、检查渲染器警告并测量实际墨迹。 | Adobe Source Serif 4 的 CFF 子集头曾写出无效的 `offSize=0x0e`。FreeType 回退后仍有墨迹。改为合法值 `0x04` 后，字形像素随之改变，PyMuPDF 渲染无警告。[字体嵌入](src/core/pdf/custom-font.ts) · [CFF 像素案例](scripts/verify-pdf-pixels.ts) | 1 |
