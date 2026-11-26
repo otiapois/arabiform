@@ -5,6 +5,7 @@
   - A fillable synthetic AcroForm template,
   - A synthetic bilingual Arabic roster (`ليلى حسن / 00123`, `أحمد سالم / 00007`, `بَنِي يَمَن / 00891`, plus 1 intentionally overlong name to demonstrate live fail-closed overflow detection!),
   - A rendered preview for checking Arabic diacritics and leading zeros.
+  - The gallery also loads the verified clinic consent, multi-page HR choices, and landscape visitor badge fixtures. Each pair has a separate local dynamic bundle loaded when selected. The original primary button still loads Workshop Attendance.
 - **Live In-Browser PDF Preview (`pdfjs-dist` local worker)**:
   - Render actual generated PDF pages directly to `<canvas>` inside the browser (zero external upload!) with row switcher (`Row 1 / 2 / 3...`), zoom/fit toggle, and visual red highlight boxes over any flagged fields!
   - Selecting a flagged row starts at its first affected page, using the 1-based page numbers from preflight. The preview header offers a button for each affected page with its issue count. Highlight the failed widgets on the current page and keep that page visible during and after an inline correction.
@@ -16,6 +17,7 @@
   - Press `/` outside form fields to focus search. Within an active row editor, `Escape` restores the row overrides from the start of that edit and focuses the row's edit button. Keep visible keyboard outlines at least 2 px and announce batch phase and counts politely.
   - Source warnings show spreadsheet cell coordinates. Mapped Excel formula cells warn whether a stored result is present, so the operator can verify stale results or enter a verified value for an empty cell.
   - Show a proven font-size threshold or MaxLen excess beside the red preview highlights and in the selected row editor. Offer `Set min font to X pt` when each failure in the selected row can be resolved within the 6 pt floor. Changing that setting checks the full batch again.
+  - The batch suggestion counts rows that can be resolved by a size change alone and uses their highest shared passing floor. Other diagnostics remain subject to review.
 - **Local Worker Lifecycle**:
   - A dedicated, first-party Web Worker runs preflight, ZIP creation and merged PDF creation. It retains the PDF bytes between operations and sends row metadata, the requested single-row preview, and the completed file back to the interface.
   - Show the current phase and completed/total count. `Cancel batch` terminates the worker and clears the results and pending downloads. `Resume batch` rechecks the retained files and edits in a fresh worker. Replacing inputs or editing preflight settings also invalidates the previous worker.

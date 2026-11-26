@@ -4,7 +4,7 @@ import { Diagnostics } from './Diagnostics';
 import { fillLabel, translator } from './labels';
 import { Queue } from './Queue';
 import { saveDownload } from './resources';
-import { useWorkbench } from './useWorkbench';
+import { sampleWorkflows, useWorkbench } from './useWorkbench';
 
 const PdfPreview = lazy(() => import('./PdfPreview'));
 
@@ -102,9 +102,21 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               <span className="privacy-dot" aria-hidden="true" />
               {labels.privacyBadge}
             </div>
-            <button type="button" className="button primary sample-button" disabled={desk.busy.pdf && desk.busy.roster} onClick={desk.loadSample}>
+            <button type="button" className="button primary sample-button" disabled={desk.busy.pdf && desk.busy.roster} onClick={() => void desk.loadSample()}>
               {labels.trySample}
             </button>
+          </div>
+        </section>
+
+        <section className="sample-gallery" aria-labelledby="sample-workflows-heading">
+          <h2 id="sample-workflows-heading">{labels.sampleWorkflows}</h2>
+          <div className="actions compact">
+            {sampleWorkflows.map(workflow => (
+              <button key={workflow} type="button" className="button secondary" data-testid={`sample-${workflow}`}
+                disabled={desk.busy.pdf || desk.busy.roster} onClick={() => void desk.loadSample(workflow)}>
+                {`${labels[workflow]} · ${labels.synthetic}`}
+              </button>
+            ))}
           </div>
         </section>
 
@@ -147,8 +159,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     </label>
                   )}
                   <div className="source-note" aria-live="polite">
-                    {desk.synthetic && <strong className="tag tag-pass">{labels.synthetic}</strong>}
-                    <p>{desk.synthetic ? labels.sampleNotice : labels.realNotice}</p>
+                    {desk.loadedSample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
+                    <p>{desk.loadedSample === 'workshop' ? labels.sampleNotice : desk.loadedSample ? labels.workflowNotice : labels.realNotice}</p>
                   </div>
                 </div>
               </section>

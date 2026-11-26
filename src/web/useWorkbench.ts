@@ -15,6 +15,22 @@ export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
 
 const emptyRows: SourceRow[] = [];
 const emptyFields: TemplateInfo['fields'] = [];
+const samples = {
+  workshop: {
+    load: () => import('virtual:arabiform/sample'), pdf: 'synthetic-acroform.pdf', roster: 'synthetic-roster.csv', pattern: '{{ID}}-{{Name}}.pdf',
+  },
+  clinic: {
+    load: () => import('virtual:arabiform/sample-clinic'), pdf: 'clinic-consent-mixed.pdf', roster: 'clinic-consent-roster.csv', pattern: '{{ID}}-{{Name}}.pdf',
+  },
+  hr: {
+    load: () => import('virtual:arabiform/sample-hr'), pdf: 'multi-page-hr-choices.pdf', roster: 'multi-page-hr-choices.csv', pattern: '{{Employee}}.pdf',
+  },
+  badge: {
+    load: () => import('virtual:arabiform/sample-badge'), pdf: 'landscape-badge.pdf', roster: 'badge-roster.csv', pattern: '{{Badge ID}}-{{Name}}.pdf',
+  },
+};
+type SampleWorkflow = keyof typeof samples;
+export const sampleWorkflows = Object.keys(samples) as SampleWorkflow[];
 
 type CustomFont = { status: 'loading' } | { status: 'invalid'; maxMiB?: number } | {
   status: 'ready'; family: string; bytes: Uint8Array;
@@ -23,7 +39,7 @@ type CustomFont = { status: 'loading' } | { status: 'invalid'; maxMiB?: number }
 export function useWorkbench() {
   const [template, setTemplate] = useState<{ name: string; bytes: Uint8Array; info: TemplateInfo }>();
   const [roster, setRoster] = useState<{ name: string; data: Roster; engine: RosterEngine }>();
-  const [synthetic, setSynthetic] = useState(false);
+  const [loadedSample, setLoadedSample] = useState<SampleWorkflow>();
   const [busy, setBusy] = useState({ pdf: false, roster: false });
   const [errors, setErrors] = useState<{ pdf?: string; roster?: string }>({});
   const request = useRef({ pdf: 0, roster: 0, preset: 0, customFont: 0 });
@@ -116,7 +132,7 @@ export function useWorkbench() {
     invalidate(true);
     setTemplate(undefined);
     setRequestedPage(undefined);
-    setSynthetic(false);
+    setLoadedSample(undefined);
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setErrors((current) => ({ ...current, pdf: undefined }));
     setBusy((current) => ({ ...current, pdf: true }));
@@ -135,7 +151,7 @@ export function useWorkbench() {
     const id = ++request.current.roster;
     invalidate(true);
     setRoster(undefined);
-    setSynthetic(false);
+    setLoadedSample(undefined);
     resetRows();
     setErrors((current) => ({ ...current, roster: undefined }));
     setBusy((current) => ({ ...current, roster: true }));
@@ -150,33 +166,43 @@ export function useWorkbench() {
     }
   }
 
-  async function loadSample() {
+  async function loadSample(workflow?: SampleWorkflow) {
+    const selectedSample = workflow ?? 'workshop';
+    const sample = samples[selectedSample];
     const pdfId = ++request.current.pdf;
     const rosterId = ++request.current.roster;
     request.current.preset++;
     invalidate(true);
     resetRows();
-    setMappingSettings({ fromPreset: false, values: {} });
+    setMappingSettings({ fromPreset: false, values: selectedSample === 'hr' ? { Clinic: 'Clinic', Contact: 'Contact' } : {} });
+    if (workflow !== undefined) {
+      request.current.customFont++;
+      setCustomFont(undefined);
+      setMinFontSize(8);
+      setFont('auto');
+      setPattern(sample.pattern);
+      setFlattenZip(false);
+    }
     setPresetError(false);
     setTemplate(undefined);
     setRoster(undefined);
-    setSynthetic(false);
+    setLoadedSample(undefined);
     setErrors({});
     setBusy({ pdf: true, roster: true });
     try {
       const [assets, engine, parser] = await Promise.all([
-        import('virtual:arabiform/sample'),
+        sample.load(),
         import('../core/pdf'),
         import('../core/roster'),
       ]);
       const bytes = decodeBase64(assets.template);
       const [info, data] = await Promise.all([
         engine.inspectTemplate(bytes),
-        parser.readRoster(decodeBase64(assets.roster), 'synthetic-roster.csv'),
+        parser.readRoster(decodeBase64(assets.roster), sample.roster),
       ]);
-      if (request.current.pdf === pdfId) setTemplate({ name: 'synthetic-acroform.pdf', bytes, info });
-      if (request.current.roster === rosterId) setRoster({ name: 'synthetic-roster.csv', data, engine: parser });
-      if (request.current.pdf === pdfId && request.current.roster === rosterId) setSynthetic(true);
+      if (request.current.pdf === pdfId) setTemplate({ name: sample.pdf, bytes, info });
+      if (request.current.roster === rosterId) setRoster({ name: sample.roster, data, engine: parser });
+      if (request.current.pdf === pdfId && request.current.roster === rosterId) setLoadedSample(selectedSample);
     } catch (error) {
       if (request.current.pdf === pdfId) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
     } finally {
@@ -298,7 +324,7 @@ export function useWorkbench() {
   }
 
   return {
-    template, roster, synthetic, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping,
+    template, roster, loadedSample, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip,
     ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,

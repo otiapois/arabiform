@@ -29,8 +29,10 @@ function withBundle(site: string | undefined, check: (dist: string, verify: (...
       copyFileSync(join(project, file), destination);
     }
     const dist = join(temporary, 'dist');
-    mkdirSync(dist);
-    copyFileSync(join(project, 'index.html'), join(dist, 'index.html'));
+    mkdirSync(join(dist, 'assets'), { recursive: true });
+    const index = readFileSync(join(project, 'index.html'), 'utf8');
+    writeFileSync(join(dist, 'index.html'), index.replace('/src/web/main.tsx', '/assets/index-test.js'));
+    writeFileSync(join(dist, 'assets/index-test.js'), '// synthetic entry');
     const prerender = run('scripts/prerender.mjs');
     expect(prerender.status, prerender.stderr).toBe(0);
     check(dist, (...args) => run('scripts/verify-release-bundle.mjs', args));
@@ -46,6 +48,12 @@ it('accepts the default local build and rejects an extra HTML page', () => {
     const local = verify();
     expect(local.status, local.stderr).toBe(0);
     expect(local.stdout).toContain('https://arabiform.example');
+    const entry = join(dist, 'assets/index-test.js');
+    writeFileSync(entry, ' '.repeat(300_000));
+    const oversized = verify();
+    expect(oversized.status).toBe(1);
+    expect(oversized.stderr).toContain('entry JS exceeds its budget');
+    writeFileSync(entry, '// synthetic entry');
     writeFileSync(join(dist, 'extra.html'), '<title>Extra</title>');
     const extra = verify();
     expect(extra.status).toBe(1);

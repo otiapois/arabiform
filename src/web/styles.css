@@ -155,6 +155,10 @@ button:disabled { cursor: default; }
 [dir="rtl"] .hero h1 { letter-spacing: 0; line-height: 1.24; max-width: 20ch; }
 .hero-summary { max-width: 55ch; color: var(--muted); line-height: 1.6; margin-block-start: .85rem; }
 .hero-actions { display: grid; justify-items: end; gap: .65rem; flex: none; }
+.sample-gallery { display: grid; gap: .4rem; margin-block-end: 1rem; }
+.sample-gallery h2 { font-size: .92rem; }
+.sample-gallery .button, .batch-font-suggestion .button { white-space: normal; text-align: start; }
+.batch-font-suggestion { padding: .65rem 1rem 0; }
 .privacy-badge {
   display: inline-flex;
   align-items: center;

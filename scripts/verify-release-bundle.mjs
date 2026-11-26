@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
 
 const project = fileURLToPath(new URL('../', import.meta.url))
 const dist = join(project, 'dist')
@@ -55,6 +56,24 @@ function checkRoute(html, route, site, titles, descriptions) {
     route + ' needs one SoftwareApplication with the configured origin')
   requireCheck([...faq, ...application].every(schema => schema['@context'] === 'https://schema.org'),
     route + ' has an unexpected JSON-LD context')
+}
+
+function entrySize(html, route) {
+  const assets = new Set([
+    ...tags(html, 'script').filter(tag => tag.get('type') === 'module').map(tag => tag.get('src')),
+    ...tags(html, 'link').filter(tag => tag.get('rel') === 'modulepreload').map(tag => tag.get('href')),
+  ])
+  requireCheck(assets.size > 0, route + ' needs a local entry script')
+  let raw = 0
+  let gzip = 0
+  for (const asset of assets) {
+    requireCheck(asset && /^\/assets\/[\w.-]+\.m?js$/.test(asset), route + ' has a non-local entry script')
+    const bytes = readFileSync(join(dist, asset.slice(1)))
+    raw += bytes.length
+    gzip += gzipSync(bytes).length
+  }
+  requireCheck(raw < 300_000 && gzip < 95_000, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
+  return { raw, gzip }
 }
 
 function checkHeaders() {
@@ -120,8 +139,11 @@ function verifyRelease() {
     'dist must contain exactly the five ArabiForm HTML routes')
   const titles = new Set()
   const descriptions = new Set()
+  const sizes = []
   for (const [index, route] of routes.entries()) {
-    checkRoute(read(pages[index]).replace(/<!--[\s\S]*?-->/g, ''), route, site, titles, descriptions)
+    const html = read(pages[index]).replace(/<!--[\s\S]*?-->/g, '')
+    checkRoute(html, route, site, titles, descriptions)
+    sizes.push(entrySize(html, route))
   }
   const sitemap = read('sitemap.xml')
   const urls = [...sitemap.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)].map(([, value]) => value)
@@ -134,6 +156,8 @@ function verifyRelease() {
   checkHeaders()
   checkLicensesAndCi()
   console.log('Verified five routes, sitemap, response headers, notices and CI for ' + site.origin + (strict ? ' (strict origin)' : ''))
+  console.log('Largest entry JS: ' + Math.max(...sizes.map(size => size.raw)) + ' raw / ' +
+    Math.max(...sizes.map(size => size.gzip)) + ' gzip bytes')
 }
 
 try {

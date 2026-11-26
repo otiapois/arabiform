@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { suggestBatchFontSize } from '../core/pdf/batch-font-suggestion';
 import { matchChoice } from '../core/pdf/choice-match';
 import { choiceText, editableChoices } from './Choices';
 import { Diagnostics, diagnosticText, safeRowMinSize } from './Diagnostics';
@@ -76,6 +77,8 @@ export function Queue({ desk, language }: QueueProps) {
     .filter(({ code }) => code === 'invalid-choice')
     .map(({ field }) => desk.mapping[field]));
   const safeSize = result?.status === 'flagged' ? safeRowMinSize(result.diagnostics, desk.minFontSize) : undefined;
+  const batchSize = useMemo(() => desk.results && suggestBatchFontSize(desk.results, desk.minFontSize),
+    [desk.results, desk.minFontSize]);
   const searchIndex = useMemo(() => desk.rows.map(({ values }, i) =>
     searchable([desk.filenamePlans[i]!.filename, ...Object.values(values)].join('\0'))), [desk.rows, desk.filenamePlans]);
   const matches = useMemo(() => {
@@ -110,6 +113,15 @@ export function Queue({ desk, language }: QueueProps) {
         <div><dt>{labels.flagged}</dt><dd className="ink-amber" data-testid="flagged-count">{desk.results ? flagged : '—'}</dd></div>
         <div><dt>{labels.sourceWarnings}</dt><dd data-testid="warning-count">{warningRows}</dd></div>
       </dl>
+      {batchSize && (
+        <div className="batch-font-suggestion actions compact">
+          <button type="button" className="button secondary" data-testid="apply-batch-min-font"
+            disabled={desk.exporting} onClick={() => desk.changeSize(batchSize.minFontSizePt)}>
+            {fillLabel(batchSize.fixableRows === 1 ? labels.fixBatchOne : labels.fixBatchMany,
+              { size: batchSize.minFontSizePt, count: batchSize.fixableRows })}
+          </button>
+        </div>
+      )}
       {warningRows > 0 && (
         <p className="alert warning">{fillLabel(labels.sourceWarningCount, { count: warningRows })}</p>
       )}

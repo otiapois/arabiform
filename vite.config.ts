@@ -13,6 +13,18 @@ const assets = {
     template: 'fixtures/golden/template.pdf',
     roster: 'fixtures/golden/roster.csv',
   },
+  'sample-clinic': {
+    template: 'fixtures/m3/clinic-consent-mixed.pdf',
+    roster: 'fixtures/m3/clinic-consent-roster.csv',
+  },
+  'sample-hr': {
+    template: 'fixtures/m4/multi-page-hr-choices.pdf',
+    roster: 'fixtures/m4/multi-page-hr-choices.csv',
+  },
+  'sample-badge': {
+    template: 'fixtures/m2/landscape-badge.pdf',
+    roster: 'fixtures/m2/badge-roster.csv',
+  },
 };
 
 function bundledAssets(): Plugin {
@@ -24,8 +36,8 @@ function bundledAssets(): Plugin {
     },
     async load(id) {
       const group = id.slice(prefix.length + 1);
-      if (!id.startsWith('\0' + prefix) || (group !== 'fonts' && group !== 'sample')) return;
-      const exports = await Promise.all(Object.entries(assets[group]).map(async ([name, relativePath]) => {
+      if (!id.startsWith('\0' + prefix) || !Object.hasOwn(assets, group)) return;
+      const exports = await Promise.all(Object.entries(assets[group as keyof typeof assets]).map(async ([name, relativePath]) => {
         const path = new URL(relativePath, import.meta.url);
         this.addWatchFile(fileURLToPath(path));
         const bytes = await readFile(path);

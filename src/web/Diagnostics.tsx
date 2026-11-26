@@ -15,15 +15,7 @@ export function diagnosticText(issue: Diagnostic, minSize: number, { labels, pro
   return problem(issue.code) ?? labels.pdfError;
 }
 
-export function safeRowMinSize(issues: readonly Diagnostic[], minSize: number) {
-  if (!issues.length) return;
-  let size = minSize;
-  for (const { requiredFontSizePt } of issues) {
-    if (requiredFontSizePt === undefined || requiredFontSizePt < 6 || requiredFontSizePt >= minSize) return;
-    size = Math.min(size, requiredFontSizePt);
-  }
-  if (size < minSize) return size;
-}
+export { safeRowMinSize } from '../core/pdf/batch-font-suggestion';
 
 export function Diagnostics({ issues, minSize, language, testId }: {
   issues: readonly Diagnostic[];
