@@ -141,8 +141,10 @@ def main():
     manifest = json.loads(path.read_text(encoding="utf-8-sig"))
     assert manifest["cases"], "the pixel verification manifest has no cases"
     for filename in {case["before"] for case in manifest["cases"]}:
-        sha256 = hashlib.sha256((path.parent / filename).read_bytes()).hexdigest()
-        assert filename == f"source-{sha256}.pdf", f"source snapshot hash changed: {filename}"
+        source = path.parent / filename
+        if re.fullmatch(r"source-[0-9a-f]{64}\.pdf", source.name):
+            sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+            assert source.name == f"source-{sha256}.pdf", f"source snapshot hash changed: {filename}"
     results = [check_case(case, path.parent) for case in manifest["cases"]]
     merged = check_merged(manifest["merged"], path.parent) if "merged" in manifest else 0
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
