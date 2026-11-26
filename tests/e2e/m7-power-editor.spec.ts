@@ -27,6 +27,34 @@ test('M7 previews exact Arabic cleanup and literal replacement, applies and rest
   await align(page, 'Name').selectOption('center');
   const panel = await cleanPanel(page);
   await panel.getByRole('checkbox', { name: 'Name', exact: true }).check();
+  const examples = await panel.locator('label').filter({ hasText: '→' }).evaluateAll(labels => labels.map(label => {
+    const tree = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+    const letters = [];
+    for (let node = tree.nextNode(); node; node = tree.nextNode()) {
+      const value = node.textContent!;
+      for (let index = 0; index < value.length; index++) {
+        const char = value[index]!;
+        if (!/[أإآاةهىي→]/u.test(char)) continue;
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + 1);
+        const { left, right, top } = range.getBoundingClientRect();
+        letters.push({ char, left, right, top });
+      }
+    }
+    return letters;
+  }));
+  expect(examples.map(letters => letters.map(item => item.char).join(''))).toEqual(['أإآ→ا', 'ة→ه', 'ى→ي']);
+  for (const letters of examples) {
+    const arrow = letters.find(item => item.char === '→')!;
+    const target = letters.at(-1)!;
+    for (const source of letters.slice(0, -2)) {
+      expect(source.top).toBe(arrow.top);
+      expect(source.right).toBeLessThan(arrow.left);
+    }
+    expect(target.top).toBe(arrow.top);
+    expect(arrow.right).toBeLessThan(target.left);
+  }
   const spaces = panel.getByRole('checkbox', { name: /Clean spaces/ });
   const alef = panel.getByRole('checkbox', { name: /Normalize Alef \(/ });
   await expect(alef).not.toBeChecked();
@@ -53,7 +81,7 @@ test('M7 previews exact Arabic cleanup and literal replacement, applies and rest
   await expect((await selectEditor(page, 1)).getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(raw[0]!);
   await verifyWorkshopZip(page, info.outputPath('undone'), raw, ids);
   await expect(panel.getByRole('button', { name: 'Undo last transform' })).toBeDisabled();
-  await receipt(info, 'hygiene', { raw, cleaned, ids, beforeApply: { rows: 2, cells: 2 }, storage: await localOnly(page) });
+  await receipt(info, 'hygiene', { raw, cleaned, ids, examples, beforeApply: { rows: 2, cells: 2 }, storage: await localOnly(page) });
 });
 
 test('M7 centers live Arabic ink and downloaded 4x pixels, roundtrips v4 and imports v1 to v3', async ({ page }, info) => {
