@@ -70,7 +70,8 @@ export function textValue(dict: PDFDict) {
 
 function fontSize(appearance: string): number {
   const last = [...appearance.matchAll(/([-+]?(?:\d+\.?\d*|\.\d+))\s+Tf\b/g)].at(-1);
-  return Number(last?.[1]) > 0 ? Number(last?.[1]) : 12;
+  const size = Number(last?.[1]);
+  return Number.isFinite(size) && size > 0 ? size : 12;
 }
 
 export interface WidgetTarget {
@@ -152,11 +153,13 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
           && linked && !(flags & (1 | 2 | 32)) && !(pageRotation && flags & 16) && pageRotation % 90 === 0);
         return { widget, appearance: widgetAppearance, usable, meta: { ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance) } };
       });
-      const maxLength = fieldAttributes(canonical, 'MaxLen');
+      const maxLenAttribute = fieldAttributes(canonical, 'MaxLen');
+      const maxLength = maxLenAttribute instanceof PDFNumber ? maxLenAttribute.asNumber() : undefined;
+      if (maxLength !== undefined && (!Number.isSafeInteger(maxLength) || maxLength < 0)) throw new PdfIntakeError('invalid-pdf');
       const alignment = fieldAttributes(canonical, 'Q');
       const meta: FieldMetadata = {
         name, required: field.isRequired(), readOnly: field.isReadOnly(), multiline: field.isMultiline(),
-        maxLength: maxLength instanceof PDFNumber ? maxLength.asNumber() : undefined,
+        maxLength,
         defaultFontSize: fontSize(appearance), value: textValue(canonical), widgets: widgets.map((entry) => entry.meta),
       };
       return { field, widgets, meta, alignment: alignment instanceof PDFNumber ? alignment.asNumber() : undefined };

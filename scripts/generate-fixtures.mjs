@@ -5,7 +5,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { strToU8, zipSync } from 'fflate';
 import { PDFDocument, PDFHexString, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib';
 
-const output = fileURLToPath(new URL('../fixtures/golden/', import.meta.url));
+const output = fileURLToPath(new URL('../fixtures/', import.meta.url));
 const metadataDate = new Date('2026-11-26T00:00:00Z');
 const ink = rgb(0.10, 0.16, 0.13);
 const forest = rgb(0.14, 0.32, 0.25);
@@ -256,6 +256,93 @@ function workbook(rows) {
   return zipSync(files, { mtime: new Date(2020, 0, 1, 0, 0, 0), level: 6 });
 }
 
+const m2Specifications = {
+  'hr-onboarding.pdf': { title: 'HR onboarding', size: [420, 500], fields: [
+    { name: 'Name', widgets: [[42, 349, 336, 38]], required: true },
+    { name: 'Employee ID', widgets: [[42, 263, 125, 28]], maxLength: 9 },
+    { name: 'Start Date', widgets: [[195, 263, 182, 28]], alignment: 1 },
+  ] },
+  'clinic-intake.pdf': { title: 'Clinic intake', size: [435, 555], fields: [
+    { name: 'Patient', widgets: [[42, 408, 350, 32]] },
+    { name: 'Phone', widgets: [[42, 336, 240, 25]], alignment: 0 },
+    { name: 'Intake Notes', widgets: [[42, 170, 350, 104]], multiline: true },
+  ] },
+  'bilingual-certificate.pdf': { title: 'Training certificate', arabicTitle: 'شَهَادَةُ التَّدْرِيبِ', size: [530, 375], fields: [
+    { name: 'Name', widgets: [[52, 216, 426, 35]], alignment: 1 },
+    { name: 'Course Title', widgets: [[52, 138, 426, 30]], alignment: 1 },
+    { name: 'Record Number', widgets: [[315, 56, 163, 22]], alignment: 2 },
+  ] },
+  'landscape-badge.pdf': { title: 'Landscape visitor badge', size: [300, 420], rotations: [90], fields: [
+    { name: 'Name', widgets: [[147, 111, 25, 92, 0, 90]], required: true },
+    { name: 'Badge ID', widgets: [[198, 111, 22, 118, 0, 90]] },
+  ] },
+  'access-code.pdf': { title: 'Access code request', size: [360, 430], fields: [
+    { name: 'Officer', widgets: [[45, 276, 265, 29]] },
+    { name: 'Printed Code', widgets: [[45, 191, 68, 24]], maxLength: 4 },
+    { name: 'Comb Code', widgets: [[175, 191, 135, 24]], maxLength: 4, comb: true },
+  ] },
+  'dispatch-header.pdf': { title: 'Dispatch packet', size: [425, 490], rotations: [0, 270, 180], fields: [
+    { name: 'Header', widgets: [[42, 351, 334, 36], [167, 95, 26, 132, 1, 270], [82, 265, 175, 28, 2, 180]] },
+    { name: 'Consignment', widgets: [[42, 266, 160, 26]] },
+  ] },
+  'mailing-address.pdf': { title: 'Mailing address', size: [380, 450], fields: [
+    { name: 'Recipient', widgets: [[42, 311, 292, 29]] },
+    { name: 'Address', widgets: [[42, 139, 180, 110]], multiline: true },
+    { name: 'Postal Code', widgets: [[247, 198, 85, 27]], maxLength: 9 },
+  ] },
+  'remittance-slip.pdf': { title: 'Remittance slip', size: [480, 412], fields: [
+    { name: 'Beneficiary', widgets: [[45, 268, 385, 30]], alignment: 2 },
+    { name: 'Reference', widgets: [[45, 179, 223, 27]] },
+    { name: 'Amount', widgets: [[296, 179, 134, 27]], alignment: 2 },
+  ] },
+};
+
+async function m2Template({ title, size, fields, rotations = [0], arabicTitle }) {
+  const pdf = await createPdf(title);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const heading = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const form = pdf.getForm();
+  const label = (page, text, x, y, options = {}) => page.drawText(text, { x, y, font, size: 9, color: forest, ...options });
+  const pages = rotations.map((rotation, index) => {
+    const page = pdf.addPage(size);
+    page.setRotation(degrees(rotation));
+    const [x, y] = rotation === 90 ? [76, 40] : rotation === 270 ? [size[0] - 76, size[1] - 40]
+      : rotation === 180 ? [size[0] - 42, 76] : [42, size[1] - 76];
+    label(page, title, x, y, { font: heading, size: 25, rotate: degrees(rotation), color: ink });
+    const [dx, dy] = rotation === 90 ? [21, 0] : rotation === 270 ? [-21, 0] : rotation === 180 ? [0, 21] : [0, -21];
+    label(page, `Synthetic Sample / ${index + 1} of ${rotations.length}`, x + dx, y + dy, { rotate: degrees(rotation) });
+    return page;
+  });
+  if (arabicTitle) {
+    pdf.registerFontkit(fontkit);
+    const arabicFont = await pdf.embedFont(await readFile(new URL('../public/fonts/NotoNaskhArabic-Regular.ttf', import.meta.url)));
+    label(pages[0], arabicTitle, 350, size[1] - 75, { font: arabicFont, size: 24, color: ink });
+  }
+
+  const rotatedBadge = rotations[0] === 90;
+  const sentinel = rotatedBadge ? [251, 111, 25, 121, 0, 90] : [42, 42, 150, 25];
+  for (const config of [...fields, { name: 'Sentinel', widgets: [sentinel] }]) {
+    const field = form.createTextField(config.name);
+    if (config.required) field.enableRequired();
+    if (config.multiline) field.enableMultiline();
+    if (config.maxLength) field.setMaxLength(config.maxLength);
+    if (config.comb) field.enableCombing();
+    if (config.alignment !== undefined) field.setAlignment(config.alignment);
+    for (const [x, y, width, height, index = 0, angle = 0] of config.widgets) {
+      const page = pages[index];
+      const rect = angle === 90 ? [x + width, y, height, width] : angle === 180 ? [x + width, y + height, width, height]
+        : angle === 270 ? [x, y + height, height, width] : [x, y, width, height];
+      addWidget(field, page, rect, font, 1, angle);
+      const [labelX, labelY] = angle === 90 ? [x - 8, y] : angle === 180 ? [x + width, y - 8] : angle === 270 ? [x + width + 8, y + height] : [x, y + height + 7];
+      label(page, config.name === 'Sentinel' ? 'TEMPLATE REFERENCE' : config.name.toUpperCase(), labelX, labelY, { rotate: degrees(angle) });
+    }
+    field.setFontSize(12);
+    if (config.name === 'Sentinel') field.setText('KEEP 00109');
+  }
+  form.updateFieldAppearances(font);
+  return pdf.save({ updateFieldAppearances: false });
+}
+
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
@@ -263,17 +350,19 @@ if (args.length && (args.length !== 1 || args[0] !== '--check')) {
 const check = args[0] === '--check';
 const rows = [headings, ...roster];
 const fixtures = {
-  'template.pdf': await attendanceTemplate(),
-  'roster.csv': csv(rows),
-  'roster.xlsx': workbook(rows),
-  'edge-cases.pdf': await edgeCases(),
-  'xfa.pdf': await intakeGuard('XFA'),
-  'flat.pdf': await intakeGuard('Flat'),
-  'encrypted.pdf': encryptedPdf(),
-  'signed.pdf': await intakeGuard('Signed'),
+  'golden/template.pdf': await attendanceTemplate(),
+  'golden/roster.csv': csv(rows),
+  'golden/roster.xlsx': workbook(rows),
+  'golden/edge-cases.pdf': await edgeCases(),
+  'golden/xfa.pdf': await intakeGuard('XFA'),
+  'golden/flat.pdf': await intakeGuard('Flat'),
+  'golden/encrypted.pdf': encryptedPdf(),
+  'golden/signed.pdf': await intakeGuard('Signed'),
+  'm2/badge-roster.csv': csv([['Name', 'Badge ID'], ['سَلْمَى بِنْت يَاسِين / AR-00042', '00007']]),
+  ...Object.fromEntries(await Promise.all(Object.entries(m2Specifications).map(async ([name, spec]) => [`m2/${name}`, await m2Template(spec)]))),
 };
 
-if (!check) await mkdir(output, { recursive: true });
+if (!check) await Promise.all(['golden', 'm2'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {

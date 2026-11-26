@@ -1,7 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFBool, PDFDict, PDFHexString } from 'pdf-lib';
 import { borderWidth, installAppearance, type AppearanceFont } from './appearances';
-import { createShaper, fitText, type FontBytes, type FontKey, type Placement } from './shaping';
+import { createShaper, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
 import { key, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
 
 export { createAudit, createMergedPdf, createZip } from './exports';
@@ -10,9 +10,15 @@ export { PdfIntakeError } from './template';
 export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } from './template';
 
 export type DiagnosticCode = 'too-narrow' | 'too-low' | 'exceeds-maxlen' | 'unsupported-glyph' | 'widget-rotated-unsupported'
-  | 'missing-required' | 'unknown-field' | 'no-widget' | 'readonly-field' | 'unsupported-field-mode' | 'unsupported-line-break' | 'unsupported-widget';
+  | 'missing-required' | 'unknown-field' | 'no-widget' | 'readonly-field' | 'unsupported-field-mode' | 'unsupported-line-break' | 'unsupported-widget' | 'unsupported-bidi';
 
-export interface FieldDiagnostic { field: string; code: DiagnosticCode; widgetIndex?: number }
+export interface FieldDiagnostic {
+  field: string;
+  code: DiagnosticCode;
+  widgetIndex?: number;
+  requiredFontSizePt?: number;
+  maxLengthExcess?: number;
+}
 export interface RowPreflightResult {
   status: 'pass' | 'flagged';
   diagnostics: FieldDiagnostic[];
@@ -36,7 +42,7 @@ export async function preflightRow(
   valuesByField: Record<string, string>,
   { fonts, minFontSize = 8, preferredFont = 'auto' }: PreflightOptions,
 ): Promise<RowPreflightResult> {
-  if (!Number.isFinite(minFontSize) || minFontSize <= 0) throw new Error('invalid-min-font-size');
+  if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
   const { doc, rawForm, fields } = await openTemplate(bytes);
   const shaper = createShaper(fonts, preferredFont);
   const knownFields = new Set(fields.map(({ meta }) => meta.name));
@@ -49,13 +55,21 @@ export async function preflightRow(
     const { name } = meta;
     const mapped = Object.hasOwn(valuesByField, name);
     const value = mapped ? valuesByField[name]! : meta.value;
-    let reason: DiagnosticCode | undefined;
-    if (meta.required && !value.trim()) reason = 'missing-required';
-    else if (!mapped) continue;
-    else if (meta.readOnly) reason = 'readonly-field';
-    else if (field.isCombed() || field.isPassword() || field.isFileSelector() || field.isRichFormatted()) reason = 'unsupported-field-mode';
-    else if (meta.maxLength !== undefined && [...value].length > meta.maxLength) reason = 'exceeds-maxlen';
-    else if (!widgets.length || widgets.every(({ meta }) => meta.pageIndex < 0)) reason = 'no-widget';
+    if (meta.required && !value.trim()) {
+      diagnostics.push({ field: name, code: 'missing-required' });
+      continue;
+    }
+    if (!mapped) continue;
+    if (meta.readOnly) {
+      diagnostics.push({ field: name, code: 'readonly-field' });
+      continue;
+    }
+    const firstDiagnostic = diagnostics.length;
+    const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
+    if (excess > 0) diagnostics.push({ field: name, code: 'exceeds-maxlen', maxLengthExcess: excess });
+    if (field.isCombed() || field.isPassword() || field.isFileSelector() || field.isRichFormatted()) diagnostics.push({ field: name, code: 'unsupported-field-mode' });
+    if (diagnostics.length > firstDiagnostic) continue;
+    const reason = textInputDiagnostic(value) ?? (!widgets.length || widgets.every(({ meta }) => meta.pageIndex < 0) ? 'no-widget' : undefined);
     if (reason) {
       diagnostics.push({ field: name, code: reason });
       continue;
@@ -66,13 +80,14 @@ export async function preflightRow(
       const { width, height, rotation, defaultFontSize } = widget.meta;
       const padding = 1.6 + borderWidth(widget);
       const quarterTurn = rotation === 90 || rotation === 270;
-      const placement = !widget.usable ? 'unsupported-widget' : rotation % 90 !== 0 ? 'widget-rotated-unsupported'
+      const placement = !widget.usable || !Number.isFinite(padding) ? { code: 'unsupported-widget' as const }
+        : rotation % 90 !== 0 ? { code: 'widget-rotated-unsupported' as const }
         : fitText(shaper, value, meta.multiline, {
           innerWidth: (quarterTurn ? height : width) - 2 * padding,
           innerHeight: (quarterTurn ? width : height) - 2 * padding,
           padding, alignment, min: minFontSize, max: defaultFontSize,
         });
-      if (typeof placement === 'string') diagnostics.push({ field: name, code: placement, widgetIndex });
+      if ('code' in placement) diagnostics.push({ field: name, widgetIndex, ...placement });
       else placed.push({ widget, placement });
     }
     if (placed.length !== widgets.length) continue;

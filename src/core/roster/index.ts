@@ -1,6 +1,8 @@
 import Papa from 'papaparse';
 import { readWorkbook } from './xlsx';
 
+export { makeFilenames } from './filenames';
+
 export type RosterWarningCode = 'excel-scientific-notation-warning' | 'excel-numeric-identifier-warning' | 'excel-formula-warning' | 'excel-cell-error-warning' | 'excel-number-format-warning';
 
 export interface RosterRow {
@@ -90,30 +92,4 @@ export function autoMap(fieldNames: readonly string[], headers: readonly string[
     if ([...inferred.values()].filter((value) => value === header).length === 1) mapped.set(field, header);
   }
   return Object.fromEntries(mapped);
-}
-
-export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = '{{ID}}-{{Name}}.pdf'): string[] {
-  const seen = new Set<string>();
-  const encoder = new TextEncoder();
-  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  return rows.map((row, index) => {
-    const values = Array.isArray(row.warnings) ? (row as RosterRow).values : row as Record<string, string>;
-    const stem = pattern.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, token: string) => Object.hasOwn(values, token) ? values[token] ?? '' : '')
-      .replace(/\.pdf$/i, '').normalize('NFC').replace(/[\\/:*?"<>|\p{Cc}\u202a-\u202e\u2066-\u2069]/gu, '')
-      .replace(/^[.\s-]+|[.\s-]+$/g, '');
-    let base = '';
-    let length = 0;
-    for (const { segment } of graphemes.segment(stem)) {
-      length += encoder.encode(segment).length;
-      if (length > 180) break;
-      base += segment;
-    }
-    base = base.replace(/[.\s]+$/g, '') || `row-${index + 1}`;
-    if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(base)) base = `_${base}`;
-    let filename = `${base}.pdf`;
-    let suffix = 2;
-    while (seen.has(filename.toLowerCase())) filename = `${base}-${suffix++}.pdf`;
-    seen.add(filename.toLowerCase());
-    return filename;
-  });
 }
