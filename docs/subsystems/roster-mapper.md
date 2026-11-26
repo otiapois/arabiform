@@ -10,6 +10,7 @@
 - **Smart Auto-Mapper**:
   - Automatically propose column -> PDF field mappings using normalized exact match + bilingual Arabic/English alias table (`Name / Full Name / الاسم / الاسم الكامل`, `ID / Number / Badge / Employee ID / الرقم / رقم الهوية`, `Date / التاريخ`, `Title / Course / الدورة`, etc.).
   - Never silently overwrite user-adjusted mappings; allow 1-click clear/remap.
+  - Keep dropdown and radio cell values as supplied by the roster. Header matching uses its own normalization. The PDF engine matches choice values against the template's Unicode labels and exports, and reports invalid or ambiguous cells. [Choice matching contract](pdf-engine.md)
 - **Safe Filename Templating**:
   - Build single-component PDF filenames from `{{ColumnName}}` tokens. Remove separator, control, and format characters, guard Windows device stems even before an extension, and retain display text in NFC. Limit generated stems to 180 UTF-8 bytes at grapheme boundaries before adding the collision suffix and `.pdf`.
   - Deduplicate with a compatibility-normalized, case-insensitive key (`name.pdf`, `name-2.pdf`). ZIP independently rejects unsafe components, normalized duplicates, and names above 255 UTF-8 bytes.
