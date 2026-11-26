@@ -86,3 +86,17 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **原因**　M4 给诊断新增从 1 起算的 `pageNumbers`。导出直接复用内部对象后，旧版的 `too-narrow` 审计记录多出 `pageNumbers: [1]`，违反既有 JSON 和 CSV 下载格式。
 - **证据**　在 `05d8a9e`，两种浏览器视口的 CSV、XLSX 上传流程同时在原有下载断言处失败，共 4 项。提交 `9b4a414` 让两种审计输出共用同一序列化边界，预览继续使用页码，选择诊断继续提供合法选项。[审计回归](tests/core/pdf.test.ts) · [原有下载断言](tests/e2e/downloads.ts) · [M4 独立验收](docs/reports/M4-verification.md)
 - **Seen: 1**（同一次契约变更，ArabiForm M4）
+
+### Windows 沙箱可能在像素校验启动前拦住 tsx（2026-11-27）
+
+- **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
+- **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
+- **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
+- **Seen: 3**（M1、M2、M5，各计一次）。已纳入[代码标准](docs/code-standards.md)。
+
+### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
+
+- **规则**　对英文与阿语入口分别记录选文件前、预检后的浏览器请求，同时核对阿语显示字体是否可用。
+- **原因**　M5 首轮的 HTML 只声明了一个 JS 入口，入口也低于大小预算。阿语页面初始化时，界面排版仍通过 JavaScript 加载了 PDF 预检使用的字体数据，产生了 369.04 kB 的额外 gzip 请求。
+- **证据**　桌面和移动的五路由空载请求均复现。提交 `493f0ab` 改由本地 CSS 字体服务阿语排版，预检继续读取嵌入数据。[双语请求断言](tests/e2e/m5-rc.spec.ts) · [主线验收](docs/reports/M5-verification.md)
+- **Seen: 1**（同一次 M5 验收，两种视口各有一份收据）。
