@@ -82,7 +82,7 @@ const en = {
   diagnostics: 'PDF field diagnostics',
   warningHelp: 'Excel may have changed this data before import. Compare the value with the original record and edit it here if needed.',
   export: 'Download batch',
-  exportHelp: 'PDF downloads include {ready} ready rows and skip {flagged} flagged rows. The audit includes every checked row.',
+  exportHelp: 'PDF downloads include ready rows ({ready}) and skip flagged rows ({flagged}). The audit includes every checked row.',
   exportWait: 'Run preflight to prepare the downloads.',
   zip: 'Download Clean PDFs (.zip)',
   merged: 'Download Merged Printable PDF',
