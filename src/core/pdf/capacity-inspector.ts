@@ -25,7 +25,7 @@ export interface TemplateCapacityReport {
 // Bound synthetic shaping work for hostile, abnormally large page boxes.
 export const CAPACITY_SAMPLE_LIMIT = 2048;
 const samples = {
-  arabic: 'مُحَمَّد سَالِم ',
+  arabic: 'مُحَمَّد سَالِم ',
   latin: 'Marwan Salem ',
 };
 

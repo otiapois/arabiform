@@ -177,8 +177,8 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         const supportedGeometry = rotation % 90 === 0 && [rect.width, rect.height, padding].every(Number.isFinite);
         const meta: WidgetMetadata = {
           ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance), usable,
-          innerWidth: supportedGeometry ? (quarterTurn ? rect.height : rect.width) - 2 * padding : null,
-          innerHeight: supportedGeometry ? (quarterTurn ? rect.width : rect.height) - 2 * padding : null,
+          innerWidth: supportedGeometry ? Math.max(0, (quarterTurn ? rect.height : rect.width) - 2 * padding) : null,
+          innerHeight: supportedGeometry ? Math.max(0, (quarterTurn ? rect.width : rect.height) - 2 * padding) : null,
         };
         return { widget, appearance: widgetAppearance, border, padding, meta };
       });

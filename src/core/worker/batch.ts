@@ -9,6 +9,7 @@ async function preflightBatch(input: BatchInput, progress: (completed: number, t
   const { rows, template, options } = input;
   const results: BatchRowResult[] = [];
   progress(0, rows.length);
+  if (!rows.length) return results;
   const check = await prepareRowPreflight(template, options);
   for (let start = 0; start < rows.length; start += BATCH_CHUNK_SIZE) {
     for (const row of rows.slice(start, start + BATCH_CHUNK_SIZE)) results.push(await check(row));

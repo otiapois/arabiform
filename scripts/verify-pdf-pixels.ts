@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { decodePDFRawStream, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
+import { decodePDFRawStream, degrees, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import { readRoster } from '../src/core/roster';
@@ -392,6 +392,53 @@ for (const { filename, pdfBytes } of m4Rows) {
 await writeFile(resolve(root, choiceZip.editable), editableZip);
 await writeFile(resolve(root, choiceZip.flattened), flattenedZip);
 
+const stampSource = await PDFDocument.create();
+const portrait = stampSource.addPage([400, 520]);
+portrait.setCropBox(24, 35, 350, 445);
+const landscape = stampSource.addPage([320, 480]);
+landscape.setCropBox(32, 38, 270, 397);
+landscape.setRotation(degrees(90));
+const stampName = stampSource.getForm().createTextField('Name');
+stampName.addToPage(portrait, { x: 100, y: 232, width: 190, height: 26 });
+stampName.addToPage(landscape, { x: 68, y: 213, width: 175, height: 26 });
+const stampSentinel = stampSource.getForm().createTextField('Sentinel');
+stampSentinel.addToPage(portrait, { x: 90, y: 90, width: 130, height: 23 });
+stampSentinel.setText('KEEP 00109');
+const stampRow = await passingCase(Buffer.from(await stampSource.save()), { Name: 'سَلْمَى 00123' },
+  'm8-stamp-source.pdf', 'M8 watermark source, two CropBoxes with a repeated name');
+const watermarkProofs = [];
+const plainPdf = 'm8-stamp-plain.pdf';
+await writeFile(resolve(root, plainPdf), await createMergedPdf([stampRow]));
+for (const [kind, label, text, angle, opacity] of [
+  ['draft', 'English DRAFT', 'DRAFT', 45, 0.14],
+  ['draft-ar', 'Arabic draft', 'مسودة', -45, 0.22],
+] as const) {
+  const pdf = 'm8-watermark-' + kind + '.pdf';
+  const zip = 'm8-watermark-' + kind + '.zip';
+  const watermark = { settings: { kind, angle, opacity }, fonts: settings.fonts };
+  const output = await createMergedPdf([stampRow], undefined, undefined, watermark);
+  const flat = await createFlattenedZip([stampRow], undefined, watermark);
+  for (const bytes of [output, unzipSync(flat)[stampRow.filename]!]) {
+    const doc = await PDFDocument.load(bytes);
+    assert.equal(doc.getPageCount(), 2);
+    assert(!doc.catalog.has(key('AcroForm')));
+    const family = kind === 'draft-ar' ? 'arabic' : 'latin';
+    for (const page of doc.getPages()) {
+      const resources = page.node.Resources()!.lookup(key('Font'), PDFDict);
+      const name = resources.keys().find((name) => name.decodeText().startsWith('ArabiFormWatermark'));
+      assert(name, 'stamp font is embedded');
+      const descriptor = resources.lookup(name, PDFDict).lookup(key('DescendantFonts'), PDFArray)
+        .lookup(0, PDFDict).lookup(key('FontDescriptor'), PDFDict);
+      const file = descriptor.lookup(key('FontFile2'));
+      assert(file instanceof PDFRawStream, 'stamp uses a local TrueType face');
+      assert.deepEqual(Buffer.from(decodePDFRawStream(file).decode()), settings.fonts[family]);
+    }
+  }
+  await writeFile(resolve(root, pdf), output);
+  await writeFile(resolve(root, zip), flat);
+  watermarkProofs.push({ pdf, plainPdf, zip, member: stampRow.filename, label, text, angle, opacity });
+}
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -431,5 +478,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

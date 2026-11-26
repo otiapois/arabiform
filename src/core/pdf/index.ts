@@ -231,7 +231,9 @@ export async function preflightRow(
   const layout = layoutOptions(options);
   const { result, plans, buttonPlans, fontKeys, customGlyphIds } = planRow(template, valuesByField, layout);
   if (result.status === 'flagged') return result;
-  if (!plans.length && !buttonPlans.length) return { ...result, pdfBytes: new Uint8Array(bytes) };
+  if (!plans.length && !buttonPlans.length) {
+    return { ...result, pdfBytes: bytes instanceof Uint8Array ? Uint8Array.from(bytes) : new Uint8Array(bytes.slice(0)) };
+  }
   const { doc, rawForm } = template;
   const { custom, fonts } = layout;
 

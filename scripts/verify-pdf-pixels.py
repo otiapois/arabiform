@@ -4,6 +4,7 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from zipfile import ZipFile
@@ -286,6 +287,50 @@ def check_zip(spec, directory):
     return pages
 
 
+def check_watermark(spec, directory):
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    with fitz.open(directory / spec["plainPdf"]) as plain, fitz.open(directory / spec["pdf"]) as stamped:
+        assert len(plain) == len(stamped), spec["label"]
+        pages = []
+        for old, new in zip(plain, stamped, strict=True):
+            assert old.rect == new.rect and old.rotation == new.rotation, spec["label"]
+            assert not list(new.widgets()) and new.get_images() == old.get_images(), spec["label"]
+            spans = [(bytes.fromhex(value.decode("ascii")).decode("utf-16"), operators)
+                     for value, operators in COVER_SPAN.findall(new.read_contents())]
+            assert len(spans) == 1 and spans[0][0] == spec["text"], (spec["label"], spans)
+            assert b"<0000> Tj" not in spans[0][1] and b" Tj" in spans[0][1], spec["label"]
+            traces = [span for span in new.get_texttrace() if abs(span["opacity"] - spec["opacity"]) < 0.005]
+            assert traces, f"{spec['label']}: no visible stamp glyph traces"
+            for span in traces:
+                direction = fitz.Point(*span["dir"]) * new.rotation_matrix - fitz.Point(0, 0) * new.rotation_matrix
+                assert abs(math.degrees(math.atan2(-direction.y, direction.x)) - spec["angle"]) < 0.1, (
+                    spec["label"], new.rotation, span["dir"], direction, spec["angle"]
+                )
+                assert all(char[1] > 0 for char in span["chars"]), spec["label"]
+            before, after = render(old), render(new)
+            width, height = after[:2]
+            bounds, amount = ink_bounds(before, after, (0, 0, width, height))
+            inset = min(bounds[0], bounds[1], width - bounds[2], height - bounds[3])
+            assert amount > 1_000 and inset >= 16, (spec["label"], bounds, amount, inset)
+            # An alpha-blended black stamp preserves fully black field ink even
+            # where the two layers overlap. Count those original raster pixels.
+            old_reds = before[2][::CHANNELS]
+            new_reds = after[2][::CHANNELS]
+            old_ink = old_reds.count(0)
+            assert old_ink > 10 and sum(a == 0 and b != 0 for a, b in zip(old_reds, new_reds)) == 0, spec["label"]
+            pages.append({"page": new.number + 1, "rotation": new.rotation, "inkBboxAt4x": bounds,
+                          "inkPixelsAt4x": amount, "minPageEdgeInsetAt4x": inset, "originalBlackPixelsPreserved": old_ink})
+        if "zip" in spec:
+            with ZipFile(directory / spec["zip"]) as archive:
+                assert archive.namelist() == [spec["member"]], spec["label"]
+                with fitz.open(stream=archive.read(spec["member"])) as flattened:
+                    assert len(flattened) == len(stamped), spec["label"]
+                    assert all(render(first) == render(second) for first, second in zip(flattened, stamped, strict=True)), spec["label"]
+    warnings = fitz.TOOLS.mupdf_warnings(reset=True)
+    assert not warnings, f"{spec['label']}: MuPDF warnings: {warnings}"
+    return {"label": spec["label"], "pdf": spec["pdf"], "clippedWatermarkInkPixels": 0, "pages": pages}
+
+
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
     arguments.add_argument("manifest", nargs="?", type=Path, default=Path("test-results/pdf-pixels/manifest.json"))
@@ -301,11 +346,12 @@ def main():
     merged = sum(check_merged(manifest[key], path.parent) for key in ("merged", "mixedMerged", "m4Merged") if manifest.get(key))
     covered = [check_covered_merge(spec, path.parent) for spec in manifest.get("coveredMerged", [])]
     zipped = check_zip(manifest["choiceZip"], path.parent) if manifest.get("choiceZip") else 0
+    watermarks = [check_watermark(spec, path.parent) for spec in manifest.get("watermarkProofs", [])]
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "flattenedZipPagesPixelIdentical": zipped,
-        "coveredMerged": covered,
+        "coveredMerged": covered, "watermarkProofs": watermarks,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -317,6 +363,9 @@ def main():
         row_pages = sum(item["rowPagesPixelIdentical"] for item in covered)
         verified_rows = sum(item["verifiedIndexRows"] for item in covered)
         print(f"Cover exports: {cover_pages} covers with 0 clipped pixels, {verified_rows} exact index rows, {row_pages} identical form pages with and without a cover.")
+    if watermarks:
+        pages = sum(len(proof["pages"]) for proof in watermarks)
+        print(f"Watermarks: {pages} stamped pages with visible ink, 0 clipped pixels, and original black field ink preserved.")
 
 
 if __name__ == "__main__":

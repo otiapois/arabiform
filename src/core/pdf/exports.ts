@@ -1,5 +1,5 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFWidgetAnnotation } from 'pdf-lib';
-import { Zip, ZipDeflate, ZipPassThrough } from 'fflate';
+import { deflateSync, Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
@@ -24,6 +24,17 @@ export interface AuditRow {
 
 type ExportProgress = (completed: number, total: number) => void;
 
+class CompressedPdfEntry extends ZipPassThrough {
+  override compression = 8;
+
+  protected override process(chunk: Uint8Array, final: boolean) {
+    // A ready PDF is pushed once. One-shot compression releases the input
+    // and buffer immediately. Zip keeps entry objects for its directory,
+    // so a streaming compressor here would retain each one's input buffer.
+    this.ondata(null, deflateSync(chunk, { level: 1 }), final);
+  }
+}
+
 function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, compress = false) {
   const filenames = new Set<string>();
   for (const { filename } of rows) {
@@ -42,7 +53,7 @@ function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, compre
   onProgress?.(0, rows.length);
   return {
     add(filename: string, pdfBytes: Uint8Array) {
-      const entry = compress ? new ZipDeflate(filename, { level: 1 }) : new ZipPassThrough(filename);
+      const entry = new (compress ? CompressedPdfEntry : ZipPassThrough)(filename);
       entry.mtime = new Date(2000, 0, 1, 12);
       zip.add(entry);
       entry.push(pdfBytes, true);

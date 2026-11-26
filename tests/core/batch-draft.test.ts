@@ -25,6 +25,15 @@ describe('portable batch draft boundary', () => {
     expect(restored.edits[1]?.Badge).toBe('00007');
   });
 
+  it('roundtrips an active watermark without changing the portable draft version', () => {
+    const saved: BatchDraft = { ...draft, settings: {
+      ...draft.settings, version: 5, watermark: { kind: 'confidential-ar', opacity: 0.08, angle: 0 },
+    } };
+    expect(parseBatchDraft(serializeBatchDraft(saved), draft.source)).toEqual(saved);
+    const invalid = { ...saved, settings: { ...saved.settings, watermark: { kind: 'confidential', opacity: 1, angle: 0 } } };
+    expect(() => parseBatchDraft(JSON.stringify(invalid), draft.source)).toThrow('invalid-batch-draft');
+  });
+
   it('requires exact source bytes, field and column order, selected sheet and row count', () => {
     for (const change of [
       { templateSha256: '9'.repeat(64) }, { rosterSha256: '9'.repeat(64) }, { sheetName: 'Different sheet' },
