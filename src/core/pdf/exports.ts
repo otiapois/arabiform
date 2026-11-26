@@ -1,5 +1,5 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFWidgetAnnotation } from 'pdf-lib';
-import { deflateSync, Zip, ZipPassThrough } from 'fflate';
+import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
@@ -24,18 +24,7 @@ export interface AuditRow {
 
 type ExportProgress = (completed: number, total: number) => void;
 
-class CompressedPdfEntry extends ZipPassThrough {
-  override compression = 8;
-
-  protected override process(chunk: Uint8Array, final: boolean) {
-    // A ready PDF is pushed once. One-shot compression releases the input
-    // and buffer immediately. Zip keeps entry objects for its directory,
-    // so a streaming compressor here would retain each one's input buffer.
-    this.ondata(null, deflateSync(chunk, { level: 1 }), final);
-  }
-}
-
-function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, compress = false) {
+function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, copyOutput = false) {
   const filenames = new Set<string>();
   for (const { filename } of rows) {
     const normalized = filenameKey(filename);
@@ -45,15 +34,33 @@ function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, compre
   const chunks: Uint8Array[] = [];
   let size = 0;
   let index = 0;
+  let block = new Uint8Array(0);
+  let used = 0;
   const zip = new Zip((error, data) => {
     if (error) throw error;
-    chunks.push(data);
     size += data.length;
+    if (!copyOutput) {
+      chunks.push(data);
+      return;
+    }
+    // Assemble final archive bytes without retaining the on-demand member
+    // buffers. PDF streams are already compressed and ZIP can store them.
+    for (let offset = 0; offset < data.length;) {
+      if (used === block.length) {
+        block = new Uint8Array(1024 * 1024);
+        chunks.push(block);
+        used = 0;
+      }
+      const length = Math.min(data.length - offset, block.length - used);
+      block.set(data.subarray(offset, offset + length), used);
+      used += length;
+      offset += length;
+    }
   });
   onProgress?.(0, rows.length);
   return {
     add(filename: string, pdfBytes: Uint8Array) {
-      const entry = new (compress ? CompressedPdfEntry : ZipPassThrough)(filename);
+      const entry = new ZipPassThrough(filename);
       entry.mtime = new Date(2000, 0, 1, 12);
       zip.add(entry);
       entry.push(pdfBytes, true);
@@ -64,8 +71,9 @@ function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, compre
       const bytes = new Uint8Array(size);
       let offset = 0;
       for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.length;
+        const length = Math.min(chunk.length, size - offset);
+        bytes.set(chunk.subarray(0, length), offset);
+        offset += length;
       }
       return bytes;
     },

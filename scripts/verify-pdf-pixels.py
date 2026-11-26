@@ -312,14 +312,21 @@ def check_watermark(spec, directory):
             bounds, amount = ink_bounds(before, after, (0, 0, width, height))
             inset = min(bounds[0], bounds[1], width - bounds[2], height - bounds[3])
             assert amount > 1_000 and inset >= 16, (spec["label"], bounds, amount, inset)
-            # An alpha-blended black stamp preserves fully black field ink even
-            # where the two layers overlap. Count those original raster pixels.
-            old_reds = before[2][::CHANNELS]
-            new_reds = after[2][::CHANNELS]
-            old_ink = old_reds.count(0)
-            assert old_ink > 10 and sum(a == 0 and b != 0 for a, b in zip(old_reds, new_reds)) == 0, spec["label"]
+            # Actual templates can use near-black instead of exact black.
+            # A black translucent stamp must not brighten any dark RGB pixel.
+            old_rgb, new_rgb = before[2], after[2]
+            old_ink = 0
+            for pixel, red in enumerate(old_rgb[::CHANNELS]):
+                if red >= 64:
+                    continue
+                offset = pixel * CHANNELS
+                if old_rgb[offset + 1] >= 64 or old_rgb[offset + 2] >= 64:
+                    continue
+                old_ink += 1
+                assert all(new_rgb[offset + channel] <= old_rgb[offset + channel] for channel in range(CHANNELS)), spec["label"]
+            assert old_ink > 10, spec["label"]
             pages.append({"page": new.number + 1, "rotation": new.rotation, "inkBboxAt4x": bounds,
-                          "inkPixelsAt4x": amount, "minPageEdgeInsetAt4x": inset, "originalBlackPixelsPreserved": old_ink})
+                          "inkPixelsAt4x": amount, "minPageEdgeInsetAt4x": inset, "originalDarkPixelsPreserved": old_ink})
         if "zip" in spec:
             with ZipFile(directory / spec["zip"]) as archive:
                 assert archive.namelist() == [spec["member"]], spec["label"]
@@ -365,7 +372,7 @@ def main():
         print(f"Cover exports: {cover_pages} covers with 0 clipped pixels, {verified_rows} exact index rows, {row_pages} identical form pages with and without a cover.")
     if watermarks:
         pages = sum(len(proof["pages"]) for proof in watermarks)
-        print(f"Watermarks: {pages} stamped pages with visible ink, 0 clipped pixels, and original black field ink preserved.")
+        print(f"Watermarks: {pages} stamped pages with visible ink, 0 clipped pixels, and original dark ink preserved.")
 
 
 if __name__ == "__main__":
