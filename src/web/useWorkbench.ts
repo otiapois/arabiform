@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
 import type { BatchDraft } from '../core/draft/batch-draft';
 import type { AlignOverride } from '../core/pdf/alignment';
+import { DEFAULT_WATERMARK, validateWatermarkSettings, type WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
-import { parseMappingPreset, presetMismatches, type FontMode, type MappingPreset } from './presets';
+import type { FontMode, MappingPreset } from './presets';
 import { decodeBase64, errorCode, saveDownload } from './resources';
 import { useBatch } from './useBatch';
 
@@ -71,7 +72,9 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [pattern, setPattern] = useState('{{ID}}-{{Name}}.pdf');
   const [flattenZip, setFlattenZip] = useState(false);
   const [includeCoverSheet, setIncludeCoverSheet] = useState(false);
+  const [watermark, setWatermark] = useState<WatermarkSettings>(DEFAULT_WATERMARK);
   const [presetError, setPresetError] = useState(false);
+  const [presetCodec, setPresetCodec] = useState<typeof import('./presets')>();
 
   const sheet = roster?.data.sheets[sheetIndex];
   const templateFields = template?.info.fields ?? emptyFields;
@@ -106,8 +109,9 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     });
   }, [sheet, mapping, edits]);
   const presetWarnings = useMemo(() => mappingSettings.fromPreset
-    ? presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined, sheet?.headers)
-    : undefined, [fields, mappingSettings, pattern, sheet, template]);
+    ? presetCodec?.presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined, sheet?.headers)
+    : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template]);
+  const watermarkBlocked = useMemo(() => !validateWatermarkSettings(watermark), [watermark]);
 
   const hasMapping = fields.some((field) => Boolean(mapping[field.name]));
   const fontBlocked = customFont?.status === 'loading' || customFont?.status === 'invalid';
@@ -206,6 +210,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setPattern(sample.pattern);
       setFlattenZip(false);
       setIncludeCoverSheet(false);
+      setWatermark(DEFAULT_WATERMARK);
     }
     setPresetError(false);
     setTemplate(undefined);
@@ -358,6 +363,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setIncludeCoverSheet(value);
   }
 
+  function changeWatermark(value: WatermarkSettings) {
+    if (exportLocked()) return;
+    clearExportError();
+    request.current.draft++;
+    setWatermark(value);
+  }
+
   async function importPreset(file: File) {
     if (exportLocked()) return;
     request.current.draft++;
@@ -365,8 +377,10 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const customFontId = request.current.customFont;
     setPresetError(false);
     try {
-      const preset = parseMappingPreset(await file.text());
-      if (id !== request.current.preset) return;
+      const [codec, text] = await Promise.all([import('./presets'), file.text()]);
+      if (id !== request.current.preset || exportLocked()) return;
+      const preset = codec.parseMappingPreset(text);
+      setPresetCodec(codec);
       if (customFontId === request.current.customFont) clearCustomFont();
       else recheck();
       restoreSettings(preset);
@@ -376,28 +390,26 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }
 
   function restoreSettings(preset: MappingPreset) {
-    setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: preset.version === 4 ? preset.alignOverrides : undefined });
+    setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined });
     setPattern(preset.filenamePattern);
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
     setFlattenZip(preset.version !== 1 && preset.flattenZip);
     setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
+    setWatermark(preset.version === 5 ? preset.watermark : DEFAULT_WATERMARK);
   }
 
-  function draftSettings(): BatchDraft['settings'] {
-    return {
-      version: 4,
-      mapping: Object.fromEntries(fields.flatMap(({ name, kind }) =>
-        kind === 'text' || kind === 'checkbox' || mapping[name] ? [[name, mapping[name]!]] : [])),
-      filenamePattern: pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides,
-    };
+  function presetInputs() {
+    const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
+      kind === 'text' || kind === 'checkbox' || mapping[name] ? [[name, mapping[name]!]] : []));
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark] as const;
   }
 
-  function exportPreset() {
-    const { version, alignOverrides, flattenZip, includeCoverSheet, ...settings } = draftSettings();
-    const preset: MappingPreset = Object.keys(alignOverrides).length ? { version, ...settings, flattenZip, includeCoverSheet, alignOverrides }
-      : includeCoverSheet ? { version: 3, ...settings, flattenZip, includeCoverSheet }
-        : flattenZip ? { version: 2, ...settings, flattenZip } : { version: 1, ...settings };
+  async function exportPreset() {
+    if (watermarkBlocked) return;
+    const inputs = presetInputs();
+    const { makeMappingPreset } = await import('./presets');
+    const preset = makeMappingPreset(...inputs);
     saveDownload(JSON.stringify(preset, null, 2), 'arabiform-mapping-preset.json', 'application/json');
   }
 
@@ -407,10 +419,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     return () => id === request.current.draft && !exportLocked();
   }
 
-  function restoreDraft(draft: BatchDraft) {
+  function restoreDraft(draft: BatchDraft, codec: typeof import('./presets')) {
     if (draft.customFontSha256 === null) clearCustomFont();
     else recheck();
     setPresetError(false);
+    setPresetCodec(codec);
     restoreSettings(draft.settings);
     setCellState((current) => ({ edits: draft.edits, hygiene: draft.hygiene, revision: current.revision + 1 }));
   }
@@ -419,15 +432,21 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     template, roster, loadedSample, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
     sourceRevision: `${request.current.roster}:${sheetIndex}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,
-    draftSettings, beginDraft, restoreDraft,
+    presetInputs, beginDraft, restoreDraft,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
+    watermark, watermarkBlocked, changeWatermark,
     ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
     rowEdit: edits[selected], restoreRowEdit,
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
-    download: (kind: Parameters<typeof download>[0]) => download(kind, filenamePlans, ready, flattenZip,
-      kind === 'merged' && includeCoverSheet && template ? { locale, templateName: template.name } : undefined),
+    download: (kind: Parameters<typeof download>[0]) => {
+      const print = kind === 'merged' || (kind === 'zip' && flattenZip);
+      if (print && watermarkBlocked) return;
+      return download(kind, filenamePlans, ready, flattenZip,
+        kind === 'merged' && includeCoverSheet && template ? { locale, templateName: template.name } : undefined,
+        print && watermark.kind !== 'none' ? watermark : undefined);
+    },
   };
 }

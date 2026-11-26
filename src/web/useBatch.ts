@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AlignOverride } from '../core/pdf/alignment';
+import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
@@ -124,7 +125,7 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
   }
 
   async function download(kind: ExportKind, filenamePlans: readonly FilenamePlan[], ready: number, flattenZip: boolean,
-    cover?: Pick<MergeCoverSheet, 'locale' | 'templateName'>) {
+    cover?: Pick<MergeCoverSheet, 'locale' | 'templateName'>, watermark?: WatermarkSettings) {
     const client = worker.current;
     if (!client || !results || exportLock.current) return;
     if ((kind === 'zip' || kind === 'merged') && !ready) return;
@@ -150,8 +151,8 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
         const isZip = kind === 'zip';
         const filenames = isZip || cover ? filenamePlans.map(({ filename }) => filename) : [];
         const data = await (isZip
-          ? client.zip(filenames, onProgress, flattenZip)
-          : client.merged(onProgress, cover ? { ...cover, filenames } : undefined));
+          ? client.zip(filenames, onProgress, flattenZip, watermark)
+          : client.merged(onProgress, cover ? { ...cover, filenames } : undefined, watermark));
         if (exportLock.current === operation && worker.current === client) {
           saveDownload(data, isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', isZip ? 'application/zip' : 'application/pdf');
         }

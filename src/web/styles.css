@@ -210,6 +210,22 @@ button:disabled { cursor: default; }
 .wide-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .65rem; }
 .quiet { color: var(--muted); font-size: .89rem; line-height: 1.45; }
 .file-stack, .settings-fields { display: grid; gap: .72rem; }
+.capacity-inspector {
+  min-inline-size: 0;
+  padding: .55rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: .42rem;
+  background: #f8f9f4;
+}
+.capacity-inspector summary { cursor: pointer; color: var(--forest); font-size: .86rem; font-weight: 650; }
+.capacity-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: .55rem; padding-block-start: .55rem; }
+.capacity-content .table-scroll { max-block-size: min(55vh, 26rem); }
+.capacity-content table { min-inline-size: 46rem; table-layout: auto; background: var(--surface); }
+.capacity-content caption { padding: .35rem .5rem; text-align: start; color: var(--muted); font-size: .82rem; }
+.capacity-content thead th { position: sticky; inset-block-start: 0; }
+.capacity-content :is(th, td) { width: auto; padding-inline: .5rem; }
+.capacity-content tbody th { min-inline-size: 7rem; overflow-wrap: anywhere; }
+.capacity-content tbody td { white-space: nowrap; }
 .field-label, .full-control, .edit-cells label { font-size: .86rem; font-weight: 650; }
 .file-box {
   min-height: 2.8rem;
@@ -349,6 +365,15 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
 }
 .output-mode input { flex: none; inline-size: 1rem; block-size: 1rem; margin-block-start: .2rem; accent-color: var(--forest); }
 .output-mode:has(input:disabled), .preset-picker:has(input:disabled) { cursor: default; color: var(--muted); }
+.watermark-options {
+  min-inline-size: 0;
+  display: grid;
+  gap: .65rem;
+  padding: .55rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: .42rem;
+}
+.watermark-required { color: var(--amber); }
 
 .button {
   border: 1px solid transparent;
