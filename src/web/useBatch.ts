@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { AlignOverride } from '../core/pdf/alignment';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
@@ -60,8 +61,11 @@ export function useBatch(batch: BatchSettings | null, selected: number) {
       if (update.completed === 0 || worker.current !== client) return;
       const now = performance.now();
       if (now - lastPaint >= 80 || update.completed === update.total) {
+        const firstIntermediate = lastPaint === -Infinity && update.completed < update.total;
         lastPaint = now;
-        setProgress(update);
+        // Commit once before a queued worker result can batch away the intermediate update.
+        if (firstIntermediate) flushSync(() => setProgress(update));
+        else setProgress(update);
       }
     };
   }
