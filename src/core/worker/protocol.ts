@@ -16,7 +16,7 @@ export interface BatchProgress {
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }
   | { phase: 'preview'; rowIndex: number }
-  | { phase: 'zip'; filenames: readonly string[] }
+  | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean }
   | { phase: 'merged' };
 
 export type BatchRequest = BatchCommand & { id: number };

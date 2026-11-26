@@ -51,7 +51,8 @@ export function createBatchWorker() {
   return {
     preflight: (input: BatchInput, onProgress?: ProgressListener) => send({ phase: 'preflight', input }, onProgress) as Promise<BatchRowResult[]>,
     preview: (rowIndex: number) => send({ phase: 'preview', rowIndex }) as Promise<Uint8Array | undefined>,
-    zip: (filenames: readonly string[], onProgress?: ProgressListener) => send({ phase: 'zip', filenames }, onProgress) as Promise<Uint8Array>,
+    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false) =>
+      send({ phase: 'zip', filenames, flattenZip }, onProgress) as Promise<Uint8Array>,
     merged: (onProgress?: ProgressListener) => send({ phase: 'merged' }, onProgress) as Promise<Uint8Array>,
     dispose: () => stop(new DOMException('Batch canceled', 'AbortError')),
   };

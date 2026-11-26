@@ -99,7 +99,7 @@ describe('PDF intake and fill', () => {
     const overflow = await preflightRow(source, { Name: 'سَلْمَى بِنْت يَاسِين', ID: '000007' }, config);
     expect(overflow).toMatchObject({ status: 'flagged', diagnostics: [{ field: 'Name', code: 'too-narrow', widgetIndex: 1 }, { field: 'ID', code: 'exceeds-maxlen', maxLengthExcess: 1 }] });
     expect(overflow.pdfBytes).toBeUndefined();
-    expect((await preflightRow(source, { Name: ' ' }, config)).diagnostics).toEqual([{ field: 'Name', code: 'missing-required' }]);
+    expect((await preflightRow(source, { Name: ' ' }, config)).diagnostics).toEqual([{ field: 'Name', code: 'missing-required', pageNumbers: [1, 2] }]);
   });
 
   it('writes Latin letters and digits left to right within an Arabic paragraph', async () => {
@@ -153,7 +153,7 @@ describe('PDF intake and fill', () => {
     const bundled = await fonts();
     const preview = await preflightRow(source, row!.values, { fonts: bundled });
     expect(preview.status).toBe('flagged');
-    expect(preview.diagnostics).toEqual([{ field: 'Name', code: 'too-narrow', widgetIndex: 0, requiredFontSizePt: 7.58 }]);
+    expect(preview.diagnostics).toEqual([{ field: 'Name', code: 'too-narrow', widgetIndex: 0, requiredFontSizePt: 7.58, pageNumbers: [1] }]);
     const size = preview.diagnostics[0]!.requiredFontSizePt!;
     const fixed = await preflightRow(source, row!.values, { fonts: bundled, minFontSize: size });
     expect(fixed.status).toBe('pass');
@@ -247,7 +247,7 @@ describe('M3 PDF widgets and custom fonts', () => {
     const metadata = await inspectTemplate(template);
     expect(metadata.fields.map(({ name, kind, readOnly }) => [name, kind, readOnly])).toEqual([
       ['Name', 'text', false], ['Checked', 'checkbox', false], ['Approval', 'checkbox', false],
-      ['Contact', 'radio', true], ['Site', 'dropdown', true], ['Sentinel', 'text', false],
+      ['Contact', 'radio', false], ['Site', 'dropdown', false], ['Sentinel', 'text', false],
     ]);
     const result = await preflightRow(template, { Name: 'سَلْمَى 00123', Approval: ' نعم ' }, { fonts: await fonts() });
     expect(result.diagnostics).toEqual([]);
@@ -275,10 +275,12 @@ describe('M3 PDF widgets and custom fonts', () => {
   it('flags bad roster tokens, read-only fields, mismatched on names, and missing Off appearances', async () => {
     const template = await consent();
     const options = { fonts: await fonts() };
-    const invalid = await preflightRow(template, { Approval: 'unknown', Contact: 'Email', Site: 'South' }, options);
+    const invalid = await preflightRow(template, { Approval: 'unknown', Contact: 'email', Site: 'south' }, options);
     expect(invalid.pdfBytes).toBeUndefined();
     expect(invalid.diagnostics).toEqual([
-      { field: 'Approval', code: 'invalid-checkbox-value' }, { field: 'Contact', code: 'readonly-field' }, { field: 'Site', code: 'readonly-field' },
+      { field: 'Approval', code: 'invalid-checkbox-value', pageNumbers: [1] },
+      { field: 'Contact', code: 'invalid-choice', choices: [{ value: 'Email', label: 'Email' }, { value: 'Phone', label: 'Phone' }], pageNumbers: [1] },
+      { field: 'Site', code: 'invalid-choice', choices: [{ value: 'North', label: 'North' }, { value: 'South', label: 'South' }], pageNumbers: [1] },
     ]);
     for (const { remove, add } of [{ remove: 'Consent', add: 'Different' }, { remove: 'Off', add: 'Inactive' }]) {
       const broken = await PDFDocument.load(template);
@@ -289,12 +291,12 @@ describe('M3 PDF widgets and custom fonts', () => {
       const contents = await broken.save({ updateFieldAppearances: false });
       const flagged = await preflightRow(contents, { Approval: 'yes', Name: 'ليلى' }, options);
       expect(flagged.pdfBytes).toBeUndefined();
-      expect(flagged.diagnostics).toContainEqual({ field: 'Approval', code: 'unsupported-checkbox-appearance', widgetIndex: 1 });
+      expect(flagged.diagnostics).toContainEqual({ field: 'Approval', code: 'unsupported-checkbox-appearance', widgetIndex: 1, pageNumbers: [1] });
       expect((await preflightRow(contents, { Name: 'ليلى' }, options)).status).toBe('pass');
     }
   });
 
-  it('accepts an editable checkbox-only form and rejects a choice-only form', async () => {
+  it('accepts an editable checkbox-only form and rejects a dropdown with no options', async () => {
     const source = await PDFDocument.create();
     const page = source.addPage();
     const form = source.getForm();
@@ -317,7 +319,7 @@ describe('M3 PDF widgets and custom fonts', () => {
     expect(() => inspectCustomFont(Uint8Array.of(0, 1, 0, 0))).toThrow('invalid-custom-font');
     await expect(preflightRow(template, {}, { fonts: bundled, customFont: Uint8Array.of(0, 1, 0, 0) })).rejects.toThrow('invalid-custom-font');
     const blocked = await preflightRow(template, { Name: 'مُحَمَّد' }, { fonts: bundled, customFont: bundled.latin });
-    expect(blocked.diagnostics).toEqual([{ field: 'Name', widgetIndex: 0, code: 'missing-glyphs' }]);
+    expect(blocked.diagnostics).toEqual([{ field: 'Name', widgetIndex: 0, code: 'missing-glyphs', pageNumbers: [1] }]);
     expect(blocked.pdfBytes).toBeUndefined();
     const good = await preflightRow(template, { Name: 'مُحَمَّد' }, { fonts: bundled, customFont: bundled.arabic });
     expect(good.diagnostics).toEqual([]);

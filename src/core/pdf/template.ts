@@ -1,4 +1,6 @@
 import { PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFNumber, PDFRadioGroup, PDFString, PDFTextField, PDFWidgetAnnotation } from 'pdf-lib';
+import type { FieldChoice } from './choice-match';
+import { dropdownChoices, radioChoices } from './choices';
 
 export const key = PDFName.of;
 export const number = PDFNumber.of;
@@ -24,6 +26,7 @@ export interface FieldMetadata {
   defaultFontSize: number;
   value: string;
   widgets: WidgetMetadata[];
+  choices?: FieldChoice[];
 }
 
 export interface TemplateMetadata {
@@ -171,17 +174,25 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
       const value = current instanceof PDFName ? current.decodeText() : current instanceof PDFArray
         ? current.asArray().map((item) => item instanceof PDFString || item instanceof PDFHexString ? item.decodeText() : '').join(', ')
         : textValue(canonical);
+      const dropdownOptions = kind === 'dropdown' ? dropdownChoices(canonical) : undefined;
+      const choices = dropdownOptions?.map(({ value, label }) => ({ value, label }))
+        ?? (kind === 'radio' ? radioChoices(widgets, fieldAttributes(canonical, 'Opt')) : undefined);
       const meta: FieldMetadata = {
-        name, kind, required: field.isRequired(), readOnly: kind === 'radio' || kind === 'dropdown' || field.isReadOnly(),
+        name, kind, required: field.isRequired(), readOnly: field.isReadOnly(),
         multiline: field instanceof PDFTextField && field.isMultiline(), maxLength,
-        defaultFontSize: fontSize(appearance), value, widgets: widgets.map((entry) => entry.meta),
+        defaultFontSize: fontSize(appearance), value, widgets: widgets.map((entry) => entry.meta), choices,
       };
       const declared = new Set(widgets.map(({ widget }) => widget.dict));
-      const completeWidgetList = declared.size === widgets.length
-        && [...(linkedWidgets.get(canonical) ?? [])].every((widget) => declared.has(widget));
-      return [{ field, widgets, meta, completeWidgetList, alignment: alignment instanceof PDFNumber ? alignment.asNumber() : undefined }];
+      const linked = [...(linkedWidgets.get(canonical) ?? [])];
+      const completeWidgetList = declared.size === widgets.length && linked.every((widget) => declared.has(widget));
+      const pageNumbers = [...new Set([...declared, ...linked].flatMap((widget) => {
+        const page = widgetPages.get(widget);
+        return page === undefined ? [] : [page + 1];
+      }))].sort((first, second) => first - second);
+      return [{ field, widgets, meta, dropdownOptions, completeWidgetList, pageNumbers,
+        alignment: alignment instanceof PDFNumber ? alignment.asNumber() : undefined }];
     });
-    if (fields.every(({ meta }) => meta.readOnly)) throw new PdfIntakeError('flat-scanned-no-fields');
+    if (fields.every(({ meta }) => meta.readOnly || meta.choices?.length === 0)) throw new PdfIntakeError('flat-scanned-no-fields');
     return { doc, rawForm, pages, fields };
   } catch (error) {
     if (error instanceof PdfIntakeError) throw error;

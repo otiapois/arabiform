@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from zipfile import ZipFile
 
 import fitz
 
@@ -65,6 +66,8 @@ def check_case(case, directory):
     before_path, after_path = (directory / case[key] for key in ("before", "after"))
     expected = case["values"]
     checkboxes = case.get("checkboxes", {})
+    dropdowns = case.get("dropdowns", {})
+    radios = case.get("radios", {})
     label = case.get("label", after_path.name)
     seen = Counter()
     results = []
@@ -75,7 +78,7 @@ def check_case(case, directory):
         edited = set()
         for page in filled:
             for widget in page.widgets():
-                if widget.field_name not in expected or widget.field_name in checkboxes:
+                if widget.field_name not in expected or widget.field_name in checkboxes or widget.field_name in radios:
                     continue
                 xref = appearance_xref(filled, widget)
                 if xref in edited:
@@ -110,29 +113,33 @@ def check_case(case, directory):
                     box = (max(0, mapped.x0), max(0, mapped.y0), min(after[0], mapped.x1), min(after[1], mapped.y1))
                     assert box[2] > box[0] and box[3] > box[1], (label, field, box)
                     allowed.append(box)
-                    if field in checkboxes:
-                        state = checkboxes[field]
+                    if field in checkboxes or field in radios:
+                        state = checkboxes[field] if field in checkboxes else radios[field]["widgets"][seen[field] - 1]
                         assert filled.xref_get_key(widget.xref, "AS") == ("name", f"/{state}"), (label, field, "invalid /AS")
                         assert filled.xref_get_key(widget.xref, "AP") == original.xref_get_key(old_widget.xref, "AP"), (
-                            f"{label}: checkbox {field} /AP changed"
+                            f"{label}: button {field} /AP changed"
                         )
                         bounds, amount = ink_bounds(before, after, box)
                         inset = min(bounds[0] - box[0], bounds[1] - box[1], box[2] - bounds[2], box[3] - bounds[3]) if amount else None
                         if filled.xref_get_key(widget.xref, "AS") != original.xref_get_key(old_widget.xref, "AS"):
-                            assert amount and inset >= 3, (label, field, "checkbox state changed without visible inset ink", box)
-                        results.append({"field": field, "page": page.number + 1, "checkboxState": state,
+                            assert amount and inset >= 3, (label, field, "button state changed without visible inset ink", box)
+                        state_key = "checkboxState" if field in checkboxes else "radioState"
+                        results.append({"field": field, "page": page.number + 1, state_key: state,
                                         "inkBboxAt4x": bounds if amount else None, "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset})
                         continue
                     assert (widget.field_value or "") == expected[field], (label, field, widget.field_value, expected[field])
                     bounds, amount = ink_bounds(text_only_baseline, after, box)
-                    if expected[field].strip():
+                    display = dropdowns.get(field, {}).get("label", expected[field])
+                    if display.strip():
                         assert amount, f"{label}: {field} has no visible ink"
                         inset = min(bounds[0] - box[0], bounds[1] - box[1], box[2] - bounds[2], box[3] - bounds[3])
                         assert inset >= 3, (label, field, ink_bounds(text_only_baseline, after, box), box)
                     else:
                         assert not amount, f"{label}: blank {field} has visible ink"
                         inset = None
-                    results.append({"field": field, "page": page.number + 1, "inkBboxAt4x": bounds if amount else None, "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset})
+                    results.append({"field": field, "page": page.number + 1, "inkBboxAt4x": bounds if amount else None,
+                                    "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset,
+                                    **({"dropdownLabel": display} if field in dropdowns else {})})
                 assert_same_outside(before, after, allowed, f"{label} page {page.number + 1}")
                 assert_same_outside(text_only_baseline, after, allowed, f"{label} text on page {page.number + 1}")
     assert set(seen) == set(expected), (label, seen, list(expected))
@@ -156,6 +163,24 @@ def check_merged(spec, directory):
     return index
 
 
+def check_zip(spec, directory):
+    pages = 0
+    with ZipFile(directory / spec["editable"]) as editable, ZipFile(directory / spec["flattened"]) as flattened:
+        assert editable.namelist() == flattened.namelist() == spec["rows"]
+        for name in spec["rows"]:
+            original = editable.read(name)
+            assert original == (directory / name).read_bytes(), f"editable ZIP changed {name}"
+            with fitz.open(stream=original) as row, fitz.open(stream=flattened.read(name)) as flat:
+                assert len(row) == len(flat), f"flattened member {name} lost a page"
+                assert flat.xref_get_key(flat.pdf_catalog(), "AcroForm")[0] == "null", f"{name} still has an AcroForm"
+                for old_page, flat_page in zip(row, flat):
+                    assert not list(flat_page.widgets()), f"{name} page {flat_page.number + 1} still has widgets"
+                    assert len(flat_page.get_images()) == len(old_page.get_images()), f"{name} acquired a raster image"
+                    assert render(old_page) == render(flat_page), f"{name} page {flat_page.number + 1} differs at 4x"
+                    pages += 1
+    return pages
+
+
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
     arguments.add_argument("manifest", nargs="?", type=Path, default=Path("test-results/pdf-pixels/manifest.json"))
@@ -168,16 +193,18 @@ def main():
             sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
             assert source.name == f"source-{sha256}.pdf", f"source snapshot hash changed: {filename}"
     results = [check_case(case, path.parent) for case in manifest["cases"]]
-    merged = sum(check_merged(manifest[key], path.parent) for key in ("merged", "mixedMerged") if manifest.get(key))
+    merged = sum(check_merged(manifest[key], path.parent) for key in ("merged", "mixedMerged", "m4Merged") if manifest.get(key))
+    zipped = check_zip(manifest["choiceZip"], path.parent) if manifest.get("choiceZip") else 0
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
+        "flattenedZipPagesPixelIdentical": zipped,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
     }
     path.with_name(f"{path.stem}-verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"{summary['engine']}: {len(results)} fills, {len(inks)} ink-bearing widgets, 0 clipped ink pixels, 0 changed pixels outside mapped widgets, {merged} identical merged pages.")
+    print(f"{summary['engine']}: {len(results)} fills, {len(inks)} ink-bearing widgets, 0 clipped ink pixels, 0 changed pixels outside mapped widgets, {merged} identical merged pages, {zipped} identical flattened ZIP pages.")
 
 
 if __name__ == "__main__":

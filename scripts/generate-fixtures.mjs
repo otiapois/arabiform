@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fontkit from '@pdf-lib/fontkit';
 import { strToU8, zipSync } from 'fflate';
-import { PDFDocument, PDFHexString, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib';
+import {
+  PDFDocument, PDFHexString, PDFName, PDFOperator, PDFOperatorNames as Op, PDFString,
+  StandardFonts, beginText, degrees, endMarkedContent, endText, popGraphicsState, pushGraphicsState, rgb,
+  setFillingRgbColor, setFontAndSize, setTextMatrix, showText,
+} from 'pdf-lib';
 
 const output = fileURLToPath(new URL('../fixtures/', import.meta.url));
 const metadataDate = new Date('2026-11-26T00:00:00Z');
@@ -394,6 +398,93 @@ async function clinicConsent() {
   return pdf.save({ updateFieldAppearances: false });
 }
 
+async function multiPageChoices() {
+  const pdf = await createPdf('HR onboarding and clinic assignment');
+  const employeePage = pdf.addPage([510, 465]);
+  const clinicPage = pdf.addPage([510, 465]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const heading = await pdf.embedFont(StandardFonts.HelveticaBold);
+  pdf.registerFontkit(fontkit);
+  const arabicBytes = await readFile(new URL('../public/fonts/NotoNaskhArabic-Regular.ttf', import.meta.url));
+  const arabic = await pdf.embedFont(arabicBytes);
+  const arabicFace = fontkit.create(arabicBytes);
+  const titleSize = 23;
+  const scale = titleSize / arabicFace.unitsPerEm;
+  const form = pdf.getForm();
+  for (const [page, title, translation, index] of [
+    [employeePage, 'HR onboarding', 'تَسْجِيلُ الْمُوَظَّفِ', 1],
+    [clinicPage, 'Clinic assignment', 'تَحْدِيدُ الْعِيَادَةِ', 2],
+  ]) {
+    page.drawText(title, { x: 38, y: 399, size: 25, color: ink, font: heading });
+    const run = arabicFace.layout(translation);
+    const advanceWidth = run.positions.reduce((advance, position) => advance + position.xAdvance, 0);
+    let x = 472 - advanceWidth * scale;
+    const fontName = page.node.newFontDictionary('ArabicHeading', arabic.ref);
+    const glyphs = [];
+    for (const [offset, glyph] of run.glyphs.entries()) {
+      const position = run.positions[offset];
+      glyphs.push(setTextMatrix(1, 0, 0, 1, x + position.xOffset * scale, 399 + position.yOffset * scale),
+        showText(PDFHexString.of(glyph.id.toString(16).padStart(4, '0'))));
+      x += position.xAdvance * scale;
+    }
+    page.pushOperators(pushGraphicsState(), setFillingRgbColor(ink.red, ink.green, ink.blue),
+      PDFOperator.of(Op.BeginMarkedContentSequence, [PDFName.of('Span'), `<< /ActualText ${PDFHexString.fromText(translation)} >>`]),
+      beginText(), setFontAndSize(fontName, titleSize), ...glyphs, endText(), endMarkedContent(), popGraphicsState());
+    page.drawText(`Synthetic Sample / ${index} of 2`, { x: 38, y: 376, size: 10, color: forest, font });
+    page.drawLine({ start: { x: 38, y: 364 }, end: { x: 472, y: 364 }, thickness: 1, color: rule });
+  }
+  const label = (page, text, x, y) => page.drawText(text, { x, y, size: 10, color: forest, font });
+  const employee = form.createTextField('Employee');
+  employee.enableRequired();
+  for (const page of [employeePage, clinicPage]) {
+    label(page, 'EMPLOYEE NAME', 38, 334);
+    addWidget(employee, page, [38, 294, 434, 32], font);
+  }
+  employee.setFontSize(12);
+  const button = { width: 17, height: 17, borderWidth: 0.7, borderColor: rule, backgroundColor: fill, textColor: ink };
+  form.createCheckBox('Acknowledged').addToPage(employeePage, { ...button, x: 39, y: 253 });
+  label(employeePage, 'Policy acknowledged', 64, 258);
+
+  const radio = (name, title, y) => {
+    const group = form.createRadioGroup(name);
+    label(employeePage, title, 38, y + 28);
+    for (const [index, text] of ['Phone', 'Email'].entries()) {
+      const x = 39 + 94 * index;
+      group.addOptionToPage(String(index), employeePage, { ...button, x, y });
+      label(employeePage, text, x + 25, y + 5);
+    }
+    group.select('1');
+    return group;
+  };
+  const contact = radio('Contact', 'CONTACT METHOD', 191);
+  radio('PreservedContact', 'EXISTING CONTACT METHOD', 118).enableReadOnly();
+
+  const combo = (name, title, y) => {
+    const dropdown = form.createDropdown(name);
+    dropdown.addOptions(['Jeddah Clinic', 'TEMPLATE CLINIC']);
+    dropdown.select(name === 'Clinic' ? 'Jeddah Clinic' : 'TEMPLATE CLINIC');
+    dropdown.addToPage(clinicPage, { x: 38, y, width: 251, height: 30, font, borderColor: rule, backgroundColor: fill });
+    label(clinicPage, title, 38, y + 37);
+    return dropdown;
+  };
+  const clinic = combo('Clinic', 'ASSIGNED CLINIC', 214);
+  combo('PreservedClinic', 'EXISTING CLINIC', 131).enableReadOnly();
+  const sentinel = form.createTextField('Sentinel');
+  addWidget(sentinel, clinicPage, [38, 49, 188, 27], font);
+  sentinel.setText('KEEP 00109');
+  label(clinicPage, 'TEMPLATE REFERENCE', 38, 83);
+  form.updateFieldAppearances(font);
+  // Keep the Latin default appearance that was painted above, while using
+  // distinct export values and an actual Arabic label in the dropdown.
+  clinic.acroField.dict.set(PDFName.of('Opt'), pdf.context.obj([
+    [PDFString.of('RIY'), PDFHexString.fromText('عِيَادَةُ الرِّيَاضِ')],
+    [PDFString.of('JED'), PDFString.of('Jeddah Clinic')],
+  ]));
+  clinic.acroField.dict.set(PDFName.of('V'), PDFString.of('JED'));
+  contact.acroField.dict.set(PDFName.of('Opt'), pdf.context.obj([PDFString.of('CALL'), PDFString.of('MAIL')]));
+  return pdf.save({ updateFieldAppearances: false });
+}
+
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
 }
@@ -404,6 +495,12 @@ const consentRows = [
   ['ليلى حسن', '00001', 'نعم'],
   ['أحمد سالم', '00002', 'لا'],
   ['سَلْمَى بِنْت يَاسِين', 'AR-00042', 'review'],
+];
+const choiceRows = [
+  ['Employee', 'Acknowledged', 'Clinic', 'Contact'],
+  ['سَلْمَى بِنْتُ يَاسِين', 'نعم', 'Unknown Clinic', 'CALL'],
+  ['مُحَمَّد 00123', 'false', 'RIY', 'MAIL'],
+  ['Layla 00007', 'yes', 'Jeddah Clinic', ' CALL '],
 ];
 const fixtures = {
   'golden/template.pdf': await attendanceTemplate(),
@@ -422,9 +519,12 @@ const fixtures = {
     consentRows[0], [consentRows[1][0], consentRows[1][1], { formula: '1=1', cached: '1' }],
     [consentRows[2][0], consentRows[2][1], { formula: '1=1' }],
   ]),
+  'm4/multi-page-hr-choices.pdf': await multiPageChoices(),
+  'm4/multi-page-hr-choices.csv': csv(choiceRows),
+  'm4/multi-page-hr-choices.xlsx': workbook(choiceRows),
 };
 
-if (!check) await Promise.all(['golden', 'm2', 'm3'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {

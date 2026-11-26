@@ -1,4 +1,5 @@
 import { decodePDFRawStream, PDFArray, PDFDict, PDFName, PDFNumber, PDFRawStream } from 'pdf-lib';
+import { buttonNormal, buttonOnState } from './choices';
 import { fieldAttributes, key, type WidgetTarget } from './template';
 
 const off = key('Off');
@@ -40,41 +41,60 @@ function usableAppearance(stream: unknown, checked: boolean): boolean {
   return !checked || prefix.some((byte) => byte > 32);
 }
 
+function usableButton(target: WidgetTarget, normal: PDFDict, on: PDFName): boolean {
+  if (!target.usable || !(target.meta.width > 0 && target.meta.height > 0) || target.meta.rotation % 90 !== 0) return false;
+  try {
+    const unchecked = normal.lookup(off);
+    const checked = normal.lookup(on);
+    return unchecked !== checked && usableAppearance(unchecked, false) && usableAppearance(checked, true);
+  } catch {
+    return false;
+  }
+}
+
 export function planCheckbox(canonical: PDFDict, widgets: WidgetTarget[], checked: boolean) {
   const problems: number[] = [];
   const current = fieldAttributes(canonical, 'V') ?? off;
   let on: PDFName | undefined;
   for (const [widgetIndex, target] of widgets.entries()) {
     const { dict } = target.widget;
-    const ap = dict.lookup(key('AP'));
-    const normal = ap instanceof PDFDict ? ap.lookup(key('N')) : undefined;
-    const states = normal instanceof PDFDict ? normal.keys().filter((state) => state !== off) : [];
-    const selected = states[0];
+    const normal = buttonNormal(dict);
+    const selected = buttonOnState(normal);
     const localValue = dict === canonical ? current : dict.lookup(key('V')) ?? current;
     const appearanceState = dict.lookup(key('AS'));
-    let valid = target.usable && target.meta.width > 0 && target.meta.height > 0 && target.meta.rotation % 90 === 0
-      && normal instanceof PDFDict && states.length === 1 && selected !== undefined
+    const valid = normal && selected
       && (!on || on === selected) && (current === off || current === selected)
-      && localValue === current && appearanceState === current;
-    if (valid && normal instanceof PDFDict && selected) {
-      try {
-        const unchecked = normal.lookup(off);
-        const checked = normal.lookup(selected);
-        valid = unchecked !== checked && usableAppearance(unchecked, false) && usableAppearance(checked, true);
-      } catch {
-        valid = false;
-      }
-    }
+      && localValue === current && appearanceState === current && usableButton(target, normal, selected);
     if (!valid) problems.push(widgetIndex);
     else on = selected;
   }
   return { problems, state: checked ? on : off };
 }
 
-export function applyCheckbox(canonical: PDFDict, widgets: WidgetTarget[], state: PDFName) {
+export function planRadio(canonical: PDFDict, widgets: WidgetTarget[]) {
+  const current = fieldAttributes(canonical, 'V') ?? off;
+  const problems: number[] = [];
+  const states = widgets.map((target, index) => {
+    const { dict } = target.widget;
+    const normal = buttonNormal(dict);
+    const on = buttonOnState(normal);
+    const localValue = dict === canonical ? current : dict.lookup(key('V')) ?? current;
+    const state = dict.lookup(key('AS')) ?? off;
+    if (!normal || !on || localValue !== current || state !== (current === on ? on : off) || !usableButton(target, normal, on)) {
+      problems.push(index);
+    }
+    return on;
+  });
+  // A repeated appearance name cannot identify a unique widget in the group.
+  const consistent = new Set(states.filter(Boolean)).size === states.filter(Boolean).length
+    && (problems.length > 0 || current === off || states.includes(current as PDFName));
+  return { states, problems, consistent };
+}
+
+export function applyButton(canonical: PDFDict, widgets: WidgetTarget[], state: PDFName, selectedIndex?: number) {
   canonical.set(key('V'), state);
-  for (const { widget } of widgets) {
+  for (const [index, { widget }] of widgets.entries()) {
     if (widget.dict !== canonical && widget.dict.has(key('V'))) widget.dict.set(key('V'), state);
-    widget.setAppearanceState(state);
+    widget.setAppearanceState(selectedIndex === undefined || selectedIndex === index ? state : off);
   }
 }

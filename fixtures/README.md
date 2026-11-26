@@ -68,3 +68,9 @@ Store official blank downloads in a local directory and run `node scripts/verify
 `m3/clinic-consent-roster.csv` contains an affirmative row, a negative row, and an invalid Consent value for preflight. `m3/clinic-consent-formulas.xlsx` includes a cached boolean and an uncached formula in column C.
 
 The pixel verifier checks both checkbox transitions, all preserved fields and a custom Noto Naskh Arabic TrueType render. Set `ARABIFORM_CUSTOM_CFF_FONT` to a local Latin OpenType CFF font for the optional CFF and merged-print comparison.
+
+## M4 multi-page choice sample
+
+`m4/multi-page-hr-choices.pdf` contains two bilingual pages with an employee name repeated on both pages, a checkbox and radio group on page 1, and a dropdown on page 2. Its radio exports are `CALL` and `MAIL`, with original appearance names `/0` and `/1`. The dropdown pairs `RIY` with `عِيَادَةُ الرِّيَاضِ` and `JED` with `Jeddah Clinic`. The source also contains a populated dropdown, radio group, and `KEEP 00109` reference left unmapped.
+
+Use the matching CSV or the `Roster` sheet in the XLSX. Row 1 flags `Clinic` on page 2 until a listed option replaces `Unknown Clinic`. Rows 2 and 3 use an exact export and a display label respectively. The XLSX stores roster values as text.
