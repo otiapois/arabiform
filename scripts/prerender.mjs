@@ -11,12 +11,12 @@ const routes = [
     summary: 'Use one interactive PDF template for a whole roster. Map your columns, review Arabic and mixed-script text in the PDF preview, and export the rows that pass.',
     guide: 'The PDF mail merge workflow',
     paragraphs: [
-      'Choose an interactive PDF with text fields and a CSV or .xlsx roster. Check the column mapping and review the preflight results. For a flagged field, edit the row or try a different minimum font size, then check the preview again.',
+      'Choose an AcroForm PDF with editable text fields or checkboxes and a CSV or .xlsx roster. Check your column mapping and review flagged entries. Edit an invalid value or adjust the minimum font size for text that needs more room, then check the preview again.',
       'The ZIP contains one PDF per passing row. The merged printable PDF collects the passing rows in one file. You can also download the row diagnostics as CSV or JSON.',
     ],
     faq: [
       ['Can I try the tool without my own files?', 'Use the Synthetic Arabic Sample to load a fictional roster and a demo PDF. One row is deliberately too long so you can try editing it.'],
-      ['What type of PDF template can I use?', 'Start with an ordinary AcroForm PDF that has editable text fields. XFA forms, PDFs without form fields, signed PDFs, and encrypted PDFs are outside the supported scope.'],
+      ['What type of PDF template can I use?', 'Use an ordinary AcroForm PDF with an editable text field or checkbox. Radio buttons and dropdowns retain their original settings in individual PDFs. XFA forms, flat PDFs, signed PDFs, and encrypted PDFs are outside the supported scope.'],
     ],
     links: [
       ['/arabic-pdf-form-filler', 'Fill an Arabic PDF form'],
@@ -51,7 +51,7 @@ const routes = [
     title: 'دمج بيانات CSV وExcel في نماذج PDF | ArabiForm',
     description: 'املأ حقول نماذج PDF التفاعلية من جدول CSV أو Excel. عاين الأسماء العربية والأرقام قبل تصدير الملفات، وكل ذلك داخل متصفحك.',
     heading: 'املأ نماذج PDF من جدول بيانات',
-    summary: 'اربط أعمدة جدول CSV أو Excel بالحقول النصية في نموذج PDF. يفحص المتصفح مساحة الحروف والتشكيل داخل الحقل قبل التنزيل.',
+    summary: 'اربط أعمدة جدول CSV أو Excel بالحقول النصية وخانات الاختيار في نموذج PDF. يفحص المتصفح مساحة الحروف والتشكيل داخل الحقل قبل التنزيل.',
     guide: 'لماذا نفحص حدود الحروف قبل التصدير؟',
     paragraphs: [
       'من العينة الاصطناعية «بَنِي يَمَن». يشغل التشكيل فوق الحروف وأجزاء الحروف تحت السطر مساحةً داخل الحقل. يرسم ArabiForm النص بخطوط نوتو المضمّنة ويقارن حدود الحروف وعلامات التشكيل بمساحة الحقل المتاحة.',
@@ -59,7 +59,7 @@ const routes = [
     ],
     faq: [
       ['هل تُرفع ملفاتي إلى خادم؟', 'تُقرأ ملفات النموذج والجدول وتُعالج داخل متصفحك. تُنزَّل النتائج من المتصفح بعد التصدير.'],
-      ['هل تقبل الأداة نموذجًا ممسوحًا ضوئيًا؟', 'تحتاج الأداة إلى نموذج AcroForm يحتوي على حقول نصية قابلة للتعبئة. الصور الممسوحة ضوئيًا بلا حقول ونماذج XFA والملفات الموقّعة أو المشفّرة خارج نطاق الدعم.'],
+      ['هل تقبل الأداة نموذجًا ممسوحًا ضوئيًا؟', 'تحتاج الأداة إلى نموذج AcroForm فيه حقل نصي أو خانة اختيار قابلة للتعبئة. الصور الممسوحة ضوئيًا بلا حقول ونماذج XFA والملفات الموقّعة أو المشفّرة خارج نطاق الدعم.'],
     ],
     links: [
       ['/', 'واجهة العمل بالإنجليزية'],
@@ -96,7 +96,7 @@ const routes = [
     paragraphs: [
       'Load the Synthetic Arabic Sample. Select a ready row to see Arabic text and a leading-zero ID in a filled PDF. Select the deliberately overlong row to see the warning. Shorten its name and compare the preview after the row passes preflight.',
       'To check network behavior, open the Network panel in browser developer tools before loading the sample. Page assets and the PDF worker come from the site itself. The production response header contains the Content Security Policy directive connect-src \'none\', which blocks connections such as fetch and XMLHttpRequest.',
-      'ArabiForm accepts ordinary AcroForm PDFs with editable text fields. It rejects XFA forms, encrypted or signed PDFs, and flat or scanned PDFs without interactive fields. Check your template and its field limits before processing a real roster.',
+      'ArabiForm fills editable text fields and checkboxes in ordinary AcroForm PDFs. Unmapped fields keep their original values and appearances in individual PDFs. XFA forms, encrypted or signed PDFs, and flat or scanned PDFs without interactive fields are outside the supported scope.',
     ],
     faq: [
       ['Does choosing a file upload it to the site?', 'The file picker passes the contents to your browser for local processing. The workbench creates the preview and export files on the same device.'],

@@ -119,7 +119,7 @@ test('a rejected replacement clears the old template and disables PDF export', a
   await counts(page, 4, 1);
   for (const [file, message] of [
     ['xfa.pdf', 'XFA forms are unsupported'],
-    ['flat.pdf', 'No fillable text fields were found'],
+    ['flat.pdf', 'No fillable text fields or checkboxes were found'],
     ['encrypted.pdf', 'This PDF is encrypted'],
     ['signed.pdf', 'This PDF has a signature field'],
   ] as const) {
