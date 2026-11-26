@@ -10,6 +10,14 @@
 - **Row-Level Preflight Queue & Inline Fix**:
   - Summary bar: `Total rows` | `Ready (Clean)` | `Flagged (Needs Review)` | `Active Font` | `Min Font Size (6–10pt slider)`.
   - Filterable row table showing exact field diagnostics; clicking any flagged row lets the user **edit the cell text inline** OR **adjust min font size** and immediately re-renders the live PDF preview until `Flagged = 0`!
+  - Search row numbers, filenames and cell values. The `All`, `Ready`, `Flagged` and `Source warnings` filters paginate at 20 rows per page. Filenames use `<bdi dir="auto">` in both locales.
+  - Show a proven font-size threshold or MaxLen excess beside the red preview highlights and in the selected row editor. Offer `Set min font to X pt` when each failure in the selected row can be resolved within the 6 pt floor. Changing that setting checks the full batch again.
+- **Local Worker Lifecycle**:
+  - A dedicated, first-party Web Worker runs preflight, ZIP creation and merged PDF creation. It retains the PDF bytes between operations and sends row metadata, the requested single-row preview, and the completed file back to the interface.
+  - Show the current phase and completed/total count. `Cancel batch` terminates the worker and clears the results and pending downloads. `Resume batch` rechecks the retained files and edits in a fresh worker. Replacing inputs or editing preflight settings also invalidates the previous worker.
+- **Local Mapping Presets**:
+  - The version 1 JSON file contains the field-to-column `mapping`, `filenamePattern`, `minFontSize` (6–10 pt), and `font` (`auto`, `arabic` or `latin`). An empty mapping value leaves the original PDF field unchanged.
+  - Export stores settings only. Import validates the entire file before applying settings, skips missing or read-only fields and unavailable columns, and reports mismatches with the current files. Presets can be imported before source files are chosen.
 - **Export Controls**:
   - `Download Clean PDFs (.zip)` (only exports passing rows by default, with clear count badge if flagged rows are excluded — never silently ships broken/clipped PDFs!)
   - `Download Merged Printable PDF (.pdf)` (1-click print-all file!)
@@ -25,7 +33,9 @@
 4. `/preserve-leading-zeros-pdf` — Focused page on preserving `00123` / `00007` IDs from CSV & Excel into PDFs
 5. `/privacy-and-proof` — Interactive visual proof (`connect-src 'none'`, before/after unclipped Arabic rendering proof, honest supported vs unsupported PDF matrix: ordinary AcroForm YES vs XFA/scanned/signed NO).
 
+The English Arabic PDF guide and the Arabic mail merge guide explain ink-bounds preflight using the same fictional name from the sample roster. Their page summaries and guide copy are authored in `scripts/prerender.mjs` and carried into the interactive workbench from the static page.
+
 ## Cloudflare Pages Production Readiness
-- Build outputs `dist/_headers` with strict `Content-Security-Policy` including `connect-src 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+- Build outputs `dist/_headers` with strict `Content-Security-Policy` including `connect-src 'none'` and `worker-src 'self'`, plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
 - Build outputs `dist/sitemap.xml` and `dist/robots.txt` (origin via `SITE_URL`, default `https://arabiform.example`).
 - Zero `<form>` elements with data-submitting `name=` attributes.

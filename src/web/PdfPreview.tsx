@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import { diagnosticText } from './Diagnostics';
 import { fillLabel, type translator } from './labels';
 import type { RowResult, TemplateInfo } from './useWorkbench';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
 type PreviewProps = {
-  bytes: Uint8Array;
+  bytes?: Uint8Array;
   fields: TemplateInfo['fields'];
   diagnostics?: RowResult['diagnostics'];
+  minSize: number;
+  unavailable: boolean;
   language: ReturnType<typeof translator>;
 };
 
@@ -22,13 +25,14 @@ type Position = {
   height: string;
 };
 
-export default function PdfPreview({ bytes, fields, diagnostics, language }: PreviewProps) {
-  const { labels, problem } = language;
+export default function PdfPreview({ bytes, fields, diagnostics, minSize, unavailable, language }: PreviewProps) {
+  const { labels } = language;
   const [loaded, setLoaded] = useState<{ bytes: Uint8Array; pdf?: PDFDocumentProxy }>();
   const [rendered, setRendered] = useState<{
     pdf: PDFDocumentProxy;
     page: number;
     width: number;
+    diagnostics?: RowResult['diagnostics'];
     complete: boolean;
     ratio?: number;
     positions?: Position[];
@@ -38,13 +42,14 @@ export default function PdfPreview({ bytes, fields, diagnostics, language }: Pre
   const [frameWidth, setFrameWidth] = useState(0);
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const pdf = loaded?.bytes === bytes ? loaded.pdf : undefined;
+  const pdf = loaded && loaded.bytes === bytes ? loaded.pdf : undefined;
   const page = Math.min(requestedPage, pdf?.numPages ?? requestedPage);
   const width = zoom === 'fit'
     ? Math.min(470, Math.max(120, frameWidth - 32))
     : Math.round(550 * Number(zoom));
-  const raster = rendered?.pdf === pdf && rendered?.page === page && rendered.width === width ? rendered : undefined;
-  const failed = (loaded?.bytes === bytes && !pdf) || (raster && !raster.complete);
+  const raster = rendered && rendered.pdf === pdf && rendered.page === page && rendered.width === width
+    && rendered.diagnostics === diagnostics ? rendered : undefined;
+  const failed = unavailable || (bytes && loaded?.bytes === bytes && !pdf) || (raster && !raster.complete);
 
   useEffect(() => {
     const host = frame.current!;
@@ -56,6 +61,10 @@ export default function PdfPreview({ bytes, fields, diagnostics, language }: Pre
   }, []);
 
   useEffect(() => {
+    if (!bytes) {
+      setLoaded(undefined);
+      return;
+    }
     const task = getDocument({
       data: Uint8Array.from(bytes),
       useSystemFonts: true,
@@ -119,11 +128,11 @@ export default function PdfPreview({ bytes, fields, diagnostics, language }: Pre
           });
         });
       }
-      setRendered({ pdf: document, page, width, complete: true, ratio: viewport.width / viewport.height, positions });
+      setRendered({ pdf: document, page, width, diagnostics, complete: true, ratio: viewport.width / viewport.height, positions });
     }
 
     void draw(pdf, target).catch(() => {
-      if (active) setRendered({ pdf, page, width, complete: false });
+      if (active) setRendered({ pdf, page, width, diagnostics, complete: false });
     });
     return () => {
       active = false;
@@ -168,7 +177,7 @@ export default function PdfPreview({ bytes, fields, diagnostics, language }: Pre
               className="widget-overlay"
               data-testid="flagged-widget"
               data-field={field}
-              title={diagnostics?.filter((issue) => issue.field === field).map((issue) => problem(issue.code)).join(' · ')}
+              title={diagnostics?.filter((issue) => issue.field === field).map((issue) => diagnosticText(issue, minSize, language)).join(' · ')}
               style={style}
             />
           ))}

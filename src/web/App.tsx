@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, type ChangeEvent } from 'react';
+import { Diagnostics } from './Diagnostics';
 import { fillLabel, translator } from './labels';
 import { Queue } from './Queue';
-import { loadFonts } from './resources';
-import { saveDownload, useWorkbench } from './useWorkbench';
+import { loadFonts, saveDownload } from './resources';
+import { useWorkbench } from './useWorkbench';
 
 const PdfPreview = lazy(() => import('./PdfPreview'));
 
@@ -25,19 +26,19 @@ type FilePickerProps = {
   onChoose: (file: File) => void;
 };
 
-function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isLoading, loadingLabel, onChoose }: FilePickerProps) {
-  function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = '';
-    if (file) onChoose(file);
-  }
+function chooseLocalFile(event: ChangeEvent<HTMLInputElement>, onChoose: (file: File) => void) {
+  const file = event.currentTarget.files?.[0];
+  event.currentTarget.value = '';
+  if (file) onChoose(file);
+}
 
+function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isLoading, loadingLabel, onChoose }: FilePickerProps) {
   return (
     <div className="file-picker">
       <label className="field-label" htmlFor={id}>{label}</label>
       <div className="file-box">
         <span className="file-icon" aria-hidden="true" />
-        <bdi className={filename ? 'loaded-filename' : 'quiet'}>{isLoading ? loadingLabel : filename ?? placeholder}</bdi>
+        <bdi dir="auto" className={filename ? 'loaded-filename' : 'quiet'}>{isLoading ? loadingLabel : filename ?? placeholder}</bdi>
         <label className="file-action">
           <span>{pickerLabel}</span>
           <input
@@ -46,7 +47,7 @@ function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isL
             data-testid={id}
             accept={accept}
             aria-label={pickerLabel}
-            onChange={handleFile}
+            onChange={(event) => chooseLocalFile(event, onChoose)}
           />
         </label>
       </div>
@@ -58,11 +59,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
   const { labels, problem } = language;
   const desk = useWorkbench();
-  const ready = desk.results?.filter((result) => result.status === 'pass' && result.pdfBytes).length ?? 0;
-  const flagged = desk.results ? desk.results.length - ready : 0;
-  const warningRows = desk.rows.filter((row) => row.warnings.length > 0).length;
+  const { ready, flagged } = desk;
   const selectedResult = desk.results?.[desk.selected];
-  const bytes = selectedResult?.pdfBytes ?? desk.template?.bytes;
+  const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
+  const { missingFields, missingColumns } = desk.presetWarnings ?? { missingFields: [], missingColumns: [] };
+  const presetMismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
 
   useEffect(() => {
     if (arabic) void loadFonts().catch(() => undefined);
@@ -187,7 +188,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       <span>{labels.minSize}</span>
                       <output htmlFor="min-font-size">{desk.minFontSize} {labels.points}</output>
                     </span>
-                    <input id="min-font-size" aria-label={labels.minSize} type="range" min={6} max={10} step={1} value={desk.minFontSize} onChange={(event) => desk.changeSize(Number(event.currentTarget.value))} />
+                    <input id="min-font-size" aria-label={labels.minSize} type="range" min={6} max={10} step={0.01} value={desk.minFontSize} onChange={(event) => desk.changeSize(Number(event.currentTarget.value))} />
                   </label>
                   <label className="full-control">
                     {labels.font}
@@ -202,6 +203,31 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                     <small>{labels.patternHelp}</small>
                   </label>
+                  <div className="preset-controls">
+                    <h3>{labels.preset}</h3>
+                    <p className="quiet">{labels.presetHelp}</p>
+                    <div className="actions compact">
+                      <label className="button secondary preset-picker">
+                        {labels.presetImport}
+                        <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json"
+                          onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
+                      </label>
+                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet}
+                        onClick={desk.exportPreset}>{labels.presetExport}</button>
+                    </div>
+                    {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
+                    {(missingFields.length > 0 || missingColumns.length > 0) && (
+                      <div className="alert warning preset-warning" role="status" data-testid="preset-warning">
+                        <p>{labels.presetMismatch}</p>
+                        {presetMismatches.map(([label, names]) =>
+                          names.length > 0 && (
+                            <p key={label}>{label}{' · '}
+                              {names.map((name, index) => <span key={name}>{index > 0 ? ', ' : ''}<bdi dir="auto">{name}</bdi></span>)}
+                            </p>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </section>
             </div>
@@ -214,10 +240,16 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 </div>
                 {selectedResult && <span className={`tag tag-${selectedResult.status}`}>{fillLabel(labels.selected, { row: desk.selected + 1 })}</span>}
               </header>
-              {desk.template && bytes
+              {!!selectedResult?.diagnostics.length && (
+                <div className="preview-diagnostics">
+                  <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
+                </div>
+              )}
+              {desk.template
                 ? (
                   <Suspense fallback={<div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>}>
-                    <PdfPreview bytes={bytes} fields={desk.template.info.fields} diagnostics={selectedResult?.diagnostics} language={language} />
+                    <PdfPreview bytes={bytes} fields={desk.template.info.fields} diagnostics={selectedResult?.diagnostics}
+                      minSize={desk.minFontSize} unavailable={desk.previewError} language={language} />
                   </Suspense>
                 )
                 : (
@@ -236,7 +268,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             </section>
           </div>
 
-          <Queue key={desk.roster?.name + ':' + desk.sheetIndex} desk={desk} language={language} ready={ready} flagged={flagged} warningRows={warningRows} />
+          <Queue key={desk.roster?.name + ':' + desk.sheetIndex} desk={desk} language={language} />
 
           <section className="panel exports" aria-labelledby="export-heading">
             <header>
