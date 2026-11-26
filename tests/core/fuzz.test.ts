@@ -9,8 +9,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
 import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow, type AlignOverride } from '../../src/core/pdf';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
+import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { paginateCoverRows } from '../../src/core/pdf/merge-cover';
 import { createShaper, fitText } from '../../src/core/pdf/shaping';
+import { watermarkLayout } from '../../src/core/pdf/watermark';
+import { createBatchProcessor } from '../../src/core/worker/batch';
 import { makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 
@@ -679,4 +682,96 @@ describe('seeded roster changes, explicit ink alignment and portable drafts', ()
         .toThrow('invalid-batch-draft');
     }), 500);
   });
+});
+
+describe('seeded print stamps, template capacities and chunked batches', () => {
+  const asset = (filename: string) => readFile(resolve(process.env.ARABIFORM_ASSET_ROOT ?? '.', filename));
+  const bundledFonts = async () => ({
+    arabic: await asset('public/fonts/NotoNaskhArabic-Regular.ttf'),
+    latin: await asset('public/fonts/NotoSans-Regular.ttf'),
+  });
+
+  it('checks 420 shaped stamp bounds for offset portrait, landscape and all page rotations', async () => {
+    const shaper = createShaper(await bundledFonts(), 'auto');
+    const geometry = fc.record({
+      x: fc.integer({ min: -200, max: 200 }), y: fc.integer({ min: -200, max: 200 }),
+      width: fc.integer({ min: 90, max: 1000 }), height: fc.integer({ min: 90, max: 1000 }),
+      rotation: fc.constantFrom(0, 90, 180, 270), angle: fc.constantFrom(-45 as const, 0 as const, 45 as const),
+    });
+    const samples = fc.constantFrom('DRAFT', 'CONFIDENTIAL', 'مَسْوَدَّة', 'سِرِّي', 'DRAFT / مَسْوَدَّة', '00123 سَلْمَى');
+    await verify(fc.asyncProperty(samples, geometry, async (text, { angle, rotation, ...box }) => {
+      const line = shaper.line(text)!;
+      const { size, origin, baseline, matrix, margin } = watermarkLayout(line, box, rotation, angle);
+      const [a, b, c, d, e, f] = matrix;
+      const actual = Math.atan2(b, a) * 180 / Math.PI;
+      expect(Math.sin((actual - rotation - angle) * Math.PI / 180)).toBeCloseTo(0, 9);
+      expect(Math.cos((actual - rotation - angle) * Math.PI / 180)).toBeCloseTo(1, 9);
+      for (const inkX of line.inkX) {
+        for (const inkY of [line.bounds.minY, line.bounds.maxY]) {
+          const x = origin + size * inkX;
+          const y = baseline + size * inkY;
+          expect(a * x + c * y + e).toBeGreaterThanOrEqual(box.x + margin - 1e-7);
+          expect(a * x + c * y + e).toBeLessThanOrEqual(box.x + box.width - margin + 1e-7);
+          expect(b * x + d * y + f).toBeGreaterThanOrEqual(box.y + margin - 1e-7);
+          expect(b * x + d * y + f).toBeLessThanOrEqual(box.y + box.height - margin + 1e-7);
+        }
+      }
+    }), 420);
+  });
+
+  it('checks 340 per-widget capacity estimates against the same sample ink and Unicode MaxLen', async () => {
+    const fonts = await bundledFonts();
+    const arabic = createShaper(fonts, 'arabic');
+    const latin = createShaper(fonts, 'latin');
+    const geometry = fc.record({
+      innerWidth: fc.integer({ min: 1, max: 250 }), innerHeight: fc.integer({ min: 1, max: 50 }),
+      maxLength: fc.option(fc.integer({ min: 0, max: 80 }), { nil: undefined }),
+      multiline: fc.boolean(), min: fc.constantFrom(6, 8, 10),
+    });
+    await verify(fc.asyncProperty(geometry, async ({ innerWidth, innerHeight, maxLength, multiline, min }) => {
+      const widget = { x: 0, y: 0, width: innerWidth + 3.2, height: innerHeight + 3.2,
+        rotation: 0, defaultFontSize: 12, usable: true, innerWidth, innerHeight, pageIndex: 0 };
+      const report = await inspectTemplateCapacities({
+        pages: [{ width: 300, height: 100, rotation: 0 }],
+        fields: [{ name: 'Name', kind: 'text', readOnly: false, required: false, multiline, maxLength,
+          defaultFontSize: 12, supportsTextCapacity: true, value: '', widgets: [widget] }],
+      }, fonts, min);
+      const row = report.rows[0]!;
+      for (const [count, shaper, sample] of [[row.arabicCharacters!, arabic, 'مُحَمَّد سَالِم '],
+        [row.latinCharacters!, latin, 'Marwan Salem ']] as const) {
+        expect(count).toBeGreaterThanOrEqual(0);
+        expect(count).toBeLessThanOrEqual(maxLength ?? CAPACITY_SAMPLE_LIMIT);
+        if (!count) continue;
+        const text = sample.repeat(Math.ceil(count / sample.length)).slice(0, count);
+        expect(Array.from(text)).toHaveLength(count);
+        expect(fitText(shaper, text, multiline, { innerWidth, innerHeight, padding: 0, min, max: min })).not.toHaveProperty('code');
+      }
+    }), 340);
+  }, 60_000);
+
+  it('checks 180 chunked Worker state sequences with mixed checkbox outcomes around every 25-row boundary', async () => {
+    const document = await PDFDocument.create();
+    const field = document.getForm().createCheckBox('Consent');
+    field.addToPage(document.addPage(), { x: 20, y: 40 });
+    const template = await document.save();
+    const fonts = { arabic: new Uint8Array(), latin: new Uint8Array() };
+    const inputValues = fc.array(fc.constantFrom('true', 'false', 'invalid', 'نعم', 'لا'), { minLength: 1, maxLength: 78 });
+    await verify(fc.asyncProperty(inputValues, fc.nat(), async (values, index) => {
+      const process = createBatchProcessor();
+      const observed: number[] = [];
+      const rows = values.map((Consent) => ({ Consent }));
+      const rowIndex = index % rows.length;
+      const result = await process({ phase: 'preflight', input: { template, rows, options: { fonts } } },
+        ({ completed }) => observed.push(completed));
+      expect(observed).toEqual([0, ...Array.from({ length: Math.ceil(rows.length / 25) }, (_, chunk) =>
+        Math.min(rows.length, (chunk + 1) * 25))]);
+      if (!Array.isArray(result)) throw new Error('Expected metadata');
+      expect(result.map(({ status }) => status)).toEqual(values.map((value) => value === 'invalid' ? 'flagged' : 'pass'));
+      expect(result.every((row) => !Object.hasOwn(row, 'pdfBytes'))).toBe(true);
+      if (values[rowIndex] === 'invalid' || index % 5 === 0) {
+        const bytes = await process({ phase: 'preview', rowIndex }, () => {});
+        expect(bytes instanceof Uint8Array).toBe(values[rowIndex] !== 'invalid');
+      }
+    }), 180);
+  }, 60_000);
 });

@@ -1,7 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
-import { PDFBool, PDFCheckBox, PDFDict, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
+import { PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
 import { explicitQuadding, type AlignOverride } from './alignment';
-import { borderWidth, installAppearance, type AppearanceFont } from './appearances';
+import { installAppearance, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
@@ -13,7 +13,7 @@ export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './e
 export { matchChoice } from './choice-match';
 export type { FieldChoice } from './choice-match';
 export { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } from './custom-font';
-export type { AuditRow, PdfExportRow } from './exports';
+export type { AuditRow, PdfExportRow, PrintWatermarkOptions } from './exports';
 export type { MergeCoverOptions } from './merge-cover';
 export { PdfIntakeError } from './template';
 export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } from './template';
@@ -53,14 +53,18 @@ export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<
   return { fields: fields.map(({ meta }) => meta), pages };
 }
 
-export async function preflightRow(
-  bytes: Uint8Array | ArrayBuffer,
-  valuesByField: Record<string, string>,
-  { fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {} }: PreflightOptions,
-): Promise<RowPreflightResult> {
+type OpenTemplate = Awaited<ReturnType<typeof openTemplate>>;
+type CheckedRow = Omit<RowPreflightResult, 'pdfBytes'>;
+
+function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {} }: PreflightOptions) {
   if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
-  const { doc, rawForm, fields } = await openTemplate(bytes);
-  const custom = customFont && loadCustomFont(customFont);
+  return { fonts, minFontSize, preferredFont, custom: customFont && loadCustomFont(customFont), alignOverrides };
+}
+
+function planRow(
+  { fields }: OpenTemplate, valuesByField: Record<string, string>,
+  { fonts, minFontSize, preferredFont, custom, alignOverrides }: ReturnType<typeof layoutOptions>,
+) {
   let shaper: ReturnType<typeof createShaper> | undefined;
   const knownFields = new Set(fields.map(({ meta }) => meta.name));
   const diagnostics: FieldDiagnostic[] = Object.keys(valuesByField).filter((field) => !knownFields.has(field))
@@ -149,7 +153,7 @@ export async function preflightRow(
         || choices.some((choice, ordinal) => ordinal !== index && choice.value === selected.value)) choiceIndex = index;
     } else if (field instanceof PDFTextField) {
       const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
-      const unsupportedMode = field.isCombed() || field.isPassword() || field.isFileSelector() || field.isRichFormatted();
+      const unsupportedMode = !meta.supportsTextCapacity;
       if (excess > 0) flag({ code: 'exceeds-maxlen', maxLengthExcess: excess });
       if (unsupportedMode) flag({ code: 'unsupported-field-mode' });
       if (excess > 0 || unsupportedMode) continue;
@@ -165,16 +169,14 @@ export async function preflightRow(
     const quadding = alignOverride && alignOverride !== 'auto' ? explicitQuadding[alignOverride] : undefined;
     const placed: { widget: WidgetTarget; placement: Placement }[] = [];
     for (const [widgetIndex, widget] of widgets.entries()) {
-      const { width, height, rotation, defaultFontSize } = widget.meta;
-      const padding = 1.6 + borderWidth(widget);
-      const quarterTurn = rotation === 90 || rotation === 270;
+      const { rotation, defaultFontSize, innerWidth, innerHeight, usable } = widget.meta;
+      const { padding } = widget;
       let placement;
       try {
-        placement = !widget.usable || !Number.isFinite(padding) ? { code: 'unsupported-widget' as const }
+        placement = !usable || !Number.isFinite(padding) ? { code: 'unsupported-widget' as const }
           : rotation % 90 !== 0 ? { code: 'widget-rotated-unsupported' as const }
           : fitText(shaper ??= createShaper(fonts, preferredFont, custom?.face), value, meta.multiline, {
-            innerWidth: (quarterTurn ? height : width) - 2 * padding,
-            innerHeight: (quarterTurn ? width : height) - 2 * padding,
+            innerWidth: innerWidth!, innerHeight: innerHeight!,
             padding, alignment, alignOverride, min: minFontSize, max: defaultFontSize,
           });
       } catch (cause) {
@@ -199,8 +201,41 @@ export async function preflightRow(
 
   const fontSizes = Object.fromEntries(sizes);
   const pageNumbers = [...new Set(diagnostics.flatMap((issue) => issue.pageNumbers))].sort((first, second) => first - second);
-  if (diagnostics.length) return { status: 'flagged', diagnostics, pageNumbers, fontSizes };
-  if (!plans.length && !buttonPlans.length) return { status: 'pass', diagnostics, pageNumbers, fontSizes, pdfBytes: new Uint8Array(bytes) };
+  const result: CheckedRow = { status: diagnostics.length ? 'flagged' : 'pass', diagnostics, pageNumbers, fontSizes };
+  return { result, plans, buttonPlans, fontKeys, customGlyphIds };
+}
+
+export async function prepareRowPreflight(bytes: Uint8Array | ArrayBuffer, options: PreflightOptions) {
+  const template = await openTemplate(bytes);
+  const layout = layoutOptions(options);
+  return async (valuesByField: Record<string, string>): Promise<CheckedRow> => {
+    const { result, customGlyphIds } = planRow(template, valuesByField, layout);
+    if (result.status === 'pass' && customGlyphIds.size) {
+      // The custom subset encoder reads parts of untrusted fonts lazily, after layout.
+      // Exercise that exact encoder with a scratch document and no row PDF serialization.
+      try {
+        const scratch = await PDFDocument.create();
+        await embedCustomFont(scratch, layout.custom!, 'ArabiFormCustomPreflight', customGlyphIds);
+      } catch (cause) {
+        throw new Error('invalid-custom-font', { cause });
+      }
+    }
+    return result;
+  };
+}
+
+export async function preflightRow(
+  bytes: Uint8Array | ArrayBuffer, valuesByField: Record<string, string>, options: PreflightOptions,
+): Promise<RowPreflightResult> {
+  const template = await openTemplate(bytes);
+  const layout = layoutOptions(options);
+  const { result, plans, buttonPlans, fontKeys, customGlyphIds } = planRow(template, valuesByField, layout);
+  if (result.status === 'flagged') return result;
+  if (!plans.length && !buttonPlans.length) {
+    return { ...result, pdfBytes: bytes instanceof Uint8Array ? Uint8Array.from(bytes) : new Uint8Array(bytes.slice(0)) };
+  }
+  const { doc, rawForm } = template;
+  const { custom, fonts } = layout;
 
   doc.registerFontkit(fontkit);
   const embedded: Partial<Record<FontKey, AppearanceFont>> = {};
@@ -250,5 +285,5 @@ export async function preflightRow(
     const mainFont = mainGlyph && embedded[mainGlyph.font];
     if (first && mainFont) field.acroField.setDefaultAppearance(`/${mainFont.name} ${first.placement.size} Tf 0 g`);
   }
-  return { status: 'pass', diagnostics, pageNumbers, fontSizes, pdfBytes: await doc.save({ updateFieldAppearances: false }) };
+  return { ...result, pdfBytes: await doc.save({ updateFieldAppearances: false }) };
 }

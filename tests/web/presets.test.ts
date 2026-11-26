@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMappingPreset, presetMismatches } from '../../src/web/presets';
+import { makeDraftSettings, makeMappingPreset, parseMappingPreset, presetMismatches } from '../../src/web/presets';
 
 const preset = {
   version: 1,
@@ -61,6 +61,26 @@ describe('local mapping preset boundary', () => {
       expect(() => parseMappingPreset(JSON.stringify({ ...v4, alignOverrides }))).toThrow('invalid-mapping-preset');
     }
     expect(() => parseMappingPreset(JSON.stringify({ ...v4, version: 3 }))).toThrow('invalid-mapping-preset');
+  });
+
+  it('stores an active watermark in v5 and preserves legacy versions when omitted', () => {
+    const args = [preset.mapping, preset.filenamePattern, preset.minFontSize, 'arabic'] as const;
+    const watermark = { kind: 'custom', text: 'DRAFT / \u0645\u0633\u0648\u062f\u0629', opacity: 0.30, angle: -45 } as const;
+    expect(makeMappingPreset(...args)).toEqual(preset);
+    expect(makeMappingPreset(...args, true).version).toBe(2);
+    expect(makeMappingPreset(...args, false, true).version).toBe(3);
+    expect(makeMappingPreset(...args, true, false, { Name: 'rtl' }, { kind: 'none' }).version).toBe(4);
+    expect(makeDraftSettings(...args).version).toBe(4);
+    const v5 = makeMappingPreset(...args, true, true, { Name: 'rtl' }, watermark);
+    expect(v5).toEqual(makeDraftSettings(...args, true, true, { Name: 'rtl' }, watermark));
+    expect(parseMappingPreset(JSON.stringify(v5))).toEqual({ ...v5, version: 5, watermark });
+    for (const invalid of [undefined, {}, { ...watermark, opacity: 0.07 }, { ...watermark, opacity: '0.14' },
+      { ...watermark, angle: 22 }, { ...watermark, text: 'A'.repeat(33) }, { ...watermark, text: 'A\nB' },
+      { ...watermark, text: 'A\u202eB' }, { ...watermark, text: ' ' }, { ...watermark, text: '\uD800' },
+      { ...watermark, bytes: [1] }, { ...watermark, kind: 'draft' }, { kind: 'none', opacity: 0.14 },
+    ]) {
+      expect(() => parseMappingPreset(JSON.stringify({ ...v5, watermark: invalid }))).toThrow('invalid-mapping-preset');
+    }
   });
 
   it('reports current missing fields, mapped columns and filename tokens once', () => {

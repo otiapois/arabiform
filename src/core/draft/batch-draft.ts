@@ -1,5 +1,5 @@
 import type { HygieneOperation, HygieneSummary } from '../roster/hygiene';
-import { isRecord, validateMappingPreset, type MappingPresetV4 } from './mapping-preset';
+import { isRecord, validateMappingPreset, type MappingPresetV4, type MappingPresetV5 } from './mapping-preset';
 
 export type BatchDraftSource = {
   templateSha256: string;
@@ -16,7 +16,7 @@ export type BatchDraft = {
   source: BatchDraftSource;
   edits: Record<number, Record<string, string>>;
   hygiene: HygieneSummary[];
-  settings: MappingPresetV4;
+  settings: MappingPresetV4 | MappingPresetV5;
   customFontSha256: string | null;
 };
 
@@ -76,7 +76,7 @@ function validateBatchDraft(data: unknown): BatchDraft {
   const fieldNames = new Set(source.fields);
   const columns = new Set(source.columns);
   const settings = validateMappingPreset(data.settings);
-  if (settings?.version !== 4 || Object.entries(settings.mapping).some(([field, column]) =>
+  if ((settings?.version !== 4 && settings?.version !== 5) || Object.entries(settings.mapping).some(([field, column]) =>
     !fieldNames.has(field) || column !== '' && !columns.has(column))) throw invalid();
 
   const edits: [number, Record<string, string>][] = [];

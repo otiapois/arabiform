@@ -1,6 +1,7 @@
 import fontkit, { type Font, type GlyphRun } from '@pdf-lib/fontkit';
 import createBidi from 'bidi-js';
 import { explicitQuadding, type AlignOverride } from './alignment';
+export { textInputDiagnostic } from './text-input';
 
 type BundledFontKey = 'arabic' | 'latin';
 export type FontKey = BundledFontKey | 'custom';
@@ -16,7 +17,6 @@ export interface Placement { size: number; lines: PlacedLine[] }
 const faceCache = new WeakMap<FontBytes, Record<BundledFontKey, Font>>();
 const bidi = createBidi();
 const arabic = /\p{Script_Extensions=Arabic}/u;
-const arabicLetter = /(?=\p{L})\p{Script=Arabic}/u;
 const joinControl = /[\u200c\u200d]/u;
 const paragraphBreak = /\r\n|[\r\n\u2028\u2029]/;
 const isolateMarks = /[\u2066\u2067\u2069]/u;
@@ -26,20 +26,6 @@ const arabicFilenameRun = /\p{Script=Arabic}[\p{Script=Arabic}\p{M}\u200c\u200d]
 export const MIN_FONT_SIZE = 6;
 export const MAX_FONT_SIZE = 10;
 export const DEFAULT_MIN_FONT_SIZE = 8;
-
-export function textInputDiagnostic(value: string): 'unsupported-glyph' | 'unsupported-bidi' | undefined {
-  const characters = Array.from(value);
-  for (const [index, character] of characters.entries()) {
-    if (joinControl.test(character)) {
-      let before = index - 1;
-      let after = index + 1;
-      while (/\p{M}/u.test(characters[before] ?? '')) before--;
-      while (/\p{M}/u.test(characters[after] ?? '')) after++;
-      if (!arabicLetter.test(characters[before] ?? '') || !arabicLetter.test(characters[after] ?? '')) return 'unsupported-bidi';
-    } else if (/[\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(character)) return 'unsupported-bidi';
-    else if (/[\p{Cc}\p{Cs}]/u.test(character) && !/[\r\n\t]/u.test(character)) return 'unsupported-glyph';
-  }
-}
 
 interface DirectionalRun { chunks: string[]; font: FontKey; level: number }
 
