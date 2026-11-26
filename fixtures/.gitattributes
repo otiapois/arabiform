@@ -1,0 +1,3 @@
+golden/*.pdf binary
+golden/*.xlsx binary
+golden/*.csv -text whitespace=cr-at-eol
