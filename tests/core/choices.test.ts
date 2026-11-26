@@ -82,6 +82,23 @@ it('handles duplicate exports only by an unambiguous label and sets its /I index
   expect(written.get(key('I'))?.toString()).toBe('[ 1 ]');
 });
 
+it('keeps Unicode exports literal and falls back to raw radio on names without /Opt', async () => {
+  const doc = await makeTemplate();
+  const form = doc.getForm();
+  const sourceExport = PDFHexString.fromText('ر-١٢٣');
+  const dropdown = form.getDropdown('Clinic');
+  dropdown.acroField.dict.lookup(key('Opt'), PDFArray).lookup(0, PDFArray).set(0, sourceExport);
+  form.getRadioGroup('Contact').acroField.dict.delete(key('Opt'));
+  const source = await save(doc);
+  const info = await inspectTemplate(source);
+  expect(info.fields[1]?.choices).toEqual([{ value: '0', label: '0' }, { value: '1', label: '1' }]);
+  const result = await preflightRow(source, { Clinic: 'ر-١٢٣', Contact: '0' }, { fonts: await fonts() });
+  expect(result.status).toBe('pass');
+  const newForm = (await PDFDocument.load(result.pdfBytes!)).getForm();
+  expect(newForm.getDropdown('Clinic').acroField.dict.get(key('V'))?.toString()).toBe(sourceExport.toString());
+  expect(newForm.getRadioGroup('Contact').acroField.dict.lookup(key('V'), PDFName)).toBe(key('0'));
+});
+
 it('reports all field-only pages and only specific bad widget pages, with no partial PDF', async () => {
   const doc = await makeTemplate();
   const config = { fonts: await fonts() };
@@ -99,6 +116,29 @@ it('reports all field-only pages and only specific bad widget pages, with no par
   expect(blocked).toMatchObject({ status: 'flagged', pageNumbers: [2], diagnostics: [
     { field: 'Contact', code: 'unsupported-radio-appearance', widgetIndex: 1, pageNumbers: [2] },
   ] });
+});
+
+it('preserves structurally unsupported controls when unmapped and refuses to choose between duplicate radio states', async () => {
+  const doc = await makeTemplate();
+  const form = doc.getForm();
+  const radio = form.getRadioGroup('Contact');
+  radio.clear();
+  const normal = radio.acroField.getWidgets()[1]!.dict.lookup(key('AP'), PDFDict).lookup(key('N'), PDFDict);
+  normal.set(key('0'), normal.get(key('1'))!);
+  normal.delete(key('1'));
+  const bytes = await save(doc);
+  const config = { fonts: await fonts() };
+  const result = await preflightRow(bytes, { Clinic: 'JED', Contact: 'CALL' }, config);
+  expect(result.diagnostics).toEqual([{ field: 'Contact', code: 'unsupported-radio-appearance', pageNumbers: [1, 2] }]);
+  expect(result.pdfBytes).toBeUndefined();
+  const skipped = await preflightRow(bytes, { Clinic: 'JED' }, config);
+  expect(skipped.status).toBe('pass');
+  const preserved = (await PDFDocument.load(skipped.pdfBytes!)).getForm().getRadioGroup('Contact').acroField;
+  expect(preserved.dict.get(key('V'))?.toString()).toBe('/Off');
+  for (const [ordinal, widget] of preserved.getWidgets().entries()) {
+    const rawWidget = radio.acroField.getWidgets()[ordinal]!.dict;
+    for (const attribute of ['V', 'AS', 'AP']) expect(widget.dict.get(key(attribute))?.toString()).toBe(rawWidget.get(key(attribute))?.toString());
+  }
 });
 
 it('flattens members individually and flags a visible legacy widget with no reusable appearance', async () => {

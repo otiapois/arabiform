@@ -4,9 +4,9 @@ import fontkit, { type Font } from '@pdf-lib/fontkit';
 import fc, { type IAsyncProperty } from 'fast-check';
 import { unzipSync } from 'fflate';
 import Papa from 'papaparse';
-import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream } from 'pdf-lib';
+import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
-import { createAudit, createZip, inspectCustomFont, preflightRow } from '../../src/core/pdf';
+import { createAudit, createFlattenedZip, createZip, inspectCustomFont, matchChoice, preflightRow } from '../../src/core/pdf';
 import { makeFilenames, readRoster } from '../../src/core/roster';
 
 const seed = 0x4a216d32;
@@ -227,4 +227,140 @@ describe('seeded adversarial files and PDF geometry', () => {
     }), 420);
     console.info(`fast-check seed ${seed}: 1400 M3 font and checkbox cases, 2560 total cases, 0 discarded.`);
   }, 60_000);
+});
+
+describe('seeded choice fields and individual print ZIPs', () => {
+  const space = fc.constantFrom('', ' ', '\t', '\u00a0', '\u2003');
+  const atom = fc.constantFrom('a', 'A', 'été', 'e\u0301te\u0301', 'مَن', 'من', '００１', '001', 'نَ', 'ن', 'Riyadh', '🙂', '');
+
+  it('checks 1000 option tables for collisions across literal exports and labels', async () => {
+    const token = fc.tuple(space, atom, space).map((parts) => parts.join(''));
+    await verify(fc.asyncProperty(fc.array(fc.record({ value: token, label: token }), { maxLength: 15 }), token, async (choices, input) => {
+      const candidates = choices.flatMap(({ value, label }, i) => [{ text: value, index: i }, { text: label, index: i }]);
+      const exact = new Set(candidates.filter(({ text }) => text === input).map(({ index }) => index));
+      const trimmed = new Set(candidates.filter(({ text }) => text.trim() === input.trim()).map(({ index }) => index));
+      const matches = exact.size ? exact : trimmed;
+      const expected = matches.size === 1 ? matches.values().next().value : undefined;
+      expect(matchChoice(choices, input)).toBe(expected);
+    }), 1000);
+  });
+
+  it('runs 300 serialized dropdown and radio fills with strict choices, subsetting, and malformed variants', async () => {
+    const assets = process.env.ARABIFORM_ASSET_ROOT ?? '.';
+    const fonts = {
+      arabic: await readFile(resolve(assets, 'public/fonts/NotoNaskhArabic-Regular.ttf')),
+      latin: await readFile(resolve(assets, 'public/fonts/NotoSans-Regular.ttf')),
+    };
+    const source = await PDFDocument.create();
+    const [first, second] = [source.addPage(), source.addPage()];
+    const form = source.getForm();
+    const contact = form.createRadioGroup('Contact');
+    contact.addOptionToPage('CALL', first, { x: 30, y: 50 });
+    contact.addOptionToPage('بريد', second, { x: 30, y: 50 });
+    contact.select('CALL');
+    const clinic = form.createDropdown('Clinic');
+    clinic.addOptions(['Default']);
+    clinic.addToPage(second, { x: 40, y: 90, width: 220, height: 26 });
+    form.updateFieldAppearances();
+    const display = 'عِيَادَةُ الرِّيَاضِ';
+    clinic.acroField.dict.set(key('Opt'), source.context.obj([[PDFString.of('RIY'), PDFHexString.fromText(display)], PDFString.of('JED')]));
+    const input = await source.save({ updateFieldAppearances: false });
+    const broken = await PDFDocument.load(input);
+    const brokenRadio = broken.getForm().getRadioGroup('Contact');
+    brokenRadio.select('بريد');
+    brokenRadio.acroField.getWidgets()[1]!.dict.delete(key('AS'));
+    broken.getForm().getDropdown('Clinic').enableMultiselect();
+    const unsupported = await broken.save({ updateFieldAppearances: false });
+    let passed = 0;
+    let flagged = 0;
+    const cases = fc.constantFrom(
+      { field: 'Clinic', token: display, expected: 'RIY' },
+      { field: 'Clinic', token: 'RIY', expected: 'RIY' },
+      { field: 'Clinic', token: 'JED', expected: 'JED' },
+      { field: 'Clinic', token: 'riy', expected: undefined },
+      { field: 'Contact', token: 'CALL', expected: '/0' },
+      { field: 'Contact', token: 'بريد', expected: '/1' },
+      { field: 'Contact', token: 'بَرِيد', expected: undefined },
+    );
+    await verify(fc.asyncProperty(cases, space, space, fc.boolean(), fc.integer({ min: 0, max: 6 }), async ({ field, token, expected }, left, right, custom, variant) => {
+      // Widgets with absent /AS can be legally off. Mark the second on before
+      // dropping its /AS to exercise rejection of an inconsistent selection.
+      const malformed = variant === 0;
+      const result = await preflightRow(malformed ? unsupported : input, { [field]: left + token + right }, {
+        fonts, customFont: custom && field === 'Clinic' && expected === 'RIY' ? fonts.arabic : undefined,
+      });
+      if (malformed || expected === undefined) {
+        flagged++;
+        expect(result.pdfBytes).toBeUndefined();
+        expect(result.diagnostics[0]?.code).toBe(!malformed ? 'invalid-choice'
+          : field === 'Clinic' ? 'unsupported-field-mode' : 'unsupported-radio-appearance');
+        expect(result.pageNumbers).toEqual(field === 'Clinic' || malformed ? [2] : [1, 2]);
+        return;
+      }
+      passed++;
+      expect(result.status).toBe('pass');
+      const saved = await PDFDocument.load(result.pdfBytes!);
+      const mapped = saved.getForm().getField(field).acroField;
+      const value = mapped.dict.lookup(key('V'));
+      if (field === 'Contact') {
+        expect(value?.toString()).toBe(expected);
+        expect(mapped.getWidgets().map((widget) => widget.getAppearanceState()?.toString()))
+          .toEqual(expected === '/0' ? ['/0', '/Off'] : ['/Off', '/1']);
+      } else {
+        expect((value as PDFString).decodeText()).toBe(expected);
+        const ap = saved.context.lookup(mapped.getWidgets()[0]!.getNormalAppearance());
+        expect(ap).toBeInstanceOf(PDFRawStream);
+        const stream = decoder.decode(decodePDFRawStream(ap as PDFRawStream).decode());
+        expect(stream).toContain(PDFHexString.fromText(expected === 'RIY' ? display : 'JED').toString());
+        expect(stream).toContain(custom && expected === 'RIY' ? '/ArabiFormCustom' : '/ArabiForm');
+      }
+    }), 300);
+    expect(passed).toBeGreaterThan(100);
+    expect(flagged).toBeGreaterThan(30);
+    console.info(`fast-check M4: 300 real choice rows (${passed} passed, ${flagged} flagged).`);
+  }, 120_000);
+
+  it('checks 240 print ZIPs against state corruption, legacy appearances, and unsafe or colliding names', async () => {
+    const source = await PDFDocument.create();
+    const checkbox = source.getForm().createCheckBox('Approval');
+    checkbox.addToPage(source.addPage(), { x: 30, y: 80 });
+    checkbox.check();
+    const editable = await source.save();
+    const widget = checkbox.acroField.getWidgets()[0]!.dict;
+    widget.delete(key('AS'));
+    const noState = await source.save({ updateFieldAppearances: false });
+    widget.delete(key('AP'));
+    const noAppearance = await source.save({ updateFieldAppearances: false });
+    const variants = fc.constantFrom('clean', 'clean', 'no-state', 'no-appearance', 'unsafe', 'collision');
+    await verify(fc.asyncProperty(variants, fc.integer({ min: 0, max: 9999 }), fc.boolean(), async (variant, id, arabic) => {
+      const first = { filename: `00${id}-${arabic ? 'عقد' : 'Form'}.pdf`, pdfBytes: editable };
+      const second = {
+        filename: variant === 'unsafe' ? '../bad.pdf' : variant === 'collision' ? first.filename.toUpperCase() : 'second.pdf',
+        pdfBytes: variant === 'no-state' ? noState : variant === 'no-appearance' ? noAppearance : editable,
+      };
+      const rows = [first, second];
+      if (variant === 'unsafe' || variant === 'collision') {
+        await expect(createFlattenedZip(rows)).rejects.toThrow('invalid-export-filename');
+        return;
+      }
+      expect(unzipSync(createZip(rows))[second.filename]).toEqual(second.pdfBytes);
+      const reported: number[] = [];
+      const flattened = createFlattenedZip(rows, (completed) => reported.push(completed));
+      if (variant !== 'clean') {
+        await expect(flattened).rejects.toThrow('unflattenable-widget');
+        expect(reported).toEqual([0, 1]);
+        return;
+      }
+      const members = unzipSync(await flattened);
+      expect(Object.keys(members)).toEqual(rows.map(({ filename }) => filename));
+      expect(reported).toEqual([0, 1, 2]);
+      for (const row of rows) {
+        const doc = await PDFDocument.load(members[row.filename]!);
+        expect(doc.catalog.has(key('AcroForm'))).toBe(false);
+        expect(doc.getPage(0).node.Annots()?.size() ?? 0).toBe(0);
+        expect(doc.getPage(0).node.Resources()?.lookup(key('XObject'))).toBeInstanceOf(PDFDict);
+      }
+    }), 240);
+    console.info(`fast-check seed ${seed}: 1540 M4 cases, 4100 total cases, 0 discarded.`);
+  }, 120_000);
 });

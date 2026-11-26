@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { decodePDFRawStream, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFName, PDFRawStream, PDFTextField, type PDFObject } from 'pdf-lib';
+import { decodePDFRawStream, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
-import { createAudit, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
+import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import { readRoster } from '../src/core/roster';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
@@ -15,7 +15,13 @@ const settings = { fonts: {
   arabic: await readFile(asset('public/fonts/NotoNaskhArabic-Regular.ttf')),
   latin: await readFile(asset('public/fonts/NotoSans-Regular.ttf')),
 }, minFontSize: 8 };
-const cases: { before: string; after: string; values: Record<string, string>; label: string; checkboxes?: Record<string, string>; customFont?: boolean }[] = [];
+interface ExpectedChoices {
+  checkboxes?: Record<string, string>;
+  dropdowns?: Record<string, { label: string; index?: number }>;
+  radios?: Record<string, { state: string; widgets: string[] }>;
+}
+
+const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
@@ -26,7 +32,7 @@ function appearanceSnapshot(object: PDFObject | undefined): unknown {
   return object?.toString();
 }
 
-async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Record<string, string>, checkboxes: Record<string, string> = {}) {
+async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Record<string, string>, { checkboxes, dropdowns, radios }: ExpectedChoices) {
   const original = await PDFDocument.load(before);
   const newDoc = await PDFDocument.load(after);
   const originalFields = original.getForm().getFields();
@@ -36,15 +42,30 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
     const originalField = originalFields[index]!;
     const name = field.getName();
     const mapped = Object.hasOwn(expected, name);
-    const checkbox = checkboxes[name];
+    const checkbox = checkboxes?.[name];
+    const radio = radios?.[name];
+    const dropdown = dropdowns?.[name];
+    const value = field.acroField.dict.lookup(key('V'));
     if (mapped && checkbox !== undefined) {
       assert(field instanceof PDFCheckBox, name);
       assert.equal(field.acroField.dict.get(key('V'))?.toString(), `/${checkbox}`, `canonical checkbox /V of ${name}`);
+    } else if (mapped && radio) {
+      assert(field instanceof PDFRadioGroup, name);
+      assert.equal(value, key(radio.state), `canonical radio /V of ${name}`);
+      assert.equal(field.acroField.dict.get(key('Opt'))?.toString(), originalField.acroField.dict.get(key('Opt'))?.toString(), `raw /Opt of ${name}`);
+    } else if (mapped && dropdown) {
+      assert(field instanceof PDFDropdown && (value instanceof PDFString || value instanceof PDFHexString), name);
+      assert.equal(value.decodeText(), expected[name], `canonical dropdown export /V of ${name}`);
+      assert.equal(field.acroField.dict.get(key('Opt'))?.toString(), originalField.acroField.dict.get(key('Opt'))?.toString(), `raw /Opt of ${name}`);
+      const index = dropdown.index === undefined ? undefined : `[ ${dropdown.index} ]`;
+      assert.equal(field.acroField.dict.get(key('I'))?.toString(), index, `dropdown /I of ${name}`);
     } else if (mapped) {
       assert(field instanceof PDFTextField, name);
       assert.equal(field.getText(), expected[name], `canonical /V of ${name}`);
     } else {
-      assert.equal(field.acroField.dict.get(key('V'))?.toString(), originalField.acroField.dict.get(key('V'))?.toString(), `unmapped /V of ${name}`);
+      for (const attribute of ['V', 'AS', 'I', 'Opt']) {
+        assert.equal(field.acroField.dict.get(key(attribute))?.toString(), originalField.acroField.dict.get(key(attribute))?.toString(), `unmapped /${attribute} of ${name}`);
+      }
     }
     const originalWidgets = originalField.acroField.getWidgets();
     const widgets = field.acroField.getWidgets();
@@ -52,11 +73,12 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
     for (const [widgetIndex, widget] of widgets.entries()) {
       const appearance = widget.dict.lookupMaybe(key('AP'), PDFDict);
       const normal = appearance?.lookup(key('N'));
-      if (!mapped || checkbox !== undefined) {
+      if (!mapped || checkbox !== undefined || radio) {
         const old = originalWidgets[widgetIndex]!.dict;
         for (const attribute of ['V', 'AS']) {
           const previous = old.get(key(attribute))?.toString();
-          const wanted = checkbox !== undefined && (attribute === 'AS' || previous !== undefined) ? `/${checkbox}` : previous;
+          const wanted = radio && attribute === 'AS' ? `/${radio.widgets[widgetIndex]}`
+            : (radio || checkbox !== undefined) && (attribute === 'AS' || previous !== undefined) ? `/${radio?.state ?? checkbox}` : previous;
           assert.equal(widget.dict.get(key(attribute))?.toString(), wanted, `widget ${widgetIndex} /${attribute} of ${name}`);
         }
         assert.equal(widget.dict.get(key('AP'))?.toString(), old.get(key('AP'))?.toString(), `raw /AP of ${name}`);
@@ -67,7 +89,9 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
       const stream = new TextDecoder().decode(decodePDFRawStream(normal).decode());
       assert.match(stream, /\/Tx BMC/);
       const fontRefs = normal.dict.lookup(key('Resources'), PDFDict).lookup(key('Font'), PDFDict);
-      if (!(expected[name] ?? '').trim()) continue;
+      const display = dropdown?.label ?? expected[name]!;
+      if (!display.trim()) continue;
+      if (dropdown) assert(stream.includes(PDFHexString.fromText(display).toString()), `${name} uses the display label in its AP`);
       assert.match(stream, / Tj\b/);
       assert(fontRefs.keys().length > 0, `${name} needs an embedded font`);
       for (const fontName of fontRefs.keys()) {
@@ -81,18 +105,18 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
 }
 
 async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
-  { checkboxes, customFont }: { checkboxes?: Record<string, string>; customFont?: Uint8Array } = {}) {
+  { customFont, expected = values, ...choices }: ExpectedChoices & { customFont?: Uint8Array; expected?: Record<string, string> } = {}) {
   const result = await preflightRow(source, values, { ...settings, minFontSize, customFont });
   assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
   assert(result.pdfBytes);
-  await compareRawPdf(source, result.pdfBytes, values, checkboxes);
+  await compareRawPdf(source, result.pdfBytes, expected, choices);
   const before = `source-${createHash('sha256').update(source).digest('hex')}.pdf`;
   if (!originalSnapshots.has(before)) {
     await writeFile(resolve(root, before), source);
     originalSnapshots.add(before);
   }
   await writeFile(resolve(root, filename), result.pdfBytes);
-  cases.push({ before, after: filename, values, label, checkboxes, ...(customFont && { customFont: true }) });
+  cases.push({ before, after: filename, values: expected, label, ...choices, ...(customFont && { customFont: true }) });
   return { filename, pdfBytes: result.pdfBytes, fontSizes: result.fontSizes };
 }
 
@@ -119,7 +143,7 @@ for (const [index, { values }] of csv.rows.entries()) {
   if (index === 4) {
     const flagged = await preflightRow(source, values, settings);
     assert.equal(flagged.status, 'flagged');
-    assert.deepEqual(flagged.diagnostics, [{ field: 'Name', code: 'too-narrow', widgetIndex: 0 }]);
+    assert.deepEqual(flagged.diagnostics, [{ field: 'Name', code: 'too-narrow', widgetIndex: 0, pageNumbers: [1] }]);
     assert.equal(flagged.pdfBytes, undefined);
     report.push({ rowNumber: 5, filename, status: flagged.status, diagnostics: flagged.diagnostics, fontSizes: flagged.fontSizes });
   }
@@ -152,8 +176,8 @@ await passingCase(edge, { Repeated: 'رُقَيَّة نَاجِي', Multiline: 
 const rejected = await preflightRow(edge, { AtomicRepeat: 'رُقَيَّة نَاجِي', 'Too Narrow': 'ليلى حسن', 'Too Low': 'مُحَمَّد', 'Exceeds MaxLen': '00123' }, settings);
 assert.equal(rejected.status, 'flagged');
 assert.deepEqual(rejected.diagnostics, [
-  { field: 'AtomicRepeat', code: 'too-narrow', widgetIndex: 1 }, { field: 'Too Narrow', code: 'too-narrow', widgetIndex: 0 },
-  { field: 'Too Low', code: 'too-low', widgetIndex: 0 }, { field: 'Exceeds MaxLen', code: 'exceeds-maxlen', maxLengthExcess: 1 },
+  { field: 'AtomicRepeat', code: 'too-narrow', widgetIndex: 1, pageNumbers: [4] }, { field: 'Too Narrow', code: 'too-narrow', widgetIndex: 0, pageNumbers: [1] },
+  { field: 'Too Low', code: 'too-low', widgetIndex: 0, pageNumbers: [1] }, { field: 'Exceeds MaxLen', code: 'exceeds-maxlen', maxLengthExcess: 1, pageNumbers: [1] },
 ]);
 assert.equal(rejected.pdfBytes, undefined);
 for (const [file, code] of [['xfa.pdf', 'xfa-unsupported'], ['encrypted.pdf', 'encrypted-pdf'], ['signed.pdf', 'signed-pdf-warning'], ['flat.pdf', 'flat-scanned-no-fields']]) {
@@ -181,7 +205,7 @@ for (const { name, label, values } of m2Cases) {
   if (name === 'landscape-badge.pdf') {
     const flagged = await preflightRow(bytes, values, settings);
     assert.equal(flagged.status, 'flagged');
-    assert.deepEqual(flagged.diagnostics, [{ field: 'Name', code: 'too-narrow', widgetIndex: 0, requiredFontSizePt: 7.58 }]);
+    assert.deepEqual(flagged.diagnostics, [{ field: 'Name', code: 'too-narrow', widgetIndex: 0, requiredFontSizePt: 7.58, pageNumbers: [1] }]);
     assert.equal(flagged.pdfBytes, undefined);
     floor = flagged.diagnostics[0]!.requiredFontSizePt!;
     result.detail = `Name flags at 8 pt and passes at the indicated ${floor} pt without changing the roster value.`;
@@ -191,8 +215,8 @@ for (const { name, label, values } of m2Cases) {
     assert.equal(unsupported.status, 'flagged');
     assert.equal(unsupported.pdfBytes, undefined);
     assert.deepEqual(unsupported.diagnostics, [
-      { field: 'Printed Code', code: 'exceeds-maxlen', maxLengthExcess: 2 },
-      { field: 'Comb Code', code: 'exceeds-maxlen', maxLengthExcess: 1 }, { field: 'Comb Code', code: 'unsupported-field-mode' },
+      { field: 'Printed Code', code: 'exceeds-maxlen', maxLengthExcess: 2, pageNumbers: [1] },
+      { field: 'Comb Code', code: 'exceeds-maxlen', maxLengthExcess: 1, pageNumbers: [1] }, { field: 'Comb Code', code: 'unsupported-field-mode', pageNumbers: [1] },
     ]);
     result.detail = 'Overlength code and comb fill refused without writing an output PDF.';
   }
@@ -214,13 +238,13 @@ mixedRows.push(await passingCase(consent, consentOn, 'consent-on.pdf', 'M3 clini
 const checkedSource = Buffer.from(mixedRows[0]!.pdfBytes);
 mixedRows.push(await passingCase(checkedSource, consentOff, 'consent-off.pdf', 'M3 clinic consent: clear both widgets', 8, { checkboxes: { Consent: 'Off' } }));
 const invalidConsent = await preflightRow(consent, consentInvalid, settings);
-assert.deepEqual(invalidConsent.diagnostics, [{ field: 'Consent', code: 'invalid-checkbox-value' }]);
+assert.deepEqual(invalidConsent.diagnostics, [{ field: 'Consent', code: 'invalid-checkbox-value', pageNumbers: [1] }]);
 assert.equal(invalidConsent.pdfBytes, undefined);
 assert.equal(inspectCustomFont(settings.fonts.arabic).family, 'Noto Naskh Arabic');
 mixedRows.push(await passingCase(consent, { Name: 'سَلْمَى بِنْت يَاسِين' }, 'consent-custom.ttf.pdf',
   'M3 clinic consent: custom Noto Naskh Arabic TrueType', 8, { customFont: settings.fonts.arabic }));
 const latinOnArabic = await preflightRow(consent, { Name: 'ليلى حسن' }, { ...settings, customFont: settings.fonts.latin });
-assert.deepEqual(latinOnArabic.diagnostics, [{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0 }]);
+assert.deepEqual(latinOnArabic.diagnostics, [{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0, pageNumbers: [1] }]);
 const cffPath = process.env.ARABIFORM_CUSTOM_CFF_FONT;
 if (cffPath) {
   const customFont = await readFile(cffPath);
@@ -230,6 +254,72 @@ if (cffPath) {
 }
 const mixedMerged = { pdf: 'consent-merged.pdf', rows: mixedRows.map(({ filename }) => filename) };
 await writeFile(resolve(root, mixedMerged.pdf), await createMergedPdf(mixedRows));
+
+const m4 = await readFile(asset('fixtures/m4/multi-page-hr-choices.pdf'));
+const m4Rows: PdfExportRow[] = [];
+const arabicClinic = 'عِيَادَةُ الرِّيَاضِ';
+const clinicOptions = [{ value: 'RIY', label: arabicClinic }, { value: 'JED', label: 'Jeddah Clinic' }];
+const [m4Csv, m4Xlsx] = await Promise.all(['csv', 'xlsx'].map(async (ext) => {
+  const filename = `multi-page-hr-choices.${ext}`;
+  return (await readRoster(await readFile(asset(`fixtures/m4/${filename}`)), filename)).sheets[0]!;
+}));
+assert.deepEqual(m4Csv?.rows, m4Xlsx?.rows);
+const [correction, exportMatch, labelMatch] = m4Csv!.rows.map(({ values }) => values);
+assert(correction && exportMatch && labelMatch);
+const clinicInvalid = await preflightRow(m4, correction, settings);
+assert.deepEqual(clinicInvalid.pageNumbers, [2]);
+assert.deepEqual(clinicInvalid.diagnostics, [{ field: 'Clinic', code: 'invalid-choice', choices: clinicOptions, pageNumbers: [2] }]);
+assert.equal(clinicInvalid.pdfBytes, undefined);
+
+const contactOn = { state: '0', widgets: ['0', 'Off'] };
+const contactOff = { state: '1', widgets: ['Off', '1'] };
+m4Rows.push(await passingCase(m4, { ...correction, Clinic: arabicClinic }, 'clinic-choice-arabic.pdf',
+  'M4 corrected Arabic display label, activated checkbox and radio', 8, {
+    expected: { ...correction, Clinic: 'RIY' }, checkboxes: { Acknowledged: 'Yes' },
+    dropdowns: { Clinic: { label: arabicClinic } }, radios: { Contact: contactOn },
+  }));
+m4Rows.push(await passingCase(m4, exportMatch, 'clinic-choice-export.pdf', 'M4 exact export match and custom Arabic face', 8, {
+  customFont: settings.fonts.arabic,
+  checkboxes: { Acknowledged: 'Off' }, dropdowns: { Clinic: { label: arabicClinic } }, radios: { Contact: contactOff },
+}));
+m4Rows.push(await passingCase(m4, labelMatch, 'clinic-choice-latin.pdf', 'M4 Latin label and trimmed radio export', 8, {
+  expected: { ...labelMatch, Clinic: 'JED' }, checkboxes: { Acknowledged: 'Yes' },
+  dropdowns: { Clinic: { label: 'Jeddah Clinic' } }, radios: { Contact: contactOn },
+}));
+
+const duplicates = await PDFDocument.load(m4, { updateMetadata: false });
+const duplicateDropdown = duplicates.getForm().getDropdown('Clinic').acroField.dict;
+duplicateDropdown.lookup(key('Opt'), PDFArray).lookup(1, PDFArray).set(0, PDFString.of('RIY'));
+duplicateDropdown.set(key('V'), PDFString.of('RIY'));
+duplicateDropdown.set(key('I'), duplicates.context.obj([1]));
+const duplicateBytes = Buffer.from(await duplicates.save({ updateFieldAppearances: false }));
+const ambiguous = await preflightRow(duplicateBytes, exportMatch, settings);
+assert.equal(ambiguous.diagnostics[0]?.code, 'invalid-choice');
+assert.equal(ambiguous.pdfBytes, undefined);
+m4Rows.push(await passingCase(duplicateBytes, { ...exportMatch, Clinic: arabicClinic }, 'clinic-choice-index.pdf',
+  'M4 duplicate exports, selected by unique label with updated index', 8, {
+    expected: exportMatch, checkboxes: { Acknowledged: 'Off' },
+    dropdowns: { Clinic: { label: arabicClinic, index: 0 } }, radios: { Contact: contactOff },
+  }));
+
+const m4Merged = { pdf: 'choices-merged.pdf', rows: m4Rows.map(({ filename }) => filename) };
+await writeFile(resolve(root, m4Merged.pdf), await createMergedPdf(m4Rows));
+const choiceZip = { editable: 'choices-editable.zip', flattened: 'choices-flattened.zip', rows: m4Merged.rows };
+const editableZip = createZip(m4Rows);
+const flattenedZip = await createFlattenedZip(m4Rows);
+const editableMembers = unzipSync(editableZip);
+const flattenedMembers = unzipSync(flattenedZip);
+assert.deepEqual(Object.keys(editableMembers), choiceZip.rows);
+assert.deepEqual(Object.keys(flattenedMembers), choiceZip.rows);
+for (const { filename, pdfBytes } of m4Rows) {
+  assert.deepEqual(Buffer.from(editableMembers[filename]!), Buffer.from(pdfBytes));
+  const flat = await PDFDocument.load(flattenedMembers[filename]!);
+  assert.equal(flat.getPageCount(), 2);
+  assert(!flat.catalog.has(key('AcroForm')));
+  assert(flat.context.enumerateIndirectObjects().every(([, object]) => !(object instanceof PDFDict) || object.lookup(key('Subtype')) !== key('Widget')));
+}
+await writeFile(resolve(root, choiceZip.editable), editableZip);
+await writeFile(resolve(root, choiceZip.flattened), flattenedZip);
 
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
@@ -270,5 +360,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, choiceZip, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);
