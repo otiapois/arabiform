@@ -14,3 +14,4 @@
 - **Safe Filename Templating**:
   - Build single-component PDF filenames from `{{ColumnName}}` tokens. Remove separator, control, and format characters, guard Windows device stems even before an extension, and retain display text in NFC. Limit generated stems to 180 UTF-8 bytes at grapheme boundaries before adding the collision suffix and `.pdf`.
   - Deduplicate with a compatibility-normalized, case-insensitive key (`name.pdf`, `name-2.pdf`). ZIP independently rejects unsafe components, normalized duplicates, and names above 255 UTF-8 bytes.
+  - Use the planned filenames in the queue, ZIP, audit, and optional merged-PDF cover index. The cover index uses the final name assigned to each ready row in the full batch plan.
