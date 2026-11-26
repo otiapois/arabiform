@@ -4,7 +4,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { describe, expect, it } from 'vitest';
 import { unzipSync } from 'fflate';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFTextField, TextAlignment } from 'pdf-lib';
-import { createAudit, createMergedPdf, createZip, inspectTemplate, preflightRow } from '../../src/core/pdf';
+import { createAudit, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow } from '../../src/core/pdf';
 import { createShaper } from '../../src/core/pdf/shaping';
 import { readRoster } from '../../src/core/roster';
 
@@ -197,5 +197,130 @@ describe('batch exports', () => {
       expect(() => createZip([row(name)])).toThrow('invalid-export-filename');
     }
     expect(() => createZip([row('résumé.pdf'), row('RE\u0301SUME\u0301.PDF')])).toThrow('invalid-export-filename');
+  });
+});
+
+describe('M3 PDF widgets and custom fonts', () => {
+  async function consent() {
+    const source = await PDFDocument.create();
+    const form = source.getForm();
+    const page = source.addPage([350, 340]);
+    const name = form.createTextField('Name');
+    name.addToPage(page, { x: 20, y: 260, width: 190, height: 30 });
+    const checked = form.createCheckBox('Checked');
+    checked.addToPage(page, { x: 20, y: 200 });
+    checked.check();
+    const approval = form.createCheckBox('Approval');
+    approval.addToPage(page, { x: 20, y: 160 });
+    approval.addToPage(page, { x: 70, y: 160 });
+    const group = form.createRadioGroup('Contact');
+    group.addOptionToPage('Email', page, { x: 20, y: 120 });
+    group.addOptionToPage('Phone', page, { x: 70, y: 120 });
+    group.select('Phone');
+    const dropdown = form.createDropdown('Site');
+    dropdown.addOptions(['North', 'South']);
+    dropdown.select('North');
+    dropdown.addToPage(page, { x: 20, y: 80, width: 100 });
+    const keep = form.createTextField('Sentinel');
+    keep.addToPage(page, { x: 20, y: 30, width: 100 });
+    keep.setText('KEEP 00109');
+    form.updateFieldAppearances();
+    for (const { dict } of approval.acroField.getWidgets()) {
+      const normal = dict.lookup(key('AP'), PDFDict).lookup(key('N'), PDFDict);
+      normal.set(key('Consent'), normal.get(key('Yes'))!);
+      normal.delete(key('Yes'));
+    }
+    return source.save({ updateFieldAppearances: false });
+  }
+
+  function rawAppearance(dict: PDFDict) {
+    function snapshot(object: unknown): unknown {
+      if (object instanceof PDFRawStream) return { dictionary: object.dict.toString(), bytes: object.getContents() };
+      if (object instanceof PDFDict) return Object.fromEntries(object.keys().map((name) => [name.toString(), snapshot(object.lookup(name))]));
+      return String(object);
+    }
+    return { raw: dict.get(key('AP'))?.toString(), contents: snapshot(dict.lookup(key('AP'))) };
+  }
+
+  it('roundtrips every button/choice widget and reuses the on/off streams by name', async () => {
+    const template = await consent();
+    const metadata = await inspectTemplate(template);
+    expect(metadata.fields.map(({ name, kind, readOnly }) => [name, kind, readOnly])).toEqual([
+      ['Name', 'text', false], ['Checked', 'checkbox', false], ['Approval', 'checkbox', false],
+      ['Contact', 'radio', true], ['Site', 'dropdown', true], ['Sentinel', 'text', false],
+    ]);
+    const result = await preflightRow(template, { Name: 'سَلْمَى 00123', Approval: ' نعم ' }, { fonts: await fonts() });
+    expect(result.diagnostics).toEqual([]);
+    const before = (await PDFDocument.load(template)).getForm();
+    const after = (await PDFDocument.load(result.pdfBytes!)).getForm();
+    for (const fieldName of ['Checked', 'Contact', 'Site', 'Sentinel', 'Approval']) {
+      const previous = before.getField(fieldName);
+      const written = after.getField(fieldName);
+      const expected = fieldName === 'Approval' ? '/Consent' : previous.acroField.dict.get(key('V'))?.toString();
+      expect(written.acroField.dict.get(key('V'))?.toString()).toBe(expected);
+      const oldWidgets = previous.acroField.getWidgets();
+      const newWidgets = written.acroField.getWidgets();
+      expect(newWidgets).toHaveLength(oldWidgets.length);
+      for (const [index, { dict }] of newWidgets.entries()) {
+        const old = oldWidgets[index]!.dict;
+        expect(dict.get(key('AS'))?.toString()).toBe(fieldName === 'Approval' ? '/Consent' : old.get(key('AS'))?.toString());
+        expect(rawAppearance(dict)).toEqual(rawAppearance(old));
+      }
+    }
+    expect(after.getTextField('Name').getText()).toBe('سَلْمَى 00123');
+    const unchecked = await preflightRow(result.pdfBytes!, { Approval: 'لا' }, { fonts: await fonts() });
+    expect((await PDFDocument.load(unchecked.pdfBytes!)).getForm().getCheckBox('Approval').isChecked()).toBe(false);
+  });
+
+  it('flags bad roster tokens, read-only fields, mismatched on names, and missing Off appearances', async () => {
+    const template = await consent();
+    const options = { fonts: await fonts() };
+    const invalid = await preflightRow(template, { Approval: 'unknown', Contact: 'Email', Site: 'South' }, options);
+    expect(invalid.pdfBytes).toBeUndefined();
+    expect(invalid.diagnostics).toEqual([
+      { field: 'Approval', code: 'invalid-checkbox-value' }, { field: 'Contact', code: 'readonly-field' }, { field: 'Site', code: 'readonly-field' },
+    ]);
+    for (const { remove, add } of [{ remove: 'Consent', add: 'Different' }, { remove: 'Off', add: 'Inactive' }]) {
+      const broken = await PDFDocument.load(template);
+      const widget = broken.getForm().getCheckBox('Approval').acroField.getWidgets()[1]!;
+      const normal = widget.dict.lookup(key('AP'), PDFDict).lookup(key('N'), PDFDict);
+      normal.set(key(add), normal.get(key(remove))!);
+      normal.delete(key(remove));
+      const contents = await broken.save({ updateFieldAppearances: false });
+      const flagged = await preflightRow(contents, { Approval: 'yes', Name: 'ليلى' }, options);
+      expect(flagged.pdfBytes).toBeUndefined();
+      expect(flagged.diagnostics).toContainEqual({ field: 'Approval', code: 'unsupported-checkbox-appearance', widgetIndex: 1 });
+      expect((await preflightRow(contents, { Name: 'ليلى' }, options)).status).toBe('pass');
+    }
+  });
+
+  it('accepts an editable checkbox-only form and rejects a choice-only form', async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage();
+    const form = source.getForm();
+    form.createCheckBox('Approval').addToPage(page, { x: 20, y: 20 });
+    const checkboxOnly = await source.save();
+    expect((await inspectTemplate(checkboxOnly)).fields[0]?.kind).toBe('checkbox');
+    const result = await preflightRow(checkboxOnly, { Approval: ' x ' }, { fonts: await fonts() });
+    expect(result.diagnostics).toEqual([]);
+    expect((await PDFDocument.load(result.pdfBytes!)).getForm().getCheckBox('Approval').isChecked()).toBe(true);
+    const choices = await PDFDocument.create();
+    choices.getForm().createDropdown('Region').addToPage(choices.addPage(), { x: 20, y: 20 });
+    await expect(inspectTemplate(await choices.save())).rejects.toThrow('flat-scanned-no-fields');
+  });
+
+  it('uses the actual custom family and flags unsupported glyphs without bundled fallback', async () => {
+    const template = await consent();
+    const bundled = await fonts();
+    expect(inspectCustomFont(bundled.arabic).family).toBe('Noto Naskh Arabic');
+    expect(inspectCustomFont(bundled.latin).family).toBe('Noto Sans');
+    expect(() => inspectCustomFont(Uint8Array.of(0, 1, 0, 0))).toThrow('invalid-custom-font');
+    await expect(preflightRow(template, {}, { fonts: bundled, customFont: Uint8Array.of(0, 1, 0, 0) })).rejects.toThrow('invalid-custom-font');
+    const blocked = await preflightRow(template, { Name: 'مُحَمَّد' }, { fonts: bundled, customFont: bundled.latin });
+    expect(blocked.diagnostics).toEqual([{ field: 'Name', widgetIndex: 0, code: 'missing-glyphs' }]);
+    expect(blocked.pdfBytes).toBeUndefined();
+    const good = await preflightRow(template, { Name: 'مُحَمَّد' }, { fonts: bundled, customFont: bundled.arabic });
+    expect(good.diagnostics).toEqual([]);
+    expect((await PDFDocument.load(good.pdfBytes!)).getForm().getTextField('Name').getText()).toBe('مُحَمَّد');
   });
 });

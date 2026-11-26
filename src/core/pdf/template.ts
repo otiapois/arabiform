@@ -1,4 +1,4 @@
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, PDFTextField, PDFWidgetAnnotation } from 'pdf-lib';
+import { PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFNumber, PDFRadioGroup, PDFString, PDFTextField, PDFWidgetAnnotation } from 'pdf-lib';
 
 export const key = PDFName.of;
 export const number = PDFNumber.of;
@@ -16,6 +16,7 @@ export interface WidgetMetadata {
 
 export interface FieldMetadata {
   name: string;
+  kind: 'text' | 'checkbox' | 'radio' | 'dropdown';
   required: boolean;
   multiline: boolean;
   readOnly: boolean;
@@ -56,7 +57,7 @@ export function widgetFlags(widget: PDFDict): number {
   return widget.lookupMaybe(key('F'), PDFNumber)?.asNumber() ?? 0;
 }
 
-function fieldAttributes(field: PDFDict, name: string) {
+export function fieldAttributes(field: PDFDict, name: string) {
   for (let node: PDFDict | undefined = field; node; node = node.lookupMaybe(key('Parent'), PDFDict)) {
     if (node.has(key(name))) return node.lookup(key(name));
   }
@@ -127,10 +128,19 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
     }
     if (!rawForm || !roots?.size()) throw new PdfIntakeError('flat-scanned-no-fields');
 
-    const formFields = doc.getForm().getFields().filter((field): field is PDFTextField => field instanceof PDFTextField);
-    if (formFields.every((field) => field.isReadOnly())) throw new PdfIntakeError('flat-scanned-no-fields');
+    const linkedWidgets = new Map<PDFDict, Set<PDFDict>>();
+    for (const widget of widgetPages.keys()) {
+      const parent = widget.lookupMaybe(key('Parent'), PDFDict);
+      if (!parent) continue;
+      const siblings = linkedWidgets.get(parent) ?? new Set<PDFDict>();
+      siblings.add(widget);
+      linkedWidgets.set(parent, siblings);
+    }
     const seen = new Set<string>();
-    const fields = formFields.map((field) => {
+    const fields = doc.getForm().getFields().flatMap((field) => {
+      const kind = field instanceof PDFTextField ? 'text' : field instanceof PDFCheckBox ? 'checkbox'
+        : field instanceof PDFRadioGroup ? 'radio' : field instanceof PDFDropdown ? 'dropdown' : undefined;
+      if (!kind) return [];
       const name = field.getName();
       if (seen.has(name)) throw new PdfIntakeError('invalid-pdf');
       seen.add(name);
@@ -153,17 +163,25 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
           && linked && !(flags & (1 | 2 | 32)) && !(pageRotation && flags & 16) && pageRotation % 90 === 0);
         return { widget, appearance: widgetAppearance, usable, meta: { ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance) } };
       });
-      const maxLenAttribute = fieldAttributes(canonical, 'MaxLen');
+      const maxLenAttribute = kind === 'text' ? fieldAttributes(canonical, 'MaxLen') : undefined;
       const maxLength = maxLenAttribute instanceof PDFNumber ? maxLenAttribute.asNumber() : undefined;
       if (maxLength !== undefined && (!Number.isSafeInteger(maxLength) || maxLength < 0)) throw new PdfIntakeError('invalid-pdf');
       const alignment = fieldAttributes(canonical, 'Q');
+      const current = fieldAttributes(canonical, 'V');
+      const value = current instanceof PDFName ? current.decodeText() : current instanceof PDFArray
+        ? current.asArray().map((item) => item instanceof PDFString || item instanceof PDFHexString ? item.decodeText() : '').join(', ')
+        : textValue(canonical);
       const meta: FieldMetadata = {
-        name, required: field.isRequired(), readOnly: field.isReadOnly(), multiline: field.isMultiline(),
-        maxLength,
-        defaultFontSize: fontSize(appearance), value: textValue(canonical), widgets: widgets.map((entry) => entry.meta),
+        name, kind, required: field.isRequired(), readOnly: kind === 'radio' || kind === 'dropdown' || field.isReadOnly(),
+        multiline: field instanceof PDFTextField && field.isMultiline(), maxLength,
+        defaultFontSize: fontSize(appearance), value, widgets: widgets.map((entry) => entry.meta),
       };
-      return { field, widgets, meta, alignment: alignment instanceof PDFNumber ? alignment.asNumber() : undefined };
+      const declared = new Set(widgets.map(({ widget }) => widget.dict));
+      const completeWidgetList = declared.size === widgets.length
+        && [...(linkedWidgets.get(canonical) ?? [])].every((widget) => declared.has(widget));
+      return [{ field, widgets, meta, completeWidgetList, alignment: alignment instanceof PDFNumber ? alignment.asNumber() : undefined }];
     });
+    if (fields.every(({ meta }) => meta.readOnly)) throw new PdfIntakeError('flat-scanned-no-fields');
     return { doc, rawForm, pages, fields };
   } catch (error) {
     if (error instanceof PdfIntakeError) throw error;

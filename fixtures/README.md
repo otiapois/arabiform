@@ -60,3 +60,11 @@ Use `m2/badge-roster.csv` with `m2/landscape-badge.pdf`. The one synthetic recor
 ## Optional public baselines
 
 Store official blank downloads in a local directory and run `node scripts/verify-public-templates.mjs <directory>` to verify their hashes and PDF field inventory. The default directory is `test-results/public-templates`. The probe skips an absent download and reports the number actually verified. The tracked synthetic suite runs independently of these downloads.
+
+## M3 mixed-widget samples
+
+`m3/clinic-consent-mixed.pdf` is a synthetic blank clinic form with Arabic-ready Name and Latin ID fields, a Consent checkbox repeated across two widgets, an already-checked Verified checkbox, a selected Contact radio group, a Clinic dropdown, and the original `KEEP 00109` sentinel.
+
+`m3/clinic-consent-roster.csv` contains an affirmative row, a negative row, and an invalid Consent value for preflight. `m3/clinic-consent-formulas.xlsx` includes a cached boolean and an uncached formula in column C.
+
+The pixel verifier checks both checkbox transitions, all preserved fields and a custom Noto Naskh Arabic TrueType render. Set `ARABIFORM_CUSTOM_CFF_FONT` to a local Latin OpenType CFF font for the optional CFF and merged-print comparison.

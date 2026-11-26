@@ -7,7 +7,7 @@ interface XmlSheet { '@_name': string; '@_id': string }
 interface XmlText { '#text'?: string }
 interface XmlString { t?: string | XmlText; r?: { t?: string | XmlText }[] }
 interface XmlCell {
-  '@_r': string;
+  '@_r'?: string;
   '@_t'?: string;
   '@_s'?: string;
   v?: string;
@@ -22,7 +22,7 @@ interface XmlSpreadsheet {
     numFmts?: { numFmt: { '@_numFmtId': string; '@_formatCode': string }[] };
     cellXfs?: { xf: { '@_numFmtId': string }[] };
   };
-  worksheet?: { sheetData?: { row?: { c?: XmlCell[] }[] } };
+  worksheet?: { sheetData?: { row?: { '@_r'?: string; c?: XmlCell[] }[] } };
 }
 
 const arrayTags = new Set(['sheet', 'Relationship', 'si', 'r', 'numFmt', 'xf', 'row', 'c']);
@@ -55,6 +55,14 @@ function spreadsheetText(value: XmlString): string {
   const textOf = (node: string | XmlText | undefined) => typeof node === 'string' ? node : node?.['#text'] ?? '';
   const text = value.r ? value.r.map(({ t }) => textOf(t)).join('') : textOf(value.t);
   return text.replace(/_x([0-9a-fA-F]{4})_/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function columnLabel(index: number): string {
+  let label = '';
+  for (let remaining = index + 1; remaining > 0; remaining = Math.floor((remaining - 1) / 26)) {
+    label = String.fromCharCode(65 + (remaining - 1) % 26) + label;
+  }
+  return label;
 }
 
 export function readWorkbook(
@@ -117,7 +125,6 @@ export function readWorkbook(
         }
       }
       if (!warning && identifier && scientific.test(value)) warning = 'excel-scientific-notation-warning';
-      if (!warning && cell.f !== undefined) warning = 'excel-formula-warning';
       return { value, warning };
     };
 
@@ -128,29 +135,39 @@ export function readWorkbook(
       if (!link['@_Type'].endsWith('/worksheet')) continue;
       const file = xml(archivePath(link['@_Target'])).worksheet;
       if (!file) throw new Error('invalid-xlsx');
+      let previousRow = 0;
       const data = (file.sheetData?.row ?? []).map((row) => {
         const cells: (XmlCell | undefined)[] = [];
+        const sourceRow = Number(row['@_r']) || Number(row.c?.[0]?.['@_r']?.match(/\d+$/)?.[0]) || previousRow + 1;
+        previousRow = sourceRow;
         for (const cell of row.c ?? []) {
-          const label = /^([A-Z]{1,3})[1-9]\d*$/.exec(cell['@_r'])?.[1];
+          const label = /^([A-Z]{1,3})[1-9]\d*$/.exec(cell['@_r'] ?? '')?.[1];
           const column = label ? [...label].reduce((value, char) => value * 26 + char.charCodeAt(0) - 64, 0) - 1 : cells.length;
           if (column >= sheetLimit || cells[column]) throw new Error('invalid-xlsx');
           cells[column] = cell;
         }
-        return cells;
-      }).filter((row) => row.some((cell) => cell && (cell.v || cell.is || cell.f !== undefined)));
+        return { cells, sourceRow };
+      }).filter(({ cells }) => cells.some((cell) => cell && (cell.v || cell.is || cell.f !== undefined)));
       const [headerRow, ...rows] = data;
       if (!headerRow) {
         result.push({ name: sheet['@_name'], headers: [], rows: [] });
         continue;
       }
-      const headers = validateHeaders(headerRow.map((cell) => cell ? parseCell(cell).value : undefined));
-      result.push({ name: sheet['@_name'], headers, rows: rows.map((cells) => {
+      const headers = validateHeaders(headerRow.cells.map((cell) => cell ? parseCell(cell).value : undefined));
+      result.push({ name: sheet['@_name'], headers, rows: rows.map(({ cells, sourceRow }) => {
         if (cells.slice(headers.length).some((cell) => cell && (cell.v || cell.is || cell.f !== undefined))) throw new Error('invalid-xlsx');
         const warnings: RosterSheet['rows'][number]['warnings'] = [];
         const values = Object.fromEntries(headers.map((column, index) => {
           const cell = cells[index];
           const { value, warning } = cell ? parseCell(cell, column) : { value: '', warning: undefined };
-          if (warning) warnings.push({ column, code: warning });
+          if (cell && (warning || cell.f !== undefined)) {
+            const reference = /^([A-Z]{1,3})([1-9]\d*)$/.exec(cell['@_r'] ?? '');
+            const source = { row: reference ? Number(reference[2]) : sourceRow, column: reference?.[1] ?? columnLabel(index) };
+            if (warning) warnings.push({ column, source, code: warning });
+            if (cell.f !== undefined) {
+              warnings.push({ column, source, code: 'excel-formula-warning', formulaHasCachedValue: Boolean(cell.v) });
+            }
+          }
           return [column, value];
         }));
         return { values, warnings };

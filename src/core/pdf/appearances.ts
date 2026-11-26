@@ -6,7 +6,7 @@ const operator = PDFOperator.of;
 const fillColor = { 1: Op.NonStrokingColorGray, 3: Op.NonStrokingColorRgb, 4: Op.NonStrokingColorCmyk };
 const strokeColor = { 1: Op.StrokingColorGray, 3: Op.StrokingColorRgb, 4: Op.StrokingColorCmyk };
 
-export interface AppearanceFont { name: string; ref: PDFFont['ref'] }
+export interface AppearanceFont { name: string; ref: PDFFont['ref']; cids?: Map<number, number> }
 
 function color(values: number[] | undefined, stroking = false) {
   if (!values || (values.length !== 1 && values.length !== 3 && values.length !== 4) || values.some((value) => !Number.isFinite(value))) return undefined;
@@ -64,8 +64,10 @@ export function installAppearance(doc: PDFDocument, target: WidgetTarget, placem
         operators.push(operator(Op.SetFontAndSize, [key(font.name), number(placement.size)]));
         current = glyph.font;
       }
+      const cids = fonts[glyph.font]!.cids;
+      const cid = cids ? cids.get(glyph.id)! : glyph.id;
       operators.push(operator(Op.SetTextMatrix, [1, 0, 0, 1, origin + glyph.x * placement.size, baseline + glyph.y * placement.size].map(number)),
-        operator(Op.ShowText, [PDFHexString.of(glyph.id.toString(16).padStart(4, '0'))]));
+        operator(Op.ShowText, [PDFHexString.of(cid.toString(16).padStart(4, '0'))]));
     }
     operators.push(operator(Op.EndText), operator(Op.EndMarkedContent));
   }

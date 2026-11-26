@@ -5,9 +5,16 @@ export { makeFilenames } from './filenames';
 
 export type RosterWarningCode = 'excel-scientific-notation-warning' | 'excel-numeric-identifier-warning' | 'excel-formula-warning' | 'excel-cell-error-warning' | 'excel-number-format-warning';
 
+export interface RosterWarning {
+  column: string;
+  code: RosterWarningCode;
+  source: { row: number; column: string };
+  formulaHasCachedValue?: boolean;
+}
+
 export interface RosterRow {
   values: Record<string, string>;
-  warnings: { column: string; code: RosterWarningCode }[];
+  warnings: RosterWarning[];
 }
 
 export interface RosterSheet {
