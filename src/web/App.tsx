@@ -230,7 +230,10 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       <small role="status" data-testid="custom-font-status">{fontCheck}</small>
                     )}
                     {customFont?.status === 'invalid' && (
-                      <p className="alert" role="alert" data-testid="custom-font-error">{problem('invalid-custom-font')}</p>
+                      <p className="alert" role="alert" data-testid="custom-font-error">
+                        {customFont.maxMiB === undefined ? problem('invalid-custom-font')
+                          : fillLabel(labels.customFontTooLarge, { limit: customFont.maxMiB })}
+                      </p>
                     )}
                   </div>
                   <label className="full-control">

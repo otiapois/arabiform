@@ -15,7 +15,7 @@ export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
 const emptyRows: SourceRow[] = [];
 const emptyFields: TemplateInfo['fields'] = [];
 
-type CustomFont = { status: 'loading' } | { status: 'invalid' } | {
+type CustomFont = { status: 'loading' } | { status: 'invalid'; maxMiB?: number } | {
   status: 'ready'; family: string; bytes: Uint8Array;
 };
 
@@ -200,9 +200,14 @@ export function useWorkbench() {
     setCustomFont({ status: 'loading' });
     try {
       if (!/\.(?:ttf|otf)$/i.test(file.name)) throw new Error('invalid-custom-font');
-      const [{ inspectCustomFont }, buffer] = await Promise.all([import('../core/pdf'), file.arrayBuffer()]);
+      const { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } = await import('../core/pdf');
       if (id !== request.current.customFont) return;
-      const bytes = new Uint8Array(buffer);
+      if (file.size > MAX_CUSTOM_FONT_BYTES) {
+        setCustomFont({ status: 'invalid', maxMiB: MAX_CUSTOM_FONT_BYTES / 1024 ** 2 });
+        return;
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (id !== request.current.customFont) return;
       const { family } = inspectCustomFont(bytes);
       setCustomFont({ status: 'ready', family, bytes });
     } catch {
