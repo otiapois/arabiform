@@ -10,7 +10,7 @@
 3. Read [LESSONS.md](LESSONS.md) to avoid repeating known regressions.
 
 ## 2. Non-Negotiable Product, Privacy & Quality Invariants
-- **100% Browser-Local Zero-Upload Processing**: Every PDF template, CSV/Excel roster, rendered preview, and generated ZIP/PDF MUST be processed strictly inside the browser. Production headers MUST enforce `Content-Security-Policy: default-src 'self'; connect-src 'none'; ...`. All fonts (`Noto Naskh Arabic`, `Noto Sans Arabic`, `Noto Sans`) MUST be bundled locally under `public/fonts/` — ZERO external font CDNs!
+- **100% Browser-Local Zero-Upload Processing**: Every PDF template, CSV/Excel roster, rendered preview, and generated ZIP/PDF MUST be processed strictly inside the browser. Production headers MUST enforce `Content-Security-Policy: default-src 'self'; connect-src 'none'; ...`. Bundle `Noto Naskh Arabic Regular` and `Noto Sans Regular` locally under `public/fonts/` and serve every font from the local build.
 - **Zero Silent Clipping / Zero Silent Corruption (Fail-Closed)**:
   - Never silently strip XFA (`pdf-lib.getForm()` strips XFA unless checked BEFORE calling `getForm()` — check `/XFA` at entry and reject XFA, encrypted, signed, and 0-field flat PDFs with clear human explanations!).
   - Never silently clip Arabic descenders (`ن`, `ى`, `ي`, `م`, `ق`) or diacritics (`harakat`/`tashkeel`). Compute true shaped glyph ink BBox via `@pdf-lib/fontkit`, auto-fit within `[minFontSize, maxFontSize]`, center ink baseline vertically, and flag any widget/row that cannot fit cleanly without clipping!
