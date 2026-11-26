@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fontkit from '@pdf-lib/fontkit';
 import { strToU8, zipSync } from 'fflate';
-import { PDFDocument, PDFHexString, PDFName, PDFString, StandardFonts, degrees, rgb } from 'pdf-lib';
+import {
+  PDFDocument, PDFHexString, PDFName, PDFOperator, PDFOperatorNames as Op, PDFString,
+  StandardFonts, beginText, degrees, endMarkedContent, endText, popGraphicsState, pushGraphicsState, rgb,
+  setFillingRgbColor, setFontAndSize, setTextMatrix, showText,
+} from 'pdf-lib';
 
 const output = fileURLToPath(new URL('../fixtures/', import.meta.url));
 const metadataDate = new Date('2026-11-26T00:00:00Z');
@@ -401,14 +405,31 @@ async function multiPageChoices() {
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const heading = await pdf.embedFont(StandardFonts.HelveticaBold);
   pdf.registerFontkit(fontkit);
-  const arabic = await pdf.embedFont(await readFile(new URL('../public/fonts/NotoNaskhArabic-Regular.ttf', import.meta.url)));
+  const arabicBytes = await readFile(new URL('../public/fonts/NotoNaskhArabic-Regular.ttf', import.meta.url));
+  const arabic = await pdf.embedFont(arabicBytes);
+  const arabicFace = fontkit.create(arabicBytes);
+  const titleSize = 23;
+  const scale = titleSize / arabicFace.unitsPerEm;
   const form = pdf.getForm();
   for (const [page, title, translation, index] of [
     [employeePage, 'HR onboarding', 'تَسْجِيلُ الْمُوَظَّفِ', 1],
     [clinicPage, 'Clinic assignment', 'تَحْدِيدُ الْعِيَادَةِ', 2],
   ]) {
     page.drawText(title, { x: 38, y: 399, size: 25, color: ink, font: heading });
-    page.drawText(translation, { x: 339, y: 399, size: 23, color: ink, font: arabic });
+    const run = arabicFace.layout(translation);
+    const advanceWidth = run.positions.reduce((advance, position) => advance + position.xAdvance, 0);
+    let x = 472 - advanceWidth * scale;
+    const fontName = page.node.newFontDictionary('ArabicHeading', arabic.ref);
+    const glyphs = [];
+    for (const [offset, glyph] of run.glyphs.entries()) {
+      const position = run.positions[offset];
+      glyphs.push(setTextMatrix(1, 0, 0, 1, x + position.xOffset * scale, 399 + position.yOffset * scale),
+        showText(PDFHexString.of(glyph.id.toString(16).padStart(4, '0'))));
+      x += position.xAdvance * scale;
+    }
+    page.pushOperators(pushGraphicsState(), setFillingRgbColor(ink.red, ink.green, ink.blue),
+      PDFOperator.of(Op.BeginMarkedContentSequence, [PDFName.of('Span'), `<< /ActualText ${PDFHexString.fromText(translation)} >>`]),
+      beginText(), setFontAndSize(fontName, titleSize), ...glyphs, endText(), endMarkedContent(), popGraphicsState());
     page.drawText(`Synthetic Sample / ${index} of 2`, { x: 38, y: 376, size: 10, color: forest, font });
     page.drawLine({ start: { x: 38, y: 364 }, end: { x: 472, y: 364 }, thickness: 1, color: rule });
   }
