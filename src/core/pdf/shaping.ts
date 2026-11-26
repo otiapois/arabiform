@@ -1,8 +1,9 @@
 import fontkit, { type Font, type GlyphRun } from '@pdf-lib/fontkit';
 import createBidi from 'bidi-js';
 
-export type FontKey = 'arabic' | 'latin';
-export type FontBytes = Record<FontKey, Uint8Array>;
+type BundledFontKey = 'arabic' | 'latin';
+export type FontKey = BundledFontKey | 'custom';
+export type FontBytes = Record<BundledFontKey, Uint8Array>;
 type Direction = 'rtl' | 'ltr';
 
 interface Bounds { minX: number; maxX: number; minY: number; maxY: number }
@@ -11,7 +12,7 @@ interface Line { text: string; direction: Direction; bounds: Bounds; painted: bo
 export interface PlacedLine { line: Line; origin: number; baseline: number }
 export interface Placement { size: number; lines: PlacedLine[] }
 
-const faceCache = new WeakMap<FontBytes, Record<FontKey, Font>>();
+const faceCache = new WeakMap<FontBytes, Record<BundledFontKey, Font>>();
 const bidi = createBidi();
 const arabic = /\p{Script_Extensions=Arabic}/u;
 const arabicLetter = /(?=\p{L})\p{Script=Arabic}/u;
@@ -39,13 +40,12 @@ export function textInputDiagnostic(value: string): 'unsupported-glyph' | 'unsup
 
 interface DirectionalRun { chunks: string[]; font: FontKey; level: number }
 
-export function createShaper(bytes: FontBytes, preferred: FontKey | 'auto') {
-  let faces = faceCache.get(bytes);
-  if (!faces) {
+export function createShaper(bytes: FontBytes, preferred: BundledFontKey | 'auto', custom?: Font) {
+  let faces = custom ? undefined : faceCache.get(bytes);
+  if (!custom && !faces) {
     faces = { arabic: fontkit.create(bytes.arabic), latin: fontkit.create(bytes.latin) };
     faceCache.set(bytes, faces);
   }
-  const fonts = faces;
   const cache = new Map<string, Line | undefined>();
 
   function line(text: string, base?: Direction): Line | undefined {
@@ -71,8 +71,10 @@ export function createShaper(bytes: FontBytes, preferred: FontKey | 'auto') {
       const suggested = arabic.test(mirrored) || joinControl.test(mirrored) ? 'arabic' : 'latin';
       const compatible = arabic.test(mirrored) || joinControl.test(mirrored) || preferred === 'auto' ? suggested : preferred;
       const alternate = compatible === 'arabic' ? 'latin' : 'arabic';
-      const font = fonts[compatible].hasGlyphForCodePoint(codepoint) || joinControl.test(mirrored) ? compatible : alternate;
-      if (!joinControl.test(mirrored) && !fonts[font].hasGlyphForCodePoint(codepoint)) {
+      const font = custom ? 'custom'
+        : faces![compatible].hasGlyphForCodePoint(codepoint) || joinControl.test(mirrored) ? compatible : alternate;
+      const face = font === 'custom' ? custom! : faces![font];
+      if (!joinControl.test(mirrored) && !face.hasGlyphForCodePoint(codepoint)) {
         cache.set(key, undefined);
         return undefined;
       }
@@ -99,14 +101,14 @@ export function createShaper(bytes: FontBytes, preferred: FontKey | 'auto') {
     let pen = 0;
     for (const run of runs) {
       if (!run.chunks.length) continue;
-      const face = fonts[run.font];
+      const face = run.font === 'custom' ? custom! : faces![run.font];
       // fontkit 1.1.1 implements script/language/direction as extra layout arguments.
       const layout = face.layout as (text: string, features: [], script: string | null, language: null, direction: Direction) => GlyphRun;
       const logical = run.chunks.join('');
       const { glyphs: shaped, positions } = layout.call(face, logical, [], arabic.test(logical) ? 'arab' : null, null, run.level % 2 ? 'rtl' : 'ltr');
       for (const [positionIndex, glyph] of shaped.entries()) {
         const offset = positions[positionIndex]!;
-        if (!glyph.id || ![offset.xOffset, offset.yOffset, offset.xAdvance].every(Number.isFinite)) {
+        if (!glyph.id || glyph.id > 0xffff || !offset || ![offset.xOffset, offset.yOffset, offset.xAdvance].every(Number.isFinite)) {
           cache.set(key, undefined);
           return undefined;
         }
@@ -130,11 +132,11 @@ export function createShaper(bytes: FontBytes, preferred: FontKey | 'auto') {
     return shaped;
   }
 
-  return { line };
+  return { line, missingGlyphCode: custom ? 'missing-glyphs' as const : 'unsupported-glyph' as const };
 }
 
 type Shaper = ReturnType<typeof createShaper>;
-type FitError = 'too-narrow' | 'too-low' | 'unsupported-glyph' | 'unsupported-line-break';
+type FitError = 'too-narrow' | 'too-low' | 'unsupported-glyph' | 'missing-glyphs' | 'unsupported-line-break';
 interface FitFailure { code: FitError; requiredFontSizePt?: number }
 
 export function fitText(shaper: Shaper, value: string, multiline: boolean, options: {
@@ -147,7 +149,7 @@ export function fitText(shaper: Shaper, value: string, multiline: boolean, optio
   // Tabs have an explicit visual width while the exact source remains in the canonical /V.
   const paragraphs = value.replaceAll('\t', '    ').split(paragraphBreak);
   const shaped = paragraphs.map((paragraph) => shaper.line(paragraph));
-  if (shaped.some((line) => !line) || (value.trim() && !shaped.some((line) => line?.painted))) return { code: 'unsupported-glyph' };
+  if (shaped.some((line) => !line) || (value.trim() && !shaped.some((line) => line?.painted))) return { code: shaper.missingGlyphCode };
 
   function layout(size: number): Placement | FitError {
     const wrapped: Line[] = [];
@@ -167,18 +169,18 @@ export function fitText(shaper: Shaper, value: string, multiline: boolean, optio
           continue;
         }
         const candidate = shaper.line(pending + token, original.direction);
-        if (!candidate) return 'unsupported-glyph';
+        if (!candidate) return shaper.missingGlyphCode;
         if (fits(candidate)) pending += token;
         else {
           const complete = shaper.line(pending.trimEnd(), original.direction);
-          if (!complete) return 'unsupported-glyph';
+          if (!complete) return shaper.missingGlyphCode;
           if (!fits(complete)) return 'too-narrow';
           if (complete.text) wrapped.push(complete);
           pending = token;
         }
       }
       const last = shaper.line(pending.trimEnd(), original.direction);
-      if (!last) return 'unsupported-glyph';
+      if (!last) return shaper.missingGlyphCode;
       if (!fits(last)) return 'too-narrow';
       wrapped.push(last);
     }

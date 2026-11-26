@@ -55,7 +55,7 @@ function activeAppearance(widget: PDFDict) {
   if (!(normal instanceof PDFDict)) return undefined;
   const state = widget.lookupMaybe(key('AS'), PDFName) ?? key('Off');
   const stream = normal.lookup(state);
-  return stream instanceof PDFStream ? { stream, ref: normal.get(state) } : undefined;
+  return stream instanceof PDFStream ? { stream, ref: normal.get(state), stateful: true } : undefined;
 }
 
 function flattenWidgets(doc: PDFDocument) {
@@ -80,6 +80,9 @@ function flattenWidgets(doc: PDFDocument) {
         continue;
       }
       const { stream, ref } = appearance;
+      // PDF annotation renderers calculate stateful appearance placement with
+      // single-precision rectangle coordinates. Retain that edge alignment.
+      const round = 'stateful' in appearance ? Math.fround : (value: number) => value;
       const bbox = stream.dict.lookupMaybe(key('BBox'), PDFArray);
       const matrix = stream.dict.lookupMaybe(key('Matrix'), PDFArray);
       if (bbox?.size() !== 4 || (matrix && matrix.size() !== 6)) throw new Error('unflattenable-widget');
@@ -90,12 +93,12 @@ function flattenWidgets(doc: PDFDocument) {
       const minX = Math.min(...xs);
       const minY = Math.min(...ys);
       const { x, y, width, height } = PDFWidgetAnnotation.fromDict(annot).getRectangle();
-      const sx = width / (Math.max(...xs) - minX);
-      const sy = height / (Math.max(...ys) - minY);
+      const sx = round(round(round(x + width) - round(x)) / round(round(Math.max(...xs)) - round(minX)));
+      const sy = round(round(round(y + height) - round(y)) / round(round(Math.max(...ys)) - round(minY)));
       if (!(sx > 0 && sy > 0 && Number.isFinite(sx) && Number.isFinite(sy))) throw new Error('unflattenable-widget');
       const resource = page.node.newXObject('ArabiFormWidget', ref instanceof PDFRef ? ref : doc.context.register(stream));
       paint.push(PDFOperator.of(Op.PushGraphicsState),
-        PDFOperator.of(Op.ConcatTransformationMatrix, [sx, 0, 0, sy, x - sx * minX, y - sy * minY].map(number)),
+        PDFOperator.of(Op.ConcatTransformationMatrix, [sx, 0, 0, sy, round(round(x) - round(sx * minX)), round(round(y) - round(sy * minY))].map(number)),
         PDFOperator.of(Op.DrawObject, [resource]), PDFOperator.of(Op.PopGraphicsState));
     }
     if (paint.length) page.node.addContentStream(doc.context.register(doc.context.contentStream(paint)));

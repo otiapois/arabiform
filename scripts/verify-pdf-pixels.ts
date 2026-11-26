@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, PDFTextField, type PDFObject } from 'pdf-lib';
+import { decodePDFRawStream, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFName, PDFRawStream, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
-import { createAudit, createMergedPdf, createZip, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
+import { createAudit, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import { readRoster } from '../src/core/roster';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
@@ -15,12 +15,18 @@ const settings = { fonts: {
   arabic: await readFile(asset('public/fonts/NotoNaskhArabic-Regular.ttf')),
   latin: await readFile(asset('public/fonts/NotoSans-Regular.ttf')),
 }, minFontSize: 8 };
-const cases: { before: string; after: string; values: Record<string, string>; label: string }[] = [];
+const cases: { before: string; after: string; values: Record<string, string>; label: string; checkboxes?: Record<string, string>; customFont?: boolean }[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
 
-async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Record<string, string>) {
+function appearanceSnapshot(object: PDFObject | undefined): unknown {
+  if (object instanceof PDFRawStream) return { dictionary: object.dict.toString(), bytes: Buffer.from(object.getContents()) };
+  if (object instanceof PDFDict) return { dictionary: object.toString(), entries: object.keys().map((key) => appearanceSnapshot(object.lookup(key))) };
+  return object?.toString();
+}
+
+async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Record<string, string>, checkboxes: Record<string, string> = {}) {
   const original = await PDFDocument.load(before);
   const newDoc = await PDFDocument.load(after);
   const originalFields = original.getForm().getFields();
@@ -30,7 +36,11 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
     const originalField = originalFields[index]!;
     const name = field.getName();
     const mapped = Object.hasOwn(expected, name);
-    if (mapped) {
+    const checkbox = checkboxes[name];
+    if (mapped && checkbox !== undefined) {
+      assert(field instanceof PDFCheckBox, name);
+      assert.equal(field.acroField.dict.get(key('V'))?.toString(), `/${checkbox}`, `canonical checkbox /V of ${name}`);
+    } else if (mapped) {
       assert(field instanceof PDFTextField, name);
       assert.equal(field.getText(), expected[name], `canonical /V of ${name}`);
     } else {
@@ -42,21 +52,15 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
     for (const [widgetIndex, widget] of widgets.entries()) {
       const appearance = widget.dict.lookupMaybe(key('AP'), PDFDict);
       const normal = appearance?.lookup(key('N'));
-      if (!mapped) {
-        const oldAppearance = originalWidgets[widgetIndex]!.dict.lookupMaybe(key('AP'), PDFDict);
-        const oldNormal = oldAppearance?.lookup(key('N'));
-        assert.equal(appearance?.toString(), oldAppearance?.toString(), `unmapped /AP of ${name}`);
-        if (oldNormal instanceof PDFRawStream && normal instanceof PDFRawStream) {
-          assert.deepEqual(Buffer.from(normal.getContents()), Buffer.from(oldNormal.getContents()), `unmapped /AP/N bytes of ${name}`);
-        } else if (oldNormal instanceof PDFDict && normal instanceof PDFDict) {
-          for (const state of oldNormal.keys()) {
-            const oldStream: PDFObject | undefined = oldNormal.lookup(state);
-            const currentStream: PDFObject | undefined = normal.lookup(state);
-            if (oldStream instanceof PDFRawStream && currentStream instanceof PDFRawStream) {
-              assert.deepEqual(Buffer.from(currentStream.getContents()), Buffer.from(oldStream.getContents()));
-            }
-          }
+      if (!mapped || checkbox !== undefined) {
+        const old = originalWidgets[widgetIndex]!.dict;
+        for (const attribute of ['V', 'AS']) {
+          const previous = old.get(key(attribute))?.toString();
+          const wanted = checkbox !== undefined && (attribute === 'AS' || previous !== undefined) ? `/${checkbox}` : previous;
+          assert.equal(widget.dict.get(key(attribute))?.toString(), wanted, `widget ${widgetIndex} /${attribute} of ${name}`);
         }
+        assert.equal(widget.dict.get(key('AP'))?.toString(), old.get(key('AP'))?.toString(), `raw /AP of ${name}`);
+        assert.deepEqual(appearanceSnapshot(appearance), appearanceSnapshot(old.lookup(key('AP'))), `unchanged /AP streams of ${name}`);
         continue;
       }
       assert(normal instanceof PDFRawStream && normal.getContentsSize() > 0, `${name} needs a normal appearance`);
@@ -76,18 +80,19 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
   }
 }
 
-async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize) {
-  const result = await preflightRow(source, values, { ...settings, minFontSize });
+async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
+  { checkboxes, customFont }: { checkboxes?: Record<string, string>; customFont?: Uint8Array } = {}) {
+  const result = await preflightRow(source, values, { ...settings, minFontSize, customFont });
   assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
   assert(result.pdfBytes);
-  await compareRawPdf(source, result.pdfBytes, values);
+  await compareRawPdf(source, result.pdfBytes, values, checkboxes);
   const before = `source-${createHash('sha256').update(source).digest('hex')}.pdf`;
   if (!originalSnapshots.has(before)) {
     await writeFile(resolve(root, before), source);
     originalSnapshots.add(before);
   }
   await writeFile(resolve(root, filename), result.pdfBytes);
-  cases.push({ before, after: filename, values, label });
+  cases.push({ before, after: filename, values, label, checkboxes, ...(customFont && { customFont: true }) });
   return { filename, pdfBytes: result.pdfBytes, fontSizes: result.fontSizes };
 }
 
@@ -196,6 +201,36 @@ for (const { name, label, values } of m2Cases) {
 }
 assert.equal(new Set(m2TemplateResults.map(({ sha256 }) => sha256)).size, 8);
 
+const consent = await readFile(asset('fixtures/m3/clinic-consent-mixed.pdf'));
+const roster3 = await readRoster(await readFile(asset('fixtures/m3/clinic-consent-roster.csv')), 'roster.csv');
+const formulas = await readRoster(await readFile(asset('fixtures/m3/clinic-consent-formulas.xlsx')), 'formulas.xlsx');
+assert.deepEqual(formulas.sheets[0]!.rows.map(({ warnings }) => warnings), [
+  [{ column: 'Consent', source: { row: 2, column: 'C' }, code: 'excel-formula-warning', formulaHasCachedValue: true }],
+  [{ column: 'Consent', source: { row: 3, column: 'C' }, code: 'excel-formula-warning', formulaHasCachedValue: false }],
+]);
+const [{ values: consentOn }, { values: consentOff }, { values: consentInvalid }] = roster3.sheets[0]!.rows as [typeof csv.rows[number], typeof csv.rows[number], typeof csv.rows[number]];
+const mixedRows: PdfExportRow[] = [];
+mixedRows.push(await passingCase(consent, consentOn, 'consent-on.pdf', 'M3 clinic consent: check both widgets', 8, { checkboxes: { Consent: 'Yes' } }));
+const checkedSource = Buffer.from(mixedRows[0]!.pdfBytes);
+mixedRows.push(await passingCase(checkedSource, consentOff, 'consent-off.pdf', 'M3 clinic consent: clear both widgets', 8, { checkboxes: { Consent: 'Off' } }));
+const invalidConsent = await preflightRow(consent, consentInvalid, settings);
+assert.deepEqual(invalidConsent.diagnostics, [{ field: 'Consent', code: 'invalid-checkbox-value' }]);
+assert.equal(invalidConsent.pdfBytes, undefined);
+assert.equal(inspectCustomFont(settings.fonts.arabic).family, 'Noto Naskh Arabic');
+mixedRows.push(await passingCase(consent, { Name: 'سَلْمَى بِنْت يَاسِين' }, 'consent-custom.ttf.pdf',
+  'M3 clinic consent: custom Noto Naskh Arabic TrueType', 8, { customFont: settings.fonts.arabic }));
+const latinOnArabic = await preflightRow(consent, { Name: 'ليلى حسن' }, { ...settings, customFont: settings.fonts.latin });
+assert.deepEqual(latinOnArabic.diagnostics, [{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0 }]);
+const cffPath = process.env.ARABIFORM_CUSTOM_CFF_FONT;
+if (cffPath) {
+  const customFont = await readFile(cffPath);
+  assert.equal(customFont.subarray(0, 4).toString('ascii'), 'OTTO', 'CFF proof needs an actual CFF OpenType container');
+  mixedRows.push(await passingCase(consent, { ID: 'Office 00109' }, 'consent-custom.otf.pdf',
+    `M3 clinic consent: custom ${inspectCustomFont(customFont).family} OpenType CFF (SHA-256 ${createHash('sha256').update(customFont).digest('hex')})`, 8, { customFont }));
+}
+const mixedMerged = { pdf: 'consent-merged.pdf', rows: mixedRows.map(({ filename }) => filename) };
+await writeFile(resolve(root, mixedMerged.pdf), await createMergedPdf(mixedRows));
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -235,5 +270,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

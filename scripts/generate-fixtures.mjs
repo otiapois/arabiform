@@ -202,6 +202,10 @@ function worksheet(rows) {
     const columns = row.map((value, column) => {
       const reference = `${String.fromCharCode(65 + column)}${number}`;
       if (typeof value === 'object') {
+        if ('formula' in value) {
+          const cached = value.cached === undefined ? '' : `<v>${value.cached}</v>`;
+          return `<c r="${reference}" t="b"><f>${value.formula}</f>${cached}</c>`;
+        }
         const style = value.scientific ? ' s="1"' : '';
         return `<c r="${reference}"${style}><v>${value.number}</v></c>`;
       }
@@ -344,11 +348,63 @@ async function m2Template({ title, size, fields, rotations = [0], arabicTitle })
 }
 
 const args = process.argv.slice(2);
+async function clinicConsent() {
+  const pdf = await createPdf('Clinic consent');
+  const page = pdf.addPage([510, 465]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const heading = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const form = pdf.getForm();
+  const label = (text, x, y) => page.drawText(text, { x, y, size: 10, color: forest, font });
+  page.drawText('Clinic consent', { x: 38, y: 400, size: 30, color: ink, font: heading });
+  label('Synthetic Sample / Mixed AcroForm', 38, 380);
+  page.drawLine({ start: { x: 38, y: 365 }, end: { x: 472, y: 365 }, thickness: 1, color: rule });
+  for (const [name, title, rect] of [
+    ['Name', 'PATIENT NAME', [38, 308, 434, 31]],
+    ['ID', 'REGISTRATION ID', [38, 246, 188, 28]],
+    ['Sentinel', 'TEMPLATE REFERENCE', [38, 48, 188, 29]],
+  ]) {
+    const field = form.createTextField(name);
+    addWidget(field, page, rect, font);
+    label(title, rect[0], rect[1] + rect[3] + 7);
+    field.setFontSize(12);
+    if (name === 'Sentinel') field.setText('KEEP 00109');
+  }
+  const checkboxOptions = { width: 17, height: 17, borderWidth: 0.7, borderColor: rule, backgroundColor: fill, textColor: ink };
+  const consent = form.createCheckBox('Consent');
+  consent.addToPage(page, { ...checkboxOptions, x: 39, y: 200 });
+  label('Patient consent', 65, 205);
+  consent.addToPage(page, { ...checkboxOptions, x: 240, y: 200 });
+  label('Patient consent (copy)', 266, 205);
+  const verified = form.createCheckBox('Verified');
+  verified.addToPage(page, { ...checkboxOptions, x: 39, y: 160 });
+  verified.check();
+  label('Intake verified', 65, 165);
+  const contact = form.createRadioGroup('Contact');
+  contact.addOptionToPage('Email', page, { ...checkboxOptions, x: 39, y: 119 });
+  contact.addOptionToPage('Phone', page, { ...checkboxOptions, x: 121, y: 119 });
+  contact.select('Phone');
+  label('Email', 65, 124);
+  label('Phone', 148, 124);
+  const clinic = form.createDropdown('Clinic');
+  clinic.addOptions(['North clinic', 'South clinic']);
+  clinic.select('North clinic');
+  clinic.addToPage(page, { x: 240, y: 116, width: 200, height: 26, font, borderColor: rule, backgroundColor: fill });
+  label('CLINIC', 240, 149);
+  form.updateFieldAppearances(font);
+  return pdf.save({ updateFieldAppearances: false });
+}
+
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
 }
 const check = args[0] === '--check';
 const rows = [headings, ...roster];
+const consentRows = [
+  ['Name', 'ID', 'Consent'],
+  ['ليلى حسن', '00001', 'نعم'],
+  ['أحمد سالم', '00002', 'لا'],
+  ['سَلْمَى بِنْت يَاسِين', 'AR-00042', 'review'],
+];
 const fixtures = {
   'golden/template.pdf': await attendanceTemplate(),
   'golden/roster.csv': csv(rows),
@@ -360,9 +416,15 @@ const fixtures = {
   'golden/signed.pdf': await intakeGuard('Signed'),
   'm2/badge-roster.csv': csv([['Name', 'Badge ID'], ['سَلْمَى بِنْت يَاسِين / AR-00042', '00007']]),
   ...Object.fromEntries(await Promise.all(Object.entries(m2Specifications).map(async ([name, spec]) => [`m2/${name}`, await m2Template(spec)]))),
+  'm3/clinic-consent-mixed.pdf': await clinicConsent(),
+  'm3/clinic-consent-roster.csv': csv(consentRows),
+  'm3/clinic-consent-formulas.xlsx': workbook([
+    consentRows[0], [consentRows[1][0], consentRows[1][1], { formula: '1=1', cached: '1' }],
+    [consentRows[2][0], consentRows[2][1], { formula: '1=1' }],
+  ]),
 };
 
-if (!check) await Promise.all(['golden', 'm2'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {
