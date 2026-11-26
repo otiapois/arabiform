@@ -1,3 +1,5 @@
+import { textInputDiagnostic } from './text-input';
+
 export type WatermarkSettings = { kind: 'none' } | (
   { opacity: number; angle: -45 | 0 | 45 } & (
     | { kind: 'draft' | 'confidential' | 'draft-ar' | 'confidential-ar' }
@@ -23,7 +25,7 @@ export function validateWatermarkSettings(data: unknown): WatermarkSettings | un
   if (kind === 'custom') {
     if (keys.length !== 4 || !Object.hasOwn(data, 'text') || typeof text !== 'string'
       || !text.trim() || text.length > MAX_WATERMARK_CHARACTERS * 2 || Array.from(text).length > MAX_WATERMARK_CHARACTERS
-      || /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(text)) return undefined;
+      || /[\r\n\t\p{Zl}\p{Zp}]/u.test(text) || textInputDiagnostic(text)) return undefined;
     return { kind, opacity, angle, text };
   }
   if (keys.length === 3 && (kind === 'draft' || kind === 'confidential' || kind === 'draft-ar' || kind === 'confidential-ar')) {
