@@ -1,9 +1,9 @@
-import { lazy, Suspense, useEffect, type ChangeEvent } from 'react';
+import { lazy, Suspense, type ChangeEvent } from 'react';
 import { ChoiceList } from './Choices';
 import { Diagnostics } from './Diagnostics';
 import { fillLabel, translator } from './labels';
 import { Queue } from './Queue';
-import { loadFonts, saveDownload } from './resources';
+import { saveDownload } from './resources';
 import { useWorkbench } from './useWorkbench';
 
 const PdfPreview = lazy(() => import('./PdfPreview'));
@@ -71,10 +71,6 @@ export function App({ arabic, heading, summary, details }: AppProps) {
     && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
   const fontCheck = !desk.results || !textMapped ? labels.customFontCoverage
     : missingCustomGlyphs ? labels.customFontMissing : labels.customFontChecked;
-
-  useEffect(() => {
-    if (arabic) void loadFonts().catch(() => undefined);
-  }, [arabic]);
 
   return (
     <>

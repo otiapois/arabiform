@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Workbench Naskh";
+  src: url("/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Workbench Sans";
+  src: url("/fonts/NotoSans-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root {
   color-scheme: light;
   --paper: #f6f5ee;
@@ -122,8 +134,6 @@ button:disabled { cursor: default; }
   font-weight: 675;
   white-space: nowrap;
 }
-.locale[lang="ar"] { font-family: "Workbench Naskh", system-ui, sans-serif; }
-
 .hero {
   display: flex;
   justify-content: space-between;
