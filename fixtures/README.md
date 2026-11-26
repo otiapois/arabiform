@@ -31,7 +31,7 @@ The US Letter PDF `golden/template.pdf` has five populated AcroForm widgets. The
 | `Too Narrow` | 0 `(28, 300, 9, 24)` | `ليلى حسن` exceeds available width |
 | `Too Low` | 0 `(28, 241, 110, 5)` | The marks in `مُحَمَّد` exceed available height |
 | `Exceeds MaxLen` | 0 `(28, 172, 140, 26)` | `00123` exceeds `/MaxLen` of 4 |
-| `Widget Rotate` | Page 2, widget `/MK /R 90` | Exercise the widget rotation check independently of page rotation |
+| `Widget Rotate` | 2 `(50, 280, 122, 28)`, widget `/MK /R 90` | Exercise the widget rotation check independently of page rotation |
 
 | File | Intake case |
 | --- | --- |

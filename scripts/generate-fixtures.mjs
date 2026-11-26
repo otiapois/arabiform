@@ -116,7 +116,8 @@ async function edgeCases() {
     if (maxLength) field.setMaxLength(maxLength);
     for (const [index, x, y, width, height, widgetRotation = 0] of widgets) {
       const page = pages[index];
-      const rect = widgetRotation ? [x, y, height, width] : [x, y, width, height];
+      // pdf-lib rotates a 90-degree widget around the supplied origin.
+      const rect = widgetRotation ? [x + width, y, height, width] : [x, y, width, height];
       addWidget(field, page, rect, font, 0, widgetRotation);
       page.drawText(name, { x, y: y + height + 8, font, size: 10 });
     }
