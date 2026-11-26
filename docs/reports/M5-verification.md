@@ -51,3 +51,7 @@ Windows 沙箱首次在 tsx 命名临时目录时返回 `uv_os_get_passwd ENOMEM
 本机原始证据保存在项目的 `test-results/m5-evidence/`。`gates.json` 和 `main-edge/` 对应首轮七项检查及每个场景的请求记录，`pixel-verification.json` 提供逐控件测量。`final/` 保存修正后的类型、构建和完整浏览器收据，包含 M5 实际上传的 CSV、下载的 ZIP 和两种审计文件。最终构建的 28 个文件内容指纹为 `4303760fd8503c7c60bbef7ec59e675c7d676a5972618d92cbb2bb7b0fff120f`。
 
 环境为 Windows、Microsoft Edge 124.0.2478.80、Playwright 1.65.1、Node.js 24.22.1、Python 3.13.11。移动端使用 Edge 触屏模拟。本次覆盖本地浏览器和构建产物，真机、读屏器朗读、实体打印、线上部署与远端 CI 均未实测。
+
+## 主线交付
+
+最终浏览器复验基于 `8800f147fd6e6664d71bd7a61d34eadde5a92276`，随后提交实际重拍的三张截图和验收文档。此前 38 项 Edge 场景、黄金夹具、历史截图、CI 配置与锁文件均已按 Git 对照。三个 M5 工作树及 `.arabiform-wt` 已清理，Git 仅登记主工作树。完整原始运行证据保留在主工程的 `test-results/m5-evidence/`。
