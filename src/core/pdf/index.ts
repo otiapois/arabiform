@@ -1,12 +1,14 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFBool, PDFCheckBox, PDFDict, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
+import { explicitQuadding, type AlignOverride } from './alignment';
 import { borderWidth, installAppearance, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
-import { key, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
+import { key, number, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
 
+export type { AlignOverride } from './alignment';
 export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './exports';
 export { matchChoice } from './choice-match';
 export type { FieldChoice } from './choice-match';
@@ -43,6 +45,7 @@ export interface PreflightOptions {
   minFontSize?: number;
   preferredFont?: 'auto' | keyof FontBytes;
   customFont?: Uint8Array;
+  alignOverrides?: Readonly<Record<string, AlignOverride>>;
 }
 
 export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<TemplateMetadata> {
@@ -53,7 +56,7 @@ export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<
 export async function preflightRow(
   bytes: Uint8Array | ArrayBuffer,
   valuesByField: Record<string, string>,
-  { fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont }: PreflightOptions,
+  { fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {} }: PreflightOptions,
 ): Promise<RowPreflightResult> {
   if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
   const { doc, rawForm, fields } = await openTemplate(bytes);
@@ -66,6 +69,7 @@ export async function preflightRow(
     field: PDFTextField | PDFDropdown;
     canonicalValue: PDFString | PDFHexString;
     choiceIndex?: number;
+    quadding?: number;
     placed: { widget: WidgetTarget; placement: Placement }[];
   }[] = [];
   const buttonPlans: { canonical: PDFDict; widgets: WidgetTarget[]; state: PDFName; selectedIndex?: number }[] = [];
@@ -157,6 +161,8 @@ export async function preflightRow(
       continue;
     }
 
+    const alignOverride = field instanceof PDFTextField && Object.hasOwn(alignOverrides, name) ? alignOverrides[name] : undefined;
+    const quadding = alignOverride && alignOverride !== 'auto' ? explicitQuadding[alignOverride] : undefined;
     const placed: { widget: WidgetTarget; placement: Placement }[] = [];
     for (const [widgetIndex, widget] of widgets.entries()) {
       const { width, height, rotation, defaultFontSize } = widget.meta;
@@ -169,7 +175,7 @@ export async function preflightRow(
           : fitText(shaper ??= createShaper(fonts, preferredFont, custom?.face), value, meta.multiline, {
             innerWidth: (quarterTurn ? height : width) - 2 * padding,
             innerHeight: (quarterTurn ? width : height) - 2 * padding,
-            padding, alignment, min: minFontSize, max: defaultFontSize,
+            padding, alignment, alignOverride, min: minFontSize, max: defaultFontSize,
           });
       } catch (cause) {
         if (custom) throw new Error('invalid-custom-font', { cause });
@@ -188,7 +194,7 @@ export async function preflightRow(
         }
       }
     }
-    plans.push({ field, canonicalValue, choiceIndex, placed });
+    plans.push({ field, canonicalValue, choiceIndex, quadding, placed });
   }
 
   const fontSizes = Object.fromEntries(sizes);
@@ -223,14 +229,16 @@ export async function preflightRow(
   }
   rawForm.set(key('NeedAppearances'), PDFBool.False);
   for (const { canonical, widgets, state, selectedIndex } of buttonPlans) applyButton(canonical, widgets, state, selectedIndex);
-  for (const { field, canonicalValue, choiceIndex, placed } of plans) {
+  for (const { field, canonicalValue, choiceIndex, quadding, placed } of plans) {
     const canonical = field.acroField.dict;
     canonical.set(key('V'), canonicalValue);
+    if (quadding !== undefined) canonical.set(key('Q'), number(quadding));
     const choiceIndices = choiceIndex === undefined ? undefined : doc.context.obj([choiceIndex]);
     if (choiceIndices) canonical.set(key('I'), choiceIndices);
     for (const { widget, placement } of placed) {
       const dict = widget.widget.dict;
       if (dict !== canonical && dict.has(key('V'))) dict.set(key('V'), canonicalValue);
+      if (quadding !== undefined && dict !== canonical && dict.has(key('Q'))) dict.set(key('Q'), number(quadding));
       if (choiceIndices && dict !== canonical && dict.has(key('I'))) dict.set(key('I'), choiceIndices);
       const mainGlyph = placement.lines.find(({ line }) => line.painted)?.line.glyphs[0];
       const mainFont = mainGlyph && embedded[mainGlyph.font];

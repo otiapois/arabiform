@@ -64,12 +64,40 @@ def appearance_xref(document, widget):
     return int(raw.split()[0])
 
 
+def check_alignment(spec, document, widget, page, bounds, box, label):
+    kind, value = document.xref_get_key(widget.xref, "MK/R")
+    widget_rotation = int(value) if kind == "int" else 0
+    direction = (page.rotation - widget_rotation) % 360
+    axis = 1 if direction % 180 else 0
+    start, end = bounds[axis] - box[axis], box[axis + 2] - bounds[axis + 2]
+    if direction >= 180:
+        start, end = end, start
+    if spec["anchor"] == "center":
+        assert abs(start - end) <= 3, (label, widget.field_name, start, end)
+    else:
+        near, far = (start, end) if spec["anchor"] == "ltr" else (end, start)
+        if spec["mode"] == "auto":
+            assert near + 10 < far, (label, widget.field_name, start, end)
+        else:
+            kind, raw_width = document.xref_get_key(widget.xref, "BS/W")
+            if kind in ("int", "float"):
+                border_width = float(raw_width)
+            else:
+                kind, border = document.xref_get_key(widget.xref, "Border")
+                parts = border.strip("[] ").split(maxsplit=3) if kind == "array" else []
+                border_width = float(parts[2]) if len(parts) >= 3 else 0
+            expected = 4 * (1.6 + max(0, border_width))
+            assert abs(near - expected) <= 3 and near + 10 < far, (label, widget.field_name, near, expected, far)
+    return {"alignmentMode": spec["mode"], "alignmentAnchor": spec["anchor"], "logicalHorizontalInsetsAt4x": [start, end]}
+
+
 def check_case(case, directory):
     before_path, after_path = (directory / case[key] for key in ("before", "after"))
     expected = case["values"]
     checkboxes = case.get("checkboxes", {})
     dropdowns = case.get("dropdowns", {})
     radios = case.get("radios", {})
+    alignments = case.get("alignments", {})
     label = case.get("label", after_path.name)
     seen = Counter()
     results = []
@@ -139,8 +167,9 @@ def check_case(case, directory):
                     else:
                         assert not amount, f"{label}: blank {field} has visible ink"
                         inset = None
+                    measured_alignment = check_alignment(alignments[field], filled, widget, page, bounds, box, label) if field in alignments else {}
                     results.append({"field": field, "page": page.number + 1, "inkBboxAt4x": bounds if amount else None,
-                                    "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset,
+                                    "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset, **measured_alignment,
                                     **({"dropdownLabel": display} if field in dropdowns else {})})
                 assert_same_outside(before, after, allowed, f"{label} page {page.number + 1}")
                 assert_same_outside(text_only_baseline, after, allowed, f"{label} text on page {page.number + 1}")
