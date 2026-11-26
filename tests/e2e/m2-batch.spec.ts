@@ -62,7 +62,12 @@ test('200 live worker rows, responsive search and paging, verified PDFs, cancel 
   await search.fill('specimen-00181');
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toHaveAttribute('data-row', '181');
-  const afterSearch = await liveProgress(page, 'preflight');
+  // A fast worker may finish while Edge is painting the matching search row.
+  const afterSearch = await page.waitForFunction(previous => {
+    const meter = document.querySelector<HTMLProgressElement>('[data-testid="batch-progress"][data-phase="preflight"]');
+    if (meter?.max === 200 && meter.value >= previous && meter.value < 200) return meter.value;
+    return document.querySelector('[data-testid="ready-count"]')?.textContent === '200' ? 200 : false;
+  }, first).then(value => value.jsonValue());
   const searchMs = Math.round(performance.now() - interactionStart);
   await search.fill('');
   await expect(rows).toHaveCount(20);
