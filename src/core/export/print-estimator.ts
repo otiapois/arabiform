@@ -1,4 +1,5 @@
-import { countMergeCoverPages } from '../pdf/merge-cover';
+import type { PreflightOptions } from '../pdf';
+import { countMergeCoverPages, prepareCoverEstimateLayout } from '../pdf/merge-cover';
 import type { Imposition } from '../pdf/exports';
 import { twoUpSheetCount } from '../pdf/two-up-sheets';
 import { resolveRowSelection, type RowSelection } from '../worker/row-selection';
@@ -57,6 +58,15 @@ function printTotals(
 }
 
 export function estimatePrintJob(input: PrintEstimateInput): PrintJobEstimate {
+  return estimateWithCoverLayout(input, prepareCoverEstimateLayout(input.preflight.fonts));
+}
+
+export function preparePrintJobEstimator(preflight: PreflightOptions) {
+  const makeCoverLayout = prepareCoverEstimateLayout(preflight.fonts);
+  return (input: Omit<PrintEstimateInput, 'preflight'>) => estimateWithCoverLayout({ ...input, preflight }, makeCoverLayout);
+}
+
+function estimateWithCoverLayout(input: PrintEstimateInput, makeCoverLayout: ReturnType<typeof prepareCoverEstimateLayout>): PrintJobEstimate {
   const { rows, templatePagesPerRecord, rowSelection, grouping, coverSheet } = input;
   if (!Number.isSafeInteger(templatePagesPerRecord) || templatePagesPerRecord < 0) throw new Error('invalid-template-page-count');
   if (input.imposition !== undefined && input.imposition !== '1-up' && input.imposition !== '2-up') throw new Error('invalid-imposition');
@@ -67,13 +77,14 @@ export function estimatePrintJob(input: PrintEstimateInput): PrintJobEstimate {
   const reason = templatePagesPerRecord !== 1 ? 'imposition-requires-single-page' : input.twoUpUnavailableReason;
   const imposition = reason ? '1-up' : input.imposition ?? '1-up';
   const context = { ...input, rowNumbers: selectedRowNumbers };
+  const coverLayout = makeCoverLayout();
   const estimateOutput = ({ rowNumbers, cover, filenames }: PrintOutputPlan) => {
     const total = rowNumbers.length;
     // Page-range labels differ by mode. Both modes have the same fixed table
     // columns and heading heights, so pagination itself is mode-independent.
     const coverPages = total && cover ? countMergeCoverPages(filenames.map((filename) => ({
       filename, pageCount: templatePagesPerRecord,
-    })), cover, imposition) : 0;
+    })), cover, imposition, coverLayout) : 0;
     return printTotals(total, templatePagesPerRecord, coverPages, reason ? null : twoUpSheetCount(total), imposition);
   };
   const combined = estimateOutput(planCombinedPrint(context));

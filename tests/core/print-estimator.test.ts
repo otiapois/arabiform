@@ -59,6 +59,10 @@ it('counts compatible merged and split covers without creating, embedding or ser
     expect(await batch({ ...request, rowSelection: [3] }, idle)).toMatchObject({
       totalRecords: 1, activePhysicalSheets: 2, split: { groupBreakdowns: [{ rowNumbers: [3] }] },
     });
+    expect(await batch({ ...request, imposition: '1-up', rowSelection: [3, 1] }, idle)).toMatchObject({
+      imposition: '1-up', totalRecords: 2, activePhysicalSheets: 3, twoUpPhysicalSheets: 2,
+      split: { activePhysicalSheets: 4, groupBreakdowns: [{ rowNumbers: [1] }, { rowNumbers: [3] }] },
+    });
   } finally {
     load.mockRestore();
     create.mockRestore();

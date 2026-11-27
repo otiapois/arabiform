@@ -5,7 +5,7 @@ import { localVirtualDate } from '../roster/virtual-columns';
 import { appendPositionedText } from './appearances';
 import { twoUpSheetCount } from './two-up-sheets';
 import type { Imposition } from './exports';
-import { createShaper, DEFAULT_MIN_FONT_SIZE, textInputDiagnostic, type PlacedLine } from './shaping';
+import { createShaper, DEFAULT_MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type PlacedLine } from './shaping';
 import { key, number } from './template';
 import type { PreflightOptions } from './index';
 
@@ -29,6 +29,8 @@ const BILINGUAL_GUTTER = 28;
 const TABLE_HEADER = 24;
 const FILE_COLUMN = 2;
 const COLUMNS = [36, 56, WIDTH - 36 - 56 - 82, 82];
+const FILENAME_SIZE = 10;
+const FILENAME_WIDTH = COLUMNS[FILE_COLUMN]! - 2 * CELL_PADDING;
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 const labels = {
@@ -158,7 +160,34 @@ function addText(page: PDFPage, text: CoverText, left: number, top: number, widt
 
 type CoverEntry = { filename: string; pageCount: number };
 
-function planMergeCover(entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition) {
+const MAX_ESTIMATE_FILENAME_LAYOUTS = 1_000;
+
+function createCoverTextLayout(fonts: FontBytes, rowLayouts?: Map<string, CoverText>) {
+  let shaper: Shaper | undefined;
+  return (text: string, size: number, width: number, mode: BaseDirection | 'filename') => {
+    const cache = mode === 'filename' && size === FILENAME_SIZE && width === FILENAME_WIDTH ? rowLayouts : undefined;
+    const cached = cache?.get(text);
+    if (cached) return cached;
+    const result = layoutText(shaper ??= createShaper(fonts, 'auto'), text, size, width, mode);
+    if (cache) {
+      if (cache.size === MAX_ESTIMATE_FILENAME_LAYOUTS) cache.delete(cache.keys().next().value!);
+      cache.set(text, result);
+    }
+    return result;
+  };
+}
+
+export function prepareCoverEstimateLayout(fonts: FontBytes) {
+  // Filename cells keep their dimensions across cover languages, selections,
+  // and print modes. Each request still shapes its own headings and metadata.
+  const rowLayouts = new Map<string, CoverText>();
+  return () => createCoverTextLayout(fonts, rowLayouts);
+}
+
+function planMergeCover(
+  entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition,
+  layout = createCoverTextLayout(options.preflight.fonts),
+) {
   const { locale, templateName, exportedAt, preflight, rowNumbers, flagged, skipped, custody } = options;
   const dateLabel = typeof exportedAt === 'string' ? exportedAt : localVirtualDate(exportedAt);
   if ((locale !== 'en' && locale !== 'ar' && locale !== 'bilingual') || rowNumbers.length !== entries.length
@@ -174,32 +203,31 @@ function planMergeCover(entries: readonly CoverEntry[], options: MergeCoverOptio
     const labelWidth = bilingual ? 70 : 110;
     const valueWidth = panelWidth - labelWidth - 10;
     const { fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont } = preflight;
-    const shaper = createShaper(fonts, 'auto');
-    const footer = custody && layoutText(shaper,
+    const footer = custody && layout(
       `Template SHA-256 ${custody.templateSha256.slice(0, CUSTODY_PREFIX_LENGTH)}   ·   Roster SHA-256 ${custody.rosterSha256.slice(0, CUSTODY_PREFIX_LENGTH)}`,
       8, WIDTH, 'ltr');
     const panels = panelLocales.map((language, index) => {
       const panel = labels[language === 'ar' ? 'ar' : 'en'];
       const direction = language === 'ar' ? 'rtl' as const : 'ltr' as const;
       const size = bilingual ? 9 : 10;
-      const title = layoutText(shaper, panel.title, bilingual ? 15 : 22, panelWidth, direction);
+      const title = layout(panel.title, bilingual ? 15 : 22, panelWidth, direction);
       const details = ([
         { label: panel.date, value: dateLabel, mode: 'ltr' },
         { label: panel.template, value: templateName, mode: 'filename' },
       ] as const).map(({ label, value, mode }) => ({
-        label: layoutText(shaper, label, size, labelWidth, direction),
-        value: layoutText(shaper, value, size, valueWidth, mode),
+        label: layout(label, size, labelWidth, direction),
+        value: layout(value, size, valueWidth, mode),
       }));
-      const summary = layoutText(shaper, `${panel.ready}: ${entries.length}   ·   ${panel.flagged}: ${flagged}   ·   ${panel.skipped}: ${skipped}`, size, panelWidth, direction);
-      const settings = layoutText(shaper, `${panel.minimum}: ${minFontSize} ${panel.points}   ·   ${panel.font}: ${panel[customFont ? 'custom' : preferredFont]}`, size, panelWidth, direction);
+      const summary = layout(`${panel.ready}: ${entries.length}   ·   ${panel.flagged}: ${flagged}   ·   ${panel.skipped}: ${skipped}`, size, panelWidth, direction);
+      const settings = layout(`${panel.minimum}: ${minFontSize} ${panel.points}   ·   ${panel.font}: ${panel[customFont ? 'custom' : preferredFont]}`, size, panelWidth, direction);
       return { left: MARGIN + index * (panelWidth + BILINGUAL_GUTTER), direction, title, details, summary, settings };
     });
     const heading = (language: typeof copy, label: string, index: number) => index === 3 && imposition === '2-up' ? language.sheets : label;
-    const headings = copy.columns.map((label, index) => layoutText(shaper, heading(copy, label, index), 10, COLUMNS[index]! - 2 * CELL_PADDING, direction));
+    const headings = copy.columns.map((label, index) => layout(heading(copy, label, index), 10, COLUMNS[index]! - 2 * CELL_PADDING, direction));
     const translatedHeadings = bilingual && labels.ar.columns.slice(1).map((label, index) =>
-      layoutText(shaper, heading(labels.ar, label, index + 1), 9, COLUMNS[index + 1]! - 2 * CELL_PADDING, 'rtl'));
+      layout(heading(labels.ar, label, index + 1), 9, COLUMNS[index + 1]! - 2 * CELL_PADDING, 'rtl'));
     const rows = entries.map(({ filename, pageCount }) => {
-      const text = layoutText(shaper, filename, 10, COLUMNS[FILE_COLUMN]! - 2 * CELL_PADDING, 'filename');
+      const text = layout(filename, FILENAME_SIZE, FILENAME_WIDTH, 'filename');
       return { text, pageCount, height: Math.max(23, text.height + 2 * CELL_PADDING) };
     });
     const { afterTitle, detailHeights, afterDetails, summaryHeight, firstTable, bottom, tableHeader } = coverTableLayout(
@@ -214,7 +242,7 @@ function planMergeCover(entries: readonly CoverEntry[], options: MergeCoverOptio
         const range = startPage === endPage ? String(startPage) : `${startPage}–${endPage}`;
         const values = [String(index + 1), String(rowNumbers[index]), text.text, range];
         const cells = values.map((value, column) => column === FILE_COLUMN ? text
-          : layoutText(shaper, value, 10, COLUMNS[column]! - 2 * CELL_PADDING, 'ltr'));
+          : layout(value, 10, COLUMNS[column]! - 2 * CELL_PADDING, 'ltr'));
         return { top, height, cells };
       }));
     return {
@@ -227,8 +255,11 @@ function planMergeCover(entries: readonly CoverEntry[], options: MergeCoverOptio
   }
 }
 
-export function countMergeCoverPages(entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition): number {
-  return planMergeCover(entries, options, imposition).pages.length;
+export function countMergeCoverPages(
+  entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition,
+  layout: ReturnType<typeof createCoverTextLayout>,
+): number {
+  return planMergeCover(entries, options, imposition, layout).pages.length;
 }
 
 export async function prependMergeCover(

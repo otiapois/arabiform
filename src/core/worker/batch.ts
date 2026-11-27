@@ -1,6 +1,7 @@
 import { hashCustodySources, sha256 } from '../audit/custody';
 import { createCustodyQrRecords, type CustodyQrRecord } from '../custody/records';
 import { validateGroupingPlan } from '../export/grouping';
+import type { preparePrintJobEstimator } from '../export/print-estimator';
 import { planCombinedPrint, planSplitPrint } from '../export/print-job';
 import { createMergedPdf, preflightRow, prepareTemplatePreflight } from '../pdf';
 import { createGeneratedZip, createSplitMergedZip } from '../pdf/exports';
@@ -46,6 +47,7 @@ export function createBatchProcessor() {
   let preflightStarted = false;
   let retained: { input: RowInputs; checked: BatchPreflightResult } | undefined;
   let printSource: Awaited<ReturnType<typeof inspectPrintSource>> | undefined;
+  let estimatePrint: ReturnType<typeof preparePrintJobEstimator> | undefined;
   let pending: Promise<unknown> = Promise.resolve();
 
   async function handle(command: BatchCommand, notify: ProgressListener): Promise<BatchResult> {
@@ -66,10 +68,11 @@ export function createBatchProcessor() {
     if (!retained) throw new Error('batch-not-ready');
     const { input, checked: { rows: results, custody } } = retained;
     if (phase === 'estimate') {
-      const { estimatePrintJob } = await import('../export/print-estimator');
+      const { preparePrintJobEstimator } = await import('../export/print-estimator');
       printSource ??= await inspectPrintSource(input.template);
-      return estimatePrintJob({
-        ...command, ...printSource, rows: results, preflight: input.options, custody, exportedAt: localVirtualDate(new Date()),
+      estimatePrint ??= preparePrintJobEstimator(input.options);
+      return estimatePrint({
+        ...command, ...printSource, rows: results, custody, exportedAt: localVirtualDate(new Date()),
       });
     }
     const getPdfBytes = async (index: number) => {
