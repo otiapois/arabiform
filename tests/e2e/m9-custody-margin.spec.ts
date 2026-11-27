@@ -86,7 +86,8 @@ for (const language of ['en', 'ar'] as const) {
     const roster = english ? csv : await readFile(golden('roster.xlsx'));
     const ids = english ? ['00123', '00007'] : ['00123', '00007', '00891', 'AR-00042 / ق'];
     const templateSha256 = sha(template), rosterSha256 = sha(roster);
-    const sources = { version: 1, templateSha256, rosterSha256 };
+    const sources = { version: 1, templateSha256, rosterSha256, exportScope: 'all-ready',
+      selectedRowNumbers: english ? [1, 2] : [1, 2, 3, 4] };
     await page.getByTestId('pdf-upload').setInputFiles({ name: 'Synthetic print margins.pdf', mimeType: 'application/pdf', buffer: template });
     await page.locator('.pattern-input').fill('{{ID}}.pdf');
     await expect(button).toBeDisabled();
@@ -204,7 +205,7 @@ for (const language of ['en', 'ar'] as const) {
       const replacement = Buffer.from('Name,ID\r\nChanged,00001\r\n');
       await page.getByTestId('roster-upload').setInputFiles({ name: 'Synthetic records.csv', mimeType: 'text/csv', buffer: replacement });
       await expect(page.getByTestId('ready-count')).toHaveText('1');
-      const newSources = { ...sources, rosterSha256: sha(replacement) };
+      const newSources = { ...sources, rosterSha256: sha(replacement), selectedRowNumbers: [1] };
       expect(await receipt('replacement')).toEqual(newSources);
       const newZip = await download(page, labels.zip, info.outputPath('new-roster'), 'arabiform-clean.zip');
       expect(await receipt('replacement-exported')).toEqual({ ...newSources, entries: await actualMembers(newZip, ['00001']) });
