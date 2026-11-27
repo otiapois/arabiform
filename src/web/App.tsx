@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type ChangeEvent, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { CapacityDisclosure } from './CapacityDisclosure';
 import { fillLabel, translator } from './labels';
 import { QueuePanel } from './QueuePanel';
@@ -72,19 +73,20 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
   useEffect(() => {
-    if (!characterKeys || shortcutTrigger) return;
+    if (!characterKeys) return;
     function handleCharacterShortcut(event: KeyboardEvent) {
       const helpKey = event.key === '?' || (arabic && event.key === '؟');
       if ((!helpKey && event.key !== '/') || event.defaultPrevented || event.isComposing || event.repeat
-        || event.altKey || event.ctrlKey || event.metaKey || document.designMode === 'on') return;
+        || event.altKey || event.ctrlKey || event.metaKey || document.designMode === 'on'
+        || document.querySelector(':modal')) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.isContentEditable) return;
-      if (target instanceof Element && target.closest('input, textarea, select, [role="textbox"], [role="combobox"], :modal')) return;
+      if (target instanceof Element && target.closest('input, textarea, select, [role="textbox"], [role="combobox"]')) return;
       if (helpKey) {
         const trigger = document.activeElement;
         if (!(trigger instanceof HTMLElement)) return;
         event.preventDefault();
-        setShortcutTrigger(trigger);
+        setShortcutTrigger((current) => current ?? trigger);
       } else {
         const search = document.getElementById('queue-search');
         if (!search) return;
@@ -94,7 +96,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
     }
     document.addEventListener('keydown', handleCharacterShortcut);
     return () => document.removeEventListener('keydown', handleCharacterShortcut);
-  }, [arabic, characterKeys, shortcutTrigger]);
+  }, [arabic, characterKeys]);
 
   const { ready, flagged, customFont } = desk;
   const subset = desk.exportScope.exportScope === 'selected-subset';
@@ -437,7 +439,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
         <Suspense>
           <ShortcutsDialog arabic={arabic} characterKeys={characterKeys} onChangeCharacterKeys={setCharacterKeys}
             onClose={() => {
-              setShortcutTrigger(undefined);
+              // Clear the dismissed dialog before a new shortcut reuses the same trigger.
+              flushSync(() => setShortcutTrigger(undefined));
               shortcutTrigger.focus({ preventScroll: true });
             }} />
         </Suspense>

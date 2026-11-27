@@ -37,9 +37,18 @@ export default function ShortcutsDialog({ arabic, characterKeys, onChangeCharact
     close.current?.focus();
   }, []);
 
+  function dismiss() {
+    dialog.current?.close();
+    onClose();
+  }
+
   return (
     <dialog ref={dialog} className="shortcuts-dialog" aria-labelledby="shortcuts-heading"
-      data-testid="shortcuts-dialog" onClose={onClose}
+      data-testid="shortcuts-dialog"
+      onCancel={(event) => {
+        event.preventDefault();
+        dismiss();
+      }}
       onKeyDown={(event) => {
         if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
         const first = event.shiftKey ? setting.current : close.current;
@@ -51,7 +60,7 @@ export default function ShortcutsDialog({ arabic, characterKeys, onChangeCharact
       <header>
         <h2 id="shortcuts-heading">{copy.title}</h2>
         <button ref={close} type="button" className="button secondary" data-testid="shortcuts-close"
-          onClick={() => dialog.current?.close()}>{copy.close}</button>
+          onClick={dismiss}>{copy.close}</button>
       </header>
       <dl className="shortcuts-list">
         <div><dt><kbd dir="ltr">?</kbd>{arabic && <> <kbd>؟</kbd></>}</dt><dd>{copy.help}</dd></div>
