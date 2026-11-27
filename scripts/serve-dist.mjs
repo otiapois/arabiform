@@ -34,9 +34,16 @@ async function respond(request, response) {
 
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname)
+    // Mirror the exact Arabic shortcuts in public/_redirects.
+    if (pathname === '/ar' || pathname === '/ar/') {
+      response.writeHead(301, { ...headers, Location: '/ar/pdf-mail-merge' }).end()
+      return
+    }
+
     const target = resolve(dist, `.${pathname}`)
     const localPath = relative(dist, target)
-    if (localPath.startsWith('..') || isAbsolute(localPath) || localPath === '_headers') {
+    if (localPath.startsWith('..') || isAbsolute(localPath) ||
+        ['_headers', '_redirects'].includes(localPath.toLowerCase())) {
       response.writeHead(404, headers).end()
       return
     }
