@@ -21,6 +21,7 @@ const ExportError = lazy(() => import('./ExportError'));
 const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
 const WorksheetPicker = lazy(() => import('./SourcePrintControls').then(({ WorksheetPicker }) => ({ default: WorksheetPicker })));
 const PrintLayout = lazy(() => import('./SourcePrintControls').then(({ PrintLayout }) => ({ default: PrintLayout })));
+const PdfExtractor = lazy(() => import('./PdfExtractor'));
 
 type AppProps = {
   arabic: boolean;
@@ -76,6 +77,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
   const { labels, problem } = language;
   const desk = useWorkbench(arabic ? 'ar' : 'en');
+  const [mode, setMode] = useState<'fill' | 'extract'>();
+  const extractMode = mode === 'extract';
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
   useEffect(() => {
@@ -94,6 +97,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
         event.preventDefault();
         setShortcutTrigger((current) => current ?? trigger);
       } else {
+        if (extractMode) return;
         const search = document.getElementById('queue-search');
         if (!search) return;
         event.preventDefault();
@@ -102,7 +106,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
     }
     document.addEventListener('keydown', handleCharacterShortcut);
     return () => document.removeEventListener('keydown', handleCharacterShortcut);
-  }, [arabic, characterKeys]);
+  }, [arabic, characterKeys, extractMode]);
 
   const { ready, flagged, customFont } = desk;
   const subset = desk.exportScope.exportScope === 'selected-subset';
@@ -142,13 +146,22 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               <span className="privacy-dot" aria-hidden="true" />
               {labels.privacyBadge}
             </div>
-            <button type="button" className="button primary sample-button" disabled={desk.busy.pdf && desk.busy.roster} onClick={() => void desk.loadSample()}>
+            <button type="button" className="button primary sample-button" hidden={extractMode} disabled={desk.busy.pdf && desk.busy.roster} onClick={() => void desk.loadSample()}>
               {labels.trySample}
             </button>
           </div>
         </section>
 
-        <section className="sample-gallery" aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
+        <div id="workbench" tabIndex={-1} className="workbench-modes" role="group" aria-label={arabic ? 'وضع العمل' : 'Workspace mode'}>
+          <button type="button" className="button" data-testid="mode-fill" aria-pressed={!extractMode} onClick={() => setMode(mode && 'fill')}>
+            <span>{arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs'}</span>
+          </button>
+          <button type="button" className="button" data-testid="mode-extract" aria-pressed={extractMode} onClick={() => setMode('extract')}>
+            <span>{arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx'}</span>
+          </button>
+        </div>
+
+        <section className="sample-gallery" hidden={extractMode} aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
           <h2 id="sample-workflows-heading">{labels.sampleWorkflows}</h2>
           <div className="sample-cards">
             {sampleWorkflows.map(workflow => (
@@ -163,7 +176,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
           </div>
         </section>
 
-        <div className="workbench" id="workbench" tabIndex={-1}>
+        <div className="workbench" hidden={extractMode}>
           {desk.template && (
             <Suspense><CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
           )}
@@ -383,6 +396,10 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             </div>
           </section>
         </div>
+
+        {mode && <div hidden={!extractMode}>
+          <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}><PdfExtractor arabic={arabic} /></Suspense>
+        </div>}
 
         {details && <div className="route-details" dangerouslySetInnerHTML={details} />}
         <section className="checklist" aria-labelledby="checklist-heading">
