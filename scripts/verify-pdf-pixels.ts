@@ -955,7 +955,8 @@ const m20Qr = { placement: 'bottom-right', sizePt: 48, payloads: ['00123'] } as 
 const m20QrReference = { pdf: 'm20-qr-only.pdf', plainPdf: 'm20-unmarked.pdf', zip: 'm20-qr-only.zip', member: eastWest.filename,
   coverPages: 0, corner: m20Qr.placement, sizePt: m20Qr.sizePt, modules: encodeQr('00123').modules };
 const m20Proof = { filled: eastWest.filename, original: m20Legacy.filename, pdf: 'm20-approved.pdf', preview: 'm20-approved-preview.pdf',
-  zip: 'm20-approved.zip', qrReference: m20QrReference.pdf, seal: m20Approval, widthPt: 126, heightPt: 44,
+  zip: 'm20-approved.zip', qrReference: m20QrReference.pdf, printReference: m20QrReference.plainPdf, qrSizePt: m20Qr.sizePt,
+  seal: m20Approval, widthPt: 126, heightPt: 44,
   overlapWithWidget: 'approval-seal-widget-overlap', overlapWithQr: 'approval-seal-qr-overlap' };
 const m20Batch = createBatchProcessor();
 const m20Idle = () => {};
