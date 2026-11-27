@@ -45,7 +45,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
   const alert = notice === 'invalid' || notice === 'sources' || notice === 'font' || notice === 'saveError' || notice === 'changed';
 
   async function run(file?: File) {
-    if (pending || desk.exporting || (!file && (desk.fontBlocked || desk.printSettingsBlocked || desk.virtualTemplateBlocked))) return;
+    if (pending || desk.exporting || (!file && (desk.fontBlocked || desk.printSettingsBlocked || desk.virtualTemplateBlocked || desk.groupingBlocked))) return;
     const current = desk.beginDraft(Boolean(file));
     const { template, roster, sheet, customFont } = desk;
     setNotice(file ? 'loading' : 'saving');
@@ -95,7 +95,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
       <p className="quiet">{labels.help}</p>
       <div className="actions compact">
         <button type="button" className="button secondary" data-testid="draft-download" aria-label={`${labels.save} (.json)`}
-          disabled={pending || desk.exporting || desk.fontBlocked || desk.printSettingsBlocked || desk.virtualTemplateBlocked} onClick={() => void run()}>{labels.save}{'\u00A0'}<bdi dir="ltr">(.json)</bdi></button>
+          disabled={pending || desk.exporting || desk.fontBlocked || desk.printSettingsBlocked || desk.virtualTemplateBlocked || desk.groupingBlocked} onClick={() => void run()}>{labels.save}{'\u00A0'}<bdi dir="ltr">(.json)</bdi></button>
         <label className="button secondary preset-picker">
           {labels.load}{'\u00A0'}<bdi dir="ltr">(.json)</bdi>
           <input type="file" data-testid="draft-upload" aria-label={`${labels.load} (.json)`} accept=".json,application/json"

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { CustodyManifest, CustodySources } from '../core/audit/custody';
+import type { GroupingPlan } from '../core/export/grouping';
 import type { AlignOverride } from '../core/pdf/alignment';
 import type { Imposition } from '../core/pdf/exports';
 import type { QrStampSettings } from '../core/pdf/qr-settings';
@@ -14,12 +15,14 @@ import type { FontMode } from './presets';
 import { errorCode, loadFonts, saveDownload } from './resources';
 
 export type BatchWorker = ReturnType<typeof createBatchWorker>;
-export type ExportKind = 'zip' | 'merged' | 'csv' | 'json';
-type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256'>;
+export type ExportKind = 'zip' | 'merged' | 'split' | 'csv' | 'json';
+export type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256' | 'groupByColumn' | 'groups'>;
 
 export type OutputSettings = {
   filenamePlans: readonly FilenamePlan[];
   rowSelection: RowSelection;
+  grouping?: GroupingPlan;
+  groupingBlocked: boolean;
   flattenZip: boolean;
   cover?: Omit<MergeCoverSheet, 'filenames'>;
   watermark?: WatermarkSettings;
@@ -151,14 +154,16 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
   async function download(kind: ExportKind) {
     const client = worker.current;
     if (!batch || !client || !results || exportLock.current) return;
-    if (!exportCount && (output.rowSelection !== 'all-ready' || kind === 'zip' || kind === 'merged')) return;
+    const pdf = kind !== 'csv' && kind !== 'json';
+    if (!exportCount && (output.rowSelection !== 'all-ready' || pdf)) return;
+    if ((output.groupingBlocked && kind !== 'merged') || (kind === 'split' && !output.grouping)) return;
     const operation = Symbol();
     exportLock.current = operation;
     setExporting(kind);
     setExportError(undefined);
     const currentExport = () => exportLock.current === operation && worker.current === client;
     try {
-      if (kind === 'zip' || kind === 'merged') {
+      if (pdf) {
         setProgress({ phase: kind, completed: 0, total: exportCount });
       }
       const { buildDownload } = await import('./batch-exports');
@@ -192,7 +197,7 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     exportScope, exportCount, custody: current?.custody,
     custodyOutputs: exported?.settings === output ? exported.digests : undefined,
     previewBytes: currentPreview?.bytes, previewError: Boolean(currentPreview && !currentPreview.bytes),
-    exporting: Boolean(exporting), exportingZip: exporting === 'zip', exportError,
+    exporting: Boolean(exporting), exportError,
     exportLocked: () => Boolean(exportLock.current),
     invalidate, clearExportError: () => setExportError(undefined), cancel,
     resume: () => invalidate(true), download,

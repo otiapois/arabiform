@@ -1,0 +1,12 @@
+.grouped-summary {
+  display: grid;
+  gap: .3rem;
+  min-inline-size: 0;
+  font-size: .84rem;
+  overflow-wrap: anywhere;
+}
+
+.grouped-summary summary { color: var(--forest); cursor: pointer; }
+.grouped-summary summary:focus-visible { outline: 2px solid var(--focus); }
+.grouped-summary ul { margin-block: .25rem 0; padding-inline-start: 1.4rem; }
+.split-download { gap: .25rem; max-inline-size: 100%; white-space: normal; }

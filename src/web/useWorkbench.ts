@@ -72,6 +72,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [customFont, setCustomFont] = useState<CustomFont>();
   const [pattern, setPattern] = useState('{{ID}}-{{Name}}.pdf');
   const [flattenZip, setFlattenZip] = useState(false);
+  const [groupByColumn, setGroupByColumn] = useState<string | null>(null);
   const [includeCoverSheet, setIncludeCoverSheet] = useState(false);
   const [coverLanguage, setCoverLanguage] = useState<CoverLanguage>('auto');
   const [imposition, setImposition] = useState<Imposition>('1-up');
@@ -119,21 +120,25 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
     : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked]);
   const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern, { localDate: roster.localDate }) ?? [], [roster, rows, pattern]);
+  const grouping = useMemo(() => roster && groupByColumn !== null && sheet?.headers.includes(groupByColumn)
+    ? roster.views.planGroupedOutput(rows, groupByColumn, pattern, { localDate: roster.localDate })
+    : undefined, [roster, sheet, rows, pattern, groupByColumn]);
+  const groupingBlocked = groupByColumn !== null && !grouping;
   const templateName = template?.name;
   const activeCoverLanguage = includeCoverSheet ? coverLanguage : 'auto';
   const impositionUnavailable = Boolean(template && template.info.pages.length > 1);
   const printLayout = impositionUnavailable ? '1-up' : imposition;
   const output = useMemo(() => ({
-    filenamePlans, flattenZip, rowSelection,
+    filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked,
     cover: includeCoverSheet && templateName ? { locale, templateName, includeCustody, coverLanguage: activeCoverLanguage } : undefined,
     watermark: watermark.kind !== 'none' ? watermark : undefined,
     qrStamp: qrStamp.placement !== 'none' ? qrStamp : undefined,
     imposition: printLayout,
-  }), [filenamePlans, flattenZip, rowSelection, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, activeCoverLanguage, printLayout]);
+  }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, activeCoverLanguage, printLayout]);
   const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output);
   const results = useMemo(() => job.results?.map((result, index): RowResult => ({
-    ...result, ...filenamePlans[index]!,
-  })), [job.results, filenamePlans]);
+    ...result, ...(grouping?.rows[index] ?? filenamePlans[index]!),
+  })), [job.results, grouping, filenamePlans]);
   const ready = useMemo(() => job.results?.filter(({ status }) => status === 'pass').length ?? 0, [job.results]);
   const warningRows = useMemo(() => rows.filter((row) => row.warnings.length > 0).length, [rows]);
   const firstFlaggedPage = job.results?.[selected]?.pageNumbers[0];
@@ -238,6 +243,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setFont('auto');
       setPattern(samplePatterns[selectedSample]);
       setFlattenZip(false);
+      setGroupByColumn(null);
       setIncludeCoverSheet(false);
       setCoverLanguage('auto');
       setImposition('1-up');
@@ -398,9 +404,17 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }
 
   function changeFlattenZip(value: boolean) {
+    if (exportLocked()) return;
     clearExportError();
     request.current.draft++;
     setFlattenZip(value);
+  }
+
+  function changeGrouping(column: string | null) {
+    if (exportLocked()) return;
+    clearExportError();
+    request.current.draft++;
+    setGroupByColumn(column);
   }
 
   function changeIncludeCoverSheet(value: boolean) {
@@ -472,6 +486,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
     setFlattenZip(preset.version !== 1 && preset.flattenZip);
+    setGroupByColumn('groupByColumn' in preset ? preset.groupByColumn : null);
     setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
     setIncludeCustody(false);
     setWatermark('watermark' in preset ? preset.watermark : DEFAULT_WATERMARK);
@@ -485,7 +500,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   function presetInputs() {
     const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
       !Object.hasOwn(virtualMappings, name) && (kind === 'text' || kind === 'checkbox' || mapping[name]) ? [[name, mapping[name]!]] : []));
-    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition] as const;
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn] as const;
   }
 
   async function exportPreset() {
@@ -522,6 +537,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
     rowSelection, changeRowSelection,
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
+    groupByColumn, grouping, groupingBlocked, changeGrouping,
     includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage, printLayout, impositionUnavailable, changeImposition,
     watermark, watermarkBlocked, changeWatermark,
     qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked, changeQrStamp,
@@ -531,7 +547,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
     download: (kind: Parameters<typeof download>[0]) => {
-      const print = kind === 'merged' || (kind === 'zip' && flattenZip);
+      const print = kind === 'merged' || kind === 'split' || (kind === 'zip' && flattenZip);
       if (print && printSettingsBlocked) return;
       return download(kind);
     },

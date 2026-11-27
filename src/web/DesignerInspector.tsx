@@ -2,6 +2,7 @@ import { useId, type FocusEvent } from 'react';
 import type { FieldDraftSpec } from '../core/designer/spec';
 import type { PdfRect } from '../core/designer/geometry';
 import type { DesignField } from './DesignerCanvas';
+import { designerKinds, fieldCaption } from './designer-fields';
 import type { DesignerCopy } from './designer-labels';
 
 const axes = ['X', 'Y', 'W', 'H'] as const;
@@ -41,16 +42,22 @@ function NumericInput({ id, label, value, fallback, min, max, step = 'any', onAp
   );
 }
 
-export default function DesignerInspector({ copy, fields, selected, disabled, onSelect, onChange, onDelete }: {
+export default function DesignerInspector({ copy, fields, selected, disabled, onSelect, onChange, onChangeKind, onDelete,
+  options, optionsPending, onOptionText }: {
   copy: DesignerCopy;
   fields: DesignField[];
   selected?: DesignField;
   disabled: boolean;
   onSelect: (id: number) => void;
   onChange: (spec: FieldDraftSpec) => boolean;
+  onChangeKind: (kind: FieldDraftSpec['kind']) => void;
   onDelete: (id: number) => void;
+  options?: string;
+  optionsPending: boolean;
+  onOptionText: (text?: string) => void;
 }) {
   const unitsId = useId();
+  const optionsHelpId = useId();
   const field = selected?.spec;
   return (
     <aside className="designer-inspector" aria-labelledby="designer-inspector-title">
@@ -60,13 +67,13 @@ export default function DesignerInspector({ copy, fields, selected, disabled, on
         <select data-testid="designer-field-select" disabled={disabled || fields.length === 0} value={selected?.id ?? ''}
           onChange={(event) => onSelect(Number(event.currentTarget.value))}>
           <option value="" disabled>{copy.selectField}</option>
-          {fields.map(({ id, spec }) => <option value={id} key={id} dir="auto">{spec.name || copy[spec.kind]}</option>)}
+          {fields.map(({ id, spec }) => <option value={id} key={id} dir="auto">{fieldCaption(spec)}</option>)}
         </select>
       </label>
       {field && selected && (
         <fieldset key={selected.id} disabled={disabled} className="designer-properties" aria-label={copy.inspector}>
           <label>
-            {copy.fieldName}
+            {field.kind === 'radio' ? copy.groupName : copy.fieldName}
             <input key={field.name} type="text" dir="auto" defaultValue={field.name} data-testid="designer-field-name"
               onBlur={(event) => {
                 const input = event.currentTarget;
@@ -80,14 +87,45 @@ export default function DesignerInspector({ copy, fields, selected, disabled, on
           </label>
           <label>
             {copy.kind}
-            <select data-testid="designer-kind" value={field.kind} onChange={(event) => {
-              const kind = event.currentTarget.value as FieldDraftSpec['kind'];
-              onChange({ name: field.name, pageIndex: field.pageIndex, rectPdf: field.rectPdf, kind });
-            }}>
-              <option value="text">{copy.text}</option>
-              <option value="checkbox">{copy.checkbox}</option>
+            <select data-testid="designer-kind" value={field.kind}
+              onChange={(event) => onChangeKind(event.currentTarget.value as FieldDraftSpec['kind'])}>
+              {designerKinds.map((kind) => <option key={kind} value={kind}>{copy[kind]}</option>)}
             </select>
           </label>
+          {field.kind === 'dropdown' && (
+            <>
+              <label>
+                {copy.options}
+                <textarea data-testid="designer-dropdown-options" dir="auto" rows={4} value={options}
+                  aria-describedby={optionsHelpId} onChange={(event) => onOptionText(event.currentTarget.value)} />
+              </label>
+              <small className="quiet" id={optionsHelpId}>{copy.optionsHelp}</small>
+              {optionsPending && <p className="quiet" role="status">{copy.optionsPending}</p>}
+              <div className="actions compact">
+                <button type="button" className="button secondary" data-testid="designer-apply-options" disabled={!optionsPending}
+                  onClick={() => {
+                    const choices = options!.replace(/\n$/, '').split('\n');
+                    if (onChange({ ...field, options: choices })) onOptionText();
+                  }}>{copy.applyOptions}</button>
+                {optionsPending && <button type="button" className="button secondary" onClick={() => onOptionText()}>{copy.discardOptions}</button>}
+              </div>
+            </>
+          )}
+          {field.kind === 'radio' && (
+            <label>
+              {copy.exportValue}
+              <input key={field.exportValue} type="text" dir="auto" defaultValue={field.exportValue} data-testid="designer-radio-export"
+                onBlur={(event) => {
+                  const input = event.currentTarget;
+                  if (input.value !== field.exportValue && !onChange({ ...field, exportValue: input.value })) input.value = field.exportValue ?? '';
+                }} onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }
+                }} />
+            </label>
+          )}
           {field.kind === 'text' && (
             <>
               <label>

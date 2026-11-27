@@ -84,6 +84,16 @@
   box-shadow: 0 0 0 1px #fff;
 }
 .designer-field::before { position: absolute; inset: -8px; content: ''; }
+.designer-field[data-kind="radio"] { border-radius: 50%; }
+.designer-field[data-kind="dropdown"]::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: .18rem;
+  inset-block-start: 50%;
+  border: .22rem solid transparent;
+  border-block-start-color: #194b36;
+  transform: translateY(-20%);
+}
 .designer-field[aria-pressed="true"] {
   z-index: 1;
   border-color: #113f75;

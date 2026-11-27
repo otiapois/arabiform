@@ -28,6 +28,9 @@ const SourceError = lazy(() => import('./SourceError'));
 const ExportCounts = lazy(() => import('./BatchExportStatus').then(({ ExportCounts }) => ({ default: ExportCounts })));
 const SelectedExportScope = lazy(() => import('./BatchExportStatus').then(({ SelectedExportScope }) => ({ default: SelectedExportScope })));
 const ExportProgress = lazy(() => import('./BatchExportStatus').then(({ ExportProgress }) => ({ default: ExportProgress })));
+const GroupingControl = lazy(() => import('./GroupedOutputs').then(({ GroupingControl }) => ({ default: GroupingControl })));
+const GroupedSummary = lazy(() => import('./GroupedOutputs').then(({ GroupedSummary }) => ({ default: GroupedSummary })));
+const SplitDownload = lazy(() => import('./GroupedOutputs').then(({ SplitDownload }) => ({ default: SplitDownload })));
 
 type AppProps = {
   arabic: boolean;
@@ -316,8 +319,9 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       <small>{labels.patternHelp}</small>
                     </label>
                     {(desk.template || desk.roster) && <Suspense><VirtualFilenameTokens arabic={arabic} /></Suspense>}
+                    {(desk.sheet || desk.groupByColumn !== null) && <Suspense><GroupingControl desk={desk} arabic={arabic} /></Suspense>}
                     <label className="output-mode zip-mode">
-                      <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exportingZip}
+                      <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exporting}
                         onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
                       <span>{labels.flattenZip}</span>
                     </label>
@@ -415,15 +419,17 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 {subset
                   ? <Suspense><SelectedExportScope arabic={arabic} count={desk.exportCount} showEmpty={emptySubset && Boolean(desk.results)} /></Suspense>
                   : <p role="status" className="tag tag-pass" data-testid="export-scope">{fillLabel(labels.exportAll, { count: desk.exportCount })}</p>}
+                {desk.grouping && desk.results && <Suspense><GroupedSummary desk={desk} arabic={arabic} /></Suspense>}
                 <div className="actions">
-                  <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.printSettingsBlocked)}
+                  <button type="button" className="button primary" data-testid="download-zip" disabled={!desk.exportCount || desk.exporting || desk.groupingBlocked || (desk.flattenZip && desk.printSettingsBlocked)}
                     onClick={() => desk.download('zip')}>{labels.zip}</button>
                   <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
                     onClick={() => desk.download('merged')}>{labels.merged}</button>
+                  {desk.grouping && <Suspense><SplitDownload desk={desk} arabic={arabic} /></Suspense>}
                 </div>
                 <div className="actions audit-actions" role="group" aria-label={labels.audit}>
-                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
-                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
+                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
+                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked} onClick={() => desk.download('json')}>{labels.auditJson}</button>
                 </div>
                 <div className="custody-controls">
                   {desk.custody ? (

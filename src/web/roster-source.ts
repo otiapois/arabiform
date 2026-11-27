@@ -3,6 +3,7 @@ import type { RosterSheet } from '../core/roster';
 import type { FieldMetadata } from '../core/pdf';
 import type { BatchDraft } from '../core/draft/batch-draft';
 import * as virtual from '../core/roster/virtual-columns';
+import { planGroupedOutput } from '../core/export/grouping';
 import { errorCode } from './resources';
 
 type ActiveSheet = { sheetName?: string; sheet?: RosterSheet; sheetError?: string };
@@ -19,6 +20,7 @@ export type RosterSource = ActiveSheet & {
 };
 
 export const rosterViews = {
+  planGroupedOutput,
   fieldMapping(fields: readonly FieldMetadata[], headers: readonly string[], values: Record<string, string>,
     bindings: Record<string, virtual.VirtualColumnMapping>, fromPreset: boolean, remapMissing = false) {
     const auto = !fromPreset || remapMissing

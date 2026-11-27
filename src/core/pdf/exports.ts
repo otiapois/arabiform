@@ -1,7 +1,8 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOperatorNames as Op, PDFRef, PDFStream, PDFWidgetAnnotation } from 'pdf-lib';
 import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
-import { sha256, type CustodyEntry } from '../audit/custody';
+import { createCustodyManifest, sha256, type CustodyEntry, type CustodySources, type GroupedCustodyEntry } from '../audit/custody';
+import { isSafeGroupedPdfPath, SPLIT_CUSTODY_PATH, type OutputGroup } from '../export/grouping';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
 import type { ExportScope } from '../worker/row-selection';
@@ -26,15 +27,18 @@ export interface AuditRow {
   status: RowPreflightResult['status'];
   diagnostics: FieldDiagnostic[];
   fontSizes: Record<string, number[]>;
+  zipPath?: string;
 }
 
 type ExportProgress = (completed: number, total: number) => void;
 
-function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, copyOutput = false) {
+function openZip(paths: readonly string[], onProgress?: ExportProgress, copyOutput = false, mode: 'flat' | 'grouped' | 'split' = 'flat') {
+  const members = [...paths];
   const filenames = new Set<string>();
-  for (const { filename } of rows) {
-    const normalized = filenameKey(filename);
-    if (!isSafePdfFilename(filename) || filenames.has(normalized)) throw new Error('invalid-export-filename');
+  for (const path of members) {
+    const normalized = filenameKey(path);
+    const safe = mode === 'grouped' ? isSafeGroupedPdfPath(path) : isSafePdfFilename(path) || mode === 'split' && path === SPLIT_CUSTODY_PATH;
+    if (!safe || filenames.has(normalized)) throw new Error('invalid-export-filename');
     filenames.add(normalized);
   }
   const chunks: Uint8Array[] = [];
@@ -63,14 +67,15 @@ function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, copyOu
       offset += length;
     }
   });
-  onProgress?.(0, rows.length);
+  onProgress?.(0, members.length);
   return {
-    add(filename: string, pdfBytes: Uint8Array) {
-      const entry = new ZipPassThrough(filename);
+    add(pdfBytes: Uint8Array) {
+      const entry = new ZipPassThrough(members[index]!);
       entry.mtime = new Date(2000, 0, 1, 12);
       zip.add(entry);
       entry.push(pdfBytes, true);
-      onProgress?.(++index, rows.length);
+      index++;
+      onProgress?.(index, members.length);
     },
     finish() {
       zip.end();
@@ -87,8 +92,8 @@ function openZip(rows: readonly ExportRow[], onProgress?: ExportProgress, copyOu
 }
 
 export function createZip(rows: readonly PdfExportRow[], onProgress?: ExportProgress): Uint8Array {
-  const zip = openZip(rows, onProgress);
-  for (const { filename, pdfBytes } of rows) zip.add(filename, pdfBytes);
+  const zip = openZip(rows.map(({ filename }) => filename), onProgress);
+  for (const { pdfBytes } of rows) zip.add(pdfBytes);
   return zip.finish();
 }
 
@@ -111,19 +116,24 @@ async function getQrStamp(request: QrPrintRequest | undefined, rowCount: number)
 export async function createFlattenedZip(
   rows: readonly PdfExportRow[], onProgress?: ExportProgress, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
 ): Promise<Uint8Array> {
-  const zip = openZip(rows, onProgress);
+  const zip = openZip(rows.map(({ filename }) => filename), onProgress);
   const stamp = await getPrintStamp(watermark);
   const qr = await getQrStamp(qrStamp, rows.length);
   for (const [index, row] of rows.entries()) {
-    zip.add(row.filename, await buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index))));
+    zip.add(await buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index))));
   }
   return zip.finish();
 }
 
 export async function createGeneratedZip(
   rows: readonly GeneratedPdfExportRow[], onProgress?: ExportProgress, flatten = false, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
+  zipPaths?: readonly string[],
 ) {
-  const zip = openZip(rows, onProgress, true);
+  const paths = zipPaths ? [...zipPaths] : rows.map(({ filename }) => filename);
+  if (zipPaths && (paths.length !== rows.length || paths.some((path, index) => path.split('/')[1] !== rows[index]!.filename))) {
+    throw new Error('invalid-export-filename');
+  }
+  const zip = openZip(paths, onProgress, true, zipPaths ? 'grouped' : 'flat');
   const stamp = flatten ? await getPrintStamp(watermark) : undefined;
   const qr = flatten ? await getQrStamp(qrStamp, rows.length) : undefined;
   const entries: CustodyEntry[] = [];
@@ -131,8 +141,9 @@ export async function createGeneratedZip(
     const bytes = await (flatten
       ? buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index)))
       : row.getPdfBytes());
-    entries.push({ filename: row.filename, sha256: await sha256(bytes), bytes: bytes.byteLength });
-    zip.add(row.filename, bytes);
+    const zipPath = zipPaths && paths[index]!;
+    entries.push({ filename: row.filename, sha256: await sha256(bytes), bytes: bytes.byteLength, ...(zipPath !== undefined && { zipPath }) });
+    zip.add(bytes);
   }
   return { bytes: zip.finish(), entries };
 }
@@ -202,6 +213,35 @@ export async function createMergedPdf(
   return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark), await getQrStamp(qrStamp, rows.length), imposition);
 }
 
+type SplitPrintGroup = OutputGroup & { rows: readonly GeneratedPdfExportRow[]; cover?: MergeCoverOptions };
+
+export async function createSplitMergedZip(
+  groups: readonly SplitPrintGroup[], sources: CustodySources, scope: ExportScope, groupByColumn: string, onProgress?: ExportProgress,
+  watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest, imposition: Imposition = '1-up',
+) {
+  if (!groups.length) throw new Error('empty-export');
+  if (imposition !== '1-up' && imposition !== '2-up') throw new Error('invalid-imposition');
+  const paths = groups.map(({ folder }) => `${folder}-merged.pdf`);
+  const zip = openZip([...paths, SPLIT_CUSTODY_PATH], undefined, true, 'split');
+  const total = scope.selectedRowNumbers.length;
+  const qr = await getQrStamp(qrStamp, total);
+  const stamp = await getPrintStamp(watermark);
+  const qrIndices = new Map(scope.selectedRowNumbers.map((number, index) => [number, index]));
+  const entries: GroupedCustodyEntry[] = [];
+  let completed = 0;
+  for (const [index, { groupValue, folder, rowNumbers, rows, cover }] of groups.entries()) {
+    const filename = paths[index]!;
+    const bytes = await buildMergedPdf(rows, (count) => onProgress?.(completed + count, total), cover, stamp,
+      qr && ((pages, ordinal) => qr(pages, qrIndices.get(rowNumbers[ordinal]!)!)), imposition);
+    entries.push({ groupValue, folder, zipPath: filename, rowNumbers, filename, sha256: await sha256(bytes), bytes: bytes.byteLength });
+    zip.add(bytes);
+    completed += rows.length;
+  }
+  const receipt = createCustodyManifest(sources, { groupByColumn, groups: entries }, scope);
+  zip.add(new TextEncoder().encode(receipt));
+  return { bytes: zip.finish(), groupByColumn, groups: entries };
+}
+
 async function buildMergedPdf(
   rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, stamp?: PrintStamp, qr?: QrStamp,
   imposition: Imposition = '1-up',
@@ -249,11 +289,16 @@ export function createAudit(rows: readonly AuditRow[], scope?: ExportScope): { j
     included = rows.filter(({ rowNumber, status }) => status === 'pass' && selected.has(rowNumber));
     if (!included.length) throw new Error('empty-export');
   }
-  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => ({
+  const grouped = included.some(({ zipPath }) => zipPath !== undefined);
+  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath }) => ({
     rowNumber, filename, status,
     diagnostics: diagnostics.map(({ pageNumbers, ...issue }) => issue),
     fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),
+    ...(zipPath !== undefined && { zipPath }),
   }));
-  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => [rowNumber, ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes)].map(escapeSpreadsheetCell)]);
-  return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields: ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'], data })}\r\n` };
+  const fields = ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'];
+  if (grouped) fields.push('zipPath');
+  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath }) => [rowNumber,
+    ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes), ...(grouped ? [zipPath ?? ''] : [])].map(escapeSpreadsheetCell)]);
+  return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields, data })}\r\n` };
 }

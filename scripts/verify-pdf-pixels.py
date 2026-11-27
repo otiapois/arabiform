@@ -104,18 +104,24 @@ def check_designer(proof, directory, authored, filled, label):
         allowed = []
         widgets = list(template.widgets())
         assert {widget.field_name for widget in widgets} == set(proof["rects"]), label
+        seen = Counter()
         for widget in widgets:
             mapped = widget.rect * template.rotation_matrix
             actual = [mapped.x0 / template.rect.width, mapped.y0 / template.rect.height,
                       mapped.width / template.rect.width, mapped.height / template.rect.height]
             expected = proof["rects"][widget.field_name]
+            if isinstance(expected[0], list):
+                expected = expected[seen[widget.field_name]]
+            seen[widget.field_name] += 1
             assert all(abs(a - b) < 1e-5 for a, b in zip(actual, expected, strict=True)), (label, actual, expected)
             allowed.append(tuple((mapped * SCALE).irect))
             assert authored.xref_get_key(widget.xref, "MK/R") == ("int", str(template.rotation)), label
-            if widget.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+            if widget.field_type in (fitz.PDF_WIDGET_TYPE_CHECKBOX, fitz.PDF_WIDGET_TYPE_RADIOBUTTON):
                 assert authored.xref_get_key(widget.xref, "AS") == ("name", "/Off"), label
             else:
-                assert widget.field_type == fitz.PDF_WIDGET_TYPE_TEXT and not widget.field_value, label
+                assert widget.field_type in (fitz.PDF_WIDGET_TYPE_TEXT, fitz.PDF_WIDGET_TYPE_COMBOBOX) and not widget.field_value, label
+        for field, expected in proof["rects"].items():
+            assert seen[field] == (len(expected) if isinstance(expected[0], list) else 1), label
         before = render(source)
         assert_same_outside(before, render(template), allowed, f"{label} blank authoring")
         assert_same_outside(before, render(completed), allowed, f"{label} filled authoring")
@@ -188,6 +194,8 @@ def check_case(case, directory):
                         inset = min(bounds[0] - box[0], bounds[1] - box[1], box[2] - bounds[2], box[3] - bounds[3]) if amount else None
                         if filled.xref_get_key(widget.xref, "AS") != original.xref_get_key(old_widget.xref, "AS"):
                             assert amount and inset >= 3, (label, field, "button state changed without visible inset ink", box)
+                        elif designer and field in radios:
+                            assert amount == 0, (label, field, "unselected authored radio changed its off pixels")
                         state_key = "checkboxState" if field in checkboxes else "radioState"
                         results.append({"field": field, "page": page.number + 1, state_key: state,
                                         "inkBboxAt4x": bounds if amount else None, "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset})

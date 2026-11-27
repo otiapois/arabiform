@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } fr
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { sourceToDisplay, type DesignerPage, type NormalizedRect } from '../core/designer/geometry';
 import type { FieldDraftSpec } from '../core/designer/spec';
+import { fieldCaption } from './designer-fields';
 import type { DesignerCopy } from './designer-labels';
 import { openPreviewDocument } from './pdf-preview-document';
 
@@ -158,7 +159,8 @@ export default function DesignerCanvas({ bytes, page, pageIndex, fields, selecte
         <canvas ref={target} role="img" aria-label={copy.pageImage} data-testid="designer-canvas" data-rendered={status?.ok ? 'true' : undefined} />
         {status?.ok && fields.map(({ id, spec }) => (
           <button type="button" className="designer-field" key={id} data-testid="designer-field" data-field={spec.name}
-            aria-pressed={id === selectedId} aria-label={spec.name || copy[spec.kind]} title={spec.name || copy[spec.kind]}
+            data-kind={spec.kind} data-export={spec.kind === 'radio' ? spec.exportValue : undefined}
+            aria-pressed={id === selectedId} aria-label={fieldCaption(spec)} title={fieldCaption(spec)}
             style={position(sourceToDisplay(spec.rectPdf, page))}
             ref={id === focusId ? focusField : undefined}
             disabled={disabled} onClick={() => onSelect(id)} onKeyDown={(event) => keyboard(event, id)} />

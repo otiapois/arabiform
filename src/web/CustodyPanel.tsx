@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from 'react';
-import { createCustodyManifest, CUSTODY_PREFIX_LENGTH, type CustodyManifest, type CustodySources } from '../core/audit/custody';
+import { createCustodyManifest, CUSTODY_PREFIX_LENGTH, type CustodySources } from '../core/audit/custody';
 import type { ExportScope } from '../core/worker/row-selection';
+import type { CustodyOutputs } from './useBatch';
 import { saveDownload } from './resources';
 
 type CustodyPanelProps = {
   sources: CustodySources;
-  outputs?: Pick<CustodyManifest, 'entries' | 'mergedPdfSha256'>;
+  outputs?: CustodyOutputs;
   scope: ExportScope;
   disabled: boolean;
   label: ReactNode;
@@ -22,6 +23,7 @@ const en = {
   zip: 'Manifest includes checksums for the exported ZIP members.',
   merged: 'Manifest includes the checksum for the exported merged PDF.',
   both: 'Manifest includes checksums for the exported ZIP members and merged PDF.',
+  split: 'Manifest includes checksums for the exported per-group merged PDFs.',
 };
 
 const ar: typeof en = {
@@ -34,13 +36,14 @@ const ar: typeof en = {
   zip: 'يشمل البيان بصمات ملفات PDF داخل ملف ZIP الذي صدّرته.',
   merged: 'يشمل البيان بصمة ملف PDF المدمج الذي صدّرته.',
   both: 'يشمل البيان بصمات ملفات PDF داخل ملف ZIP وبصمة ملف PDF المدمج.',
+  split: 'يشمل البيان بصمات ملفات PDF المدمجة لكل مجموعة.',
 };
 
 export default function CustodyPanel({ sources, outputs, scope, disabled, label, arabic }: CustodyPanelProps) {
   const copy = arabic ? ar : en;
   const [copyStatus, setCopyStatus] = useState<'copied' | 'copyFailed'>();
   const coverage = outputs?.entries ? outputs.mergedPdfSha256 ? copy.both : copy.zip
-    : outputs?.mergedPdfSha256 ? copy.merged : copy.sources;
+    : outputs?.mergedPdfSha256 ? copy.merged : outputs?.groups ? undefined : copy.sources;
 
   async function copyFingerprint(digest: string) {
     setCopyStatus(undefined);
@@ -56,7 +59,7 @@ export default function CustodyPanel({ sources, outputs, scope, disabled, label,
     <>
       <button type="button" className="button secondary" data-testid="custody-download" disabled={disabled}
         onClick={() => saveDownload(createCustodyManifest(sources, outputs, scope), 'arabiform-custody-manifest.json', 'application/json')}>{label}</button>
-      <p className="quiet" role="status" data-testid="custody-coverage">{coverage}</p>
+      <p className="quiet" role="status" data-testid="custody-coverage">{coverage}{coverage && outputs?.groups && ' '}{outputs?.groups && copy.split}</p>
       <dl className="custody-fingerprints">
         {([['template', sources.templateSha256], ['roster', sources.rosterSha256]] as const).map(([source, digest]) => (
           <div key={source}>

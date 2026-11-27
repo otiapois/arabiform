@@ -21,6 +21,7 @@ const problems: Record<string, readonly [string, string]> = {
   'imposition-invalid-page-geometry': ['This page size or rotation cannot be used with 2-up. Choose 1-up for this template.', 'لا يدعم وضع السجلين حجم هذه الصفحة أو تدويرها. اختر التخطيط القياسي لهذا القالب.'],
   'imposition-unsupported-print-annotation': ['Use 1-up to retain the printable annotation in this template.', 'اختر التخطيط القياسي للاحتفاظ بالتعليق التوضيحي القابل للطباعة في هذا القالب.'],
   'invalid-imposition': ['Choose a valid merged PDF sheet layout.', 'اختر تخطيطًا صالحًا للأوراق في ملف PDF المدمج.'],
+  'invalid-grouping-column': ['Choose a grouping column from the active roster and try again.', 'اختر عمودًا للتجميع من الجدول الحالي وحاول مجددًا.'],
 };
 
 export function printProblem(code: string, arabic: boolean) {

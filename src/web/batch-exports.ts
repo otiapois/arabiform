@@ -6,11 +6,11 @@ import type { BatchSettings, BatchWorker, ExportKind, OutputSettings } from './u
 
 export async function buildDownload(
   kind: ExportKind,
-  client: Pick<BatchWorker, 'zip' | 'merged'>,
+  client: Pick<BatchWorker, 'zip' | 'merged' | 'split'>,
   onProgress: (progress: BatchProgress) => void,
   { rows, localDate }: Pick<BatchSettings, 'rows' | 'localDate'>,
   results: BatchRowResult[],
-  { filenamePlans, flattenZip, cover, watermark, rowSelection, qrStamp, imposition }: OutputSettings,
+  { filenamePlans, flattenZip, cover, watermark, rowSelection, qrStamp, imposition, grouping }: OutputSettings,
   scope: ExportScope,
   isCurrent: () => boolean,
 ) {
@@ -18,7 +18,8 @@ export async function buildDownload(
     const { createAudit } = await import('../core/pdf');
     const audit = createAudit(results.map((result, index) => ({
       rowNumber: index + 1,
-      filename: filenamePlans[index]!.filename,
+      filename: (grouping?.rows[index] ?? filenamePlans[index]!).filename,
+      ...(grouping && { zipPath: grouping.rows[index]!.zipPath }),
       status: result.status,
       diagnostics: result.diagnostics,
       fontSizes: result.fontSizes,
@@ -43,8 +44,14 @@ export async function buildDownload(
     qrRequest = { placement, sizePt, payloads };
   }
   const filenames = isZip || cover ? filenamePlans.map(({ filename }) => filename) : [];
+  const coverSheet = cover ? { ...cover, filenames } : undefined;
+  if (kind === 'split') {
+    const { bytes, ...digests } = await client.split(grouping!, onProgress, coverSheet, watermark, rowSelection, qrRequest, imposition);
+    return { data: bytes, filename: 'arabiform-split-merged.zip', mime: 'application/zip', digests };
+  }
+  const zipArgs = [filenames, onProgress, flattenZip, flattenZip ? watermark : undefined, rowSelection, qrRequest] as const;
   const { bytes, ...digests } = await (isZip
-    ? client.zip(filenames, onProgress, flattenZip, flattenZip ? watermark : undefined, rowSelection, qrRequest)
-    : client.merged(onProgress, cover ? { ...cover, filenames } : undefined, watermark, rowSelection, qrRequest, imposition));
+    ? grouping ? client.zip(...zipArgs, grouping) : client.zip(...zipArgs)
+    : client.merged(onProgress, coverSheet, watermark, rowSelection, qrRequest, imposition));
   return { data: bytes, filename: isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', mime: isZip ? 'application/zip' : 'application/pdf', digests };
 }

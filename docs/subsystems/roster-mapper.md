@@ -29,6 +29,13 @@
   - Deduplicate with a compatibility-normalized, case-insensitive key (`name.pdf`, `name-2.pdf`). ZIP independently rejects unsafe components, normalized duplicates, and names above 255 UTF-8 bytes.
   - Use the full batch filename plan in the queue, ZIP, audit, and optional merged-PDF cover index. An exported row keeps the filename and collision suffix from that plan for any subset.
 
+## Grouped Output Paths
+
+- `src/core/export/grouping.ts` plans paths from an exact physical roster header and the effective cells after inline edits or cleanup. A null grouping column uses the ordinary flat ZIP plan. Blank and whitespace-only values share a reserved `_Ungrouped` folder with a null `groupValue`. Distinct nonblank values retain their exact text and form separate groups in first roster order.
+- Sanitize each folder as a single Windows-safe ZIP path component. Preserve Arabic and Latin text and neutralize separators, traversal, directional controls, reserved device names, and trailing spaces or dots. Resolve folder collisions deterministically using numeric suffixes, including when a literal value would take the reserved blank-group folder.
+- Resolve individual PDF filename collisions within each folder. Plan group folders and member names against the full roster so both the path and original row number stay stable when the export uses a subset. A grouped individual member has the path `<SafeGroup>/<SafeFilename>.pdf`. The split archive uses one root-level `<SafeGroup>-merged.pdf` per exported group and a separate `batch-custody.json`.
+- Supply the same grouped member path to the individual ZIP and the CSV and JSON preflight audits. The single merged PDF continues to use the ordinary filename plan. [Print outputs and custody fields](pdf-engine.md)
+
 ## QR Payload Patterns
 
 - Resolve `{{ColumnName}}` against the exact roster header and use the selected row's effective cell value, including edits and applied cleanup. Retain leading zeros and Unicode text without filename sanitization.

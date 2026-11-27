@@ -12,6 +12,7 @@ import { extractBatch } from '../../src/core/extractor/extract';
 import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
 import { validateMappingPreset } from '../../src/core/draft/mapping-preset';
+import { isSafeGroupedPdfPath, planGroupedOutput, validateGroupingPlan } from '../../src/core/export/grouping';
 import { authorFlatPdf, inspectFlatPdf, type FieldDraftSpec } from '../../src/core/designer/author';
 import { clampDisplayRect, displayToSource, sourceToDisplay, type DesignerPage, type NormalizedRect } from '../../src/core/designer/geometry';
 import { loadFieldLayout, saveFieldLayout } from '../../src/core/designer/layout';
@@ -31,6 +32,7 @@ import { watermarkLayout } from '../../src/core/pdf/watermark';
 import { createBatchProcessor } from '../../src/core/worker/batch';
 import { resolveRowSelection } from '../../src/core/worker/row-selection';
 import { inspectRosterWorkbook, makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
+import { filenameKey } from '../../src/core/roster/filenames';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
 
@@ -67,7 +69,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(25_100);
+  expect(acceptedCases).toBeGreaterThanOrEqual(27_660);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1589,4 +1591,138 @@ describe('seeded flat-PDF field designer', () => {
         });
       }), 700);
   }, 75_000);
+});
+
+describe('seeded grouping plans, split cover indexes, v9 presets and authored choices', () => {
+  it('checks 850 grouped ZIP plans against traversal, case and Unicode collisions, blank groups and exact row order', async () => {
+    const hostile = fc.oneof(mixedText, fc.constantFrom(
+      '_Ungrouped', '_UNGROUPED', '', ' \t ', '...', '..//', '../الرياض', 'الرياض', 'x\u202Ey', 'x／y',
+      'CON', 'ＬＰＴ².aux', 'AUX .doc', 'NUL', 'COM9', '\udc00', 'x\\y', 'e\u0301', 'é', 'EU', 'eu', 'EU-2',
+    ));
+    await verify(fc.asyncProperty(hostile, fc.array(hostile, { minLength: 1, maxLength: 17 }), fc.boolean(), async (raw, inputs, serial) => {
+      const values = [raw, raw.normalize('NFKC'), ...inputs, raw, '_Ungrouped', ''].map((Dept) => ({ Dept, ID: '00123' }));
+      const pattern = serial ? virtualFilenameToken('PADDED_ROW_001') + '.pdf' : '{{ID}}.pdf';
+      const options = { localDate: '2026-11-27' };
+      const plan = planGroupedOutput(values, 'Dept', pattern, options);
+      expect(planGroupedOutput(values, 'Dept', pattern, options)).toEqual(plan);
+      expect(() => validateGroupingPlan(plan, values.length)).not.toThrow();
+      expect(new Set(plan.rows.map(({ zipPath }) => filenameKey(zipPath))).size).toBe(values.length);
+      expect(new Set(plan.groups.map(({ folder }) => filenameKey(folder))).size).toBe(plan.groups.length);
+      const observed = values.map(({ Dept }) => Dept.trim() ? Dept : null);
+      expect(plan.groups.map(({ groupValue }) => groupValue)).toEqual([...new Set(observed)]);
+      for (const { groupValue, folder, rowNumbers } of plan.groups) {
+        expect(rowNumbers).toEqual(observed.flatMap((value, index) => value === groupValue ? [index + 1] : []));
+        expect(folder === '_Ungrouped').toBe(groupValue === null);
+        rowNumbers.forEach((number, index) => {
+          const path = plan.rows[number - 1]!.zipPath;
+          expect(isSafeGroupedPdfPath(path)).toBe(true);
+          expect(posix.normalize(path)).toBe(path);
+          expect(win32.normalize(path)).toBe(path.replace('/', '\\'));
+          expect(path).toBe(folder + '/' + (serial ? String(number).padStart(4, '0') : (index ? '00123-' + (index + 1) : '00123')) + '.pdf');
+        });
+      }
+    }), 850);
+  }, 40_000);
+
+  it('checks 620 split-group indexes conserve selected records and physical pages through cover continuations', async () => {
+    const group = fc.constantFrom('A', 'B', 'جَدَّة', '', '_Ungrouped', '../A');
+    await verify(fc.asyncProperty(fc.array(fc.record({
+      Clinic: group, pages: fc.integer({ min: 1, max: 8 }), height: fc.integer({ min: 8, max: 23 }),
+      status: fc.constantFrom('pass', 'flagged'), selected: fc.boolean(),
+    }), { minLength: 1, maxLength: 70 }), fc.boolean(), async (records, twoUp) => {
+      const plan = planGroupedOutput(records.map(({ Clinic }) => ({ Clinic })), 'Clinic');
+      const scope = resolveRowSelection(records, records.flatMap(({ selected }, index) => selected ? [index + 1] : []));
+      const printed = new Set(scope.selectedRowNumbers);
+      const seen: number[] = [];
+      for (const { rowNumbers } of plan.groups) {
+        const members = rowNumbers.filter((number) => printed.has(number));
+        if (!members.length) continue;
+        seen.push(...members);
+        const rows = members.map((number) => ({
+          height: records[number - 1]!.height, pageCount: twoUp ? 1 : records[number - 1]!.pages,
+        }));
+        const covers = paginateCoverRows(rows, 90, 125, 20, twoUp ? '2-up' : '1-up');
+        const ordered = covers.flat();
+        expect(ordered.map(({ index }) => members[index])).toEqual(members);
+        let completed = 0;
+        for (const [index, { startPage, endPage }] of ordered.entries()) {
+          const pageCount = rows[index]!.pageCount;
+          if (twoUp) {
+            expect(startPage).toBe(covers.length + Math.ceil((index + 1) / 2));
+            expect(endPage).toBe(startPage);
+          } else {
+            expect(startPage).toBe(covers.length + completed + 1);
+            expect(endPage).toBe(startPage + pageCount - 1);
+            completed += pageCount;
+          }
+        }
+        expect(ordered.at(-1)?.endPage).toBe(covers.length + (twoUp ? Math.ceil(members.length / 2) : completed));
+      }
+      expect(seen.sort((a, b) => a - b)).toEqual(scope.selectedRowNumbers);
+    }), 620);
+  }, 40_000);
+
+  it('checks 800 v9 preset and source-bound drafts preserve exact physical grouping columns and reject invalid values', async () => {
+    const columns = fc.constantFrom('Clinic', 'CLINIC', 'فرع', 'Équipe', 'E\u0301quipe', '__proto__', 'PADDED_ROW_001');
+    const invalid = fc.constantFrom(undefined, '', ' \t ', 4, [], {}, false);
+    await verify(fc.asyncProperty(columns, invalid, fc.boolean(), fc.integer({ min: 600, max: 1000 }), async (column, bad, group, size) => {
+      const v8 = {
+        version: 8, mapping: { ID: 'Record' }, filenamePattern: '{{Record}}.pdf', minFontSize: size / 100, font: 'auto',
+        flattenZip: false, includeCoverSheet: true, alignOverrides: {}, watermark: { kind: 'none' }, virtualMappings: {},
+        qrStamp: { placement: 'none' }, coverLanguage: 'bilingual', imposition: '2-up',
+      } as const;
+      const v9 = { ...v8, version: 9, groupByColumn: group ? column : null } as const;
+      expect(validateMappingPreset(JSON.parse(JSON.stringify(v8)))).toEqual(v8);
+      expect(validateMappingPreset(JSON.parse(JSON.stringify(v9)))).toEqual(v9);
+      expect(validateMappingPreset({ ...v9, groupByColumn: bad })).toBeUndefined();
+      expect(validateMappingPreset({ ...v8, groupByColumn: column })).toBeUndefined();
+      const source = { templateSha256: 'a'.repeat(64), rosterSha256: 'b'.repeat(64), fields: ['ID'], columns: ['Record', column], sheetName: 'Roster', rowCount: 1 };
+      const draft = { kind: 'arabiform-batch-draft', version: 1, source, edits: {}, hygiene: [], settings: v9, customFontSha256: null } satisfies BatchDraft;
+      expect(parseBatchDraft(serializeBatchDraft(draft), source)).toEqual(draft);
+      expect(() => serializeBatchDraft({ ...draft, settings: { ...v9, groupByColumn: column + '\u200e' } })).toThrow('invalid-batch-draft');
+    }), 800);
+  }, 40_000);
+
+  it('roundtrips 250 genuinely authored rotated dropdown and grouped radio fills with exact Unicode exports', async () => {
+    const pages = await Promise.all([0, 90, 180, 270].map(async (rotation) => {
+      const flat = await PDFDocument.create({ updateMetadata: false });
+      const page = flat.addPage([470, 410]);
+      page.setRotation(degrees(rotation));
+      page.setCropBox(11.5, 34.25, 410, 345);
+      const bytes = await flat.save();
+      return { bytes, source: await inspectFlatPdf(bytes) };
+    }));
+    const fonts = {
+      arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+      latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+    };
+    await verify(fc.asyncProperty(fc.integer({ min: 0, max: 3 }), fc.boolean(),
+      fc.constantFrom('أَبْهَا', 'جَدَّة', 'الرِّيَاض', 'مَكَّة'), fc.integer({ min: 0, max: 99_999 }),
+      async (turn, selectArabic, arabic, id) => {
+        const { source, bytes } = pages[turn]!;
+        const page = source.pages[0]!;
+        const latin = 'Clinic 00' + String(id);
+        const radio = [arabic, 'MAIL (' + String(id) + ')'];
+        const options = [arabic + ' 00123', latin];
+        const fields: FieldDraftSpec[] = [
+          { name: 'Clinic', kind: 'dropdown', pageIndex: 0, rectPdf: displayToSource([0.1, 0.18, 0.58, 0.11], page), options },
+          ...radio.map((exportValue, index): FieldDraftSpec => ({
+            name: 'Contact', kind: 'radio', pageIndex: 0, rectPdf: displayToSource([0.12 + 0.3 * index, 0.44, 0.06, 0.08], page), exportValue,
+          })),
+        ];
+        const restored = await loadFieldLayout(await saveFieldLayout(source, fields), source);
+        const authored = await authorFlatPdf(bytes, restored);
+        const info = await inspectTemplate(authored);
+        expect(info.fields.map(({ choices }) => choices)).toEqual([options, radio].map((values) => values.map((value) => ({ value, label: value }))));
+        expect(info.fields[1]?.widgets.map(({ rotation }) => rotation)).toEqual([page.rotation, page.rotation]);
+        const index = selectArabic ? 0 : 1;
+        const result = await preflightRow(authored, { Clinic: options[index]!, Contact: radio[index]! }, { fonts });
+        expect(result.diagnostics).toEqual([]);
+        const readback = await extractBatch([{ filename: 'authored.pdf', bytes: result.pdfBytes! }]);
+        expect(readback.rows[0]?.fields).toEqual({
+          Clinic: { kind: 'dropdown', value: options[index] },
+          Contact: { kind: 'radio', value: radio[index], nativeValue: String(index) },
+        });
+      }), 250);
+  }, 60_000);
 });

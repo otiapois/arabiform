@@ -3,6 +3,7 @@ import { clampDisplayRect, displayToSource, sourceToDisplay, type NormalizedRect
 import { DesignerError, validateFieldRect, validateFieldSpecs, type FieldDraftSpec } from '../core/designer/spec';
 import type { DesignField } from './DesignerCanvas';
 import DesignerInspector from './DesignerInspector';
+import { designerKinds, draftField, fieldCaption } from './designer-fields';
 import { designerCopy } from './designer-labels';
 import { saveDownload } from './resources';
 import type { FlatSource } from './fill-template-source';
@@ -13,7 +14,7 @@ const DesignerCanvas = lazy(() => import('./DesignerCanvas'));
 type Snapshot = { fields: DesignField[]; selectedId?: number; pageIndex: number };
 type Point = readonly [x: number, y: number];
 const empty: Snapshot = { fields: [], pageIndex: 0 };
-type ErrorDetails = { code: keyof ReturnType<typeof designerCopy>['errors']; geometry?: string };
+type ErrorDetails = { code: keyof ReturnType<typeof designerCopy>['errors']; geometry?: string; kind?: FieldDraftSpec['kind'] };
 
 function FileAction({ label, id, accept, disabled, choose }: {
   label: ReactNode;
@@ -45,6 +46,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [tool, setTool] = useState<FieldDraftSpec['kind']>('text');
   const [focusId, setFocusId] = useState<number>();
+  const [dropdownDraft, setDropdownDraft] = useState<{ id: number; text: string }>();
   const [error, setError] = useState<ErrorDetails>();
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState<'loading' | 'preparing' | 'readingLayout' | 'savingLayout'>();
@@ -65,10 +67,12 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
   const rotated = page?.rotation === 90 || page?.rotation === 270;
   const visibleWidth = page ? (rotated ? page.visibleBox.height : page.visibleBox.width) * page.userUnit : 1;
   const visibleHeight = page ? (rotated ? page.visibleBox.width : page.visibleBox.height) * page.userUnit : 1;
-  const canExport = Boolean(source && fields.length && !busy);
+  const dropdownText = selected?.spec.kind === 'dropdown' ? selected.spec.options?.join('\n') ?? '' : undefined;
+  const pendingOptions = dropdownText !== undefined && dropdownDraft?.id === selected?.id && dropdownDraft?.text !== dropdownText;
+  const canExport = Boolean(source && fields.length && !busy && !pendingOptions);
   const basename = source?.name.replace(/\.pdf$/i, '') || 'arabiform';
 
-  function showError(problem: unknown) {
+  function showError(problem: unknown, kind?: FieldDraftSpec['kind']) {
     if (!mounted.current) return;
     if (!(problem instanceof DesignerError)) {
       setError({ code: 'failed' });
@@ -77,7 +81,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
     const coordinates = problem.rectPdf?.every(Number.isFinite)
       ? problem.rectPdf.map((value) => Number(value.toFixed(4))).join(', ')
       : undefined;
-    setError({ code: problem.code, geometry: coordinates });
+    setError({ code: problem.code, geometry: coordinates, kind });
   }
 
   async function perform(label: NonNullable<typeof busy>, work: () => Promise<void>) {
@@ -102,6 +106,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
       setSnapshot(empty);
       setHistory([]);
       setFocusId(undefined);
+      setDropdownDraft(undefined);
       setTool('text');
       const pendingFile: File = file ?? await import('./designer-demo').then(({ createDesignerDemo }) => createDesignerDemo());
       const [{ inspectFlatPdf }, buffer] = await Promise.all([import('../core/designer/source'), pendingFile.arrayBuffer()]);
@@ -120,14 +125,16 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
 
   function select(id: number) {
     setFocusId(undefined);
+    if (selectedId !== id) setDropdownDraft(undefined);
     setSnapshot((current) => ({ ...current, selectedId: id }));
     setError(undefined);
   }
 
   function place(input: NormalizedRect | Point) {
     if (!page || operation.current) return;
-    const width = Math.min(1, (tool === 'text' ? 150 : 20) / visibleWidth);
-    const height = Math.min(1, (tool === 'text' ? 28 : 20) / visibleHeight);
+    const wide = tool === 'text' || tool === 'dropdown';
+    const width = Math.min(1, (wide ? 150 : 20) / visibleWidth);
+    const height = Math.min(1, (wide ? 28 : 20) / visibleHeight);
     const rect = input.length === 2 ? [
       Math.max(0, Math.min(1 - width, input[0] - width / 2)),
       Math.max(0, Math.min(1 - height, input[1] - height / 2)),
@@ -138,14 +145,24 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
     let name = `${copy[tool]} ${count}`;
     const names = new Set(fields.map(({ spec }) => spec.name.split('.', 1)[0]));
     while (names.has(name)) name = `${copy[tool]} ${++count}`;
+    if (tool === 'radio' && selected?.spec.kind === 'radio') name = selected.spec.name;
     try {
       const id = ++nextId.current;
       const rectPdf = validateFieldRect(displayToSource(rect, page), page, tool);
-      record({ pageIndex, selectedId: id, fields: [...fields, { id, spec: { name, kind: tool, pageIndex, rectPdf } }] });
+      const spec = draftField(tool, { name, pageIndex, rectPdf }, fields.map(({ spec }) => spec), copy);
+      record({ pageIndex, selectedId: id, fields: [...fields, { id, spec }] });
+      setDropdownDraft(undefined);
       setFocusId(id);
     } catch (problem) {
       showError(problem);
     }
+  }
+
+  function changeKind(kind: FieldDraftSpec['kind']) {
+    if (!selected) return;
+    const { name, pageIndex, rectPdf } = selected.spec;
+    const next = draftField(kind, { name, pageIndex, rectPdf }, fields.map(({ spec }) => spec), copy);
+    if (edit(selected.id, next)) setDropdownDraft(undefined);
   }
 
   function edit(id: number, spec: FieldDraftSpec) {
@@ -156,7 +173,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
       record({ pageIndex, fields: revised.map((field, index) => ({ id: field.id, spec: checked[index]! })), selectedId: id });
       return true;
     } catch (problem) {
-      showError(problem);
+      showError(problem, spec.kind);
       return false;
     }
   }
@@ -174,6 +191,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
   function remove(id: number) {
     const next = pageFields.find((field) => field.id !== id);
     record({ pageIndex, fields: fields.filter((field) => field.id !== id), selectedId: next?.id });
+    setDropdownDraft(undefined);
     setFocusId(next?.id);
     if (!next) placeButton.current?.focus({ preventScroll: true });
   }
@@ -184,6 +202,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
     setSnapshot(previous);
     setHistory(history.slice(0, -1));
     setFocusId(previous.selectedId);
+    setDropdownDraft(undefined);
     setError(undefined);
     setNotice('');
   }
@@ -197,12 +216,13 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
       const next = specs.map((spec) => ({ id: ++nextId.current, spec }));
       record({ fields: next, pageIndex: next[0]?.spec.pageIndex ?? 0, selectedId: next[0]?.id });
       setFocusId(undefined);
+      setDropdownDraft(undefined);
       setNotice(copy.layoutRestored);
     });
   }
 
   function saveLayout() {
-    if (!source) return;
+    if (!source || !canExport) return;
     void perform('savingLayout', async () => {
       const { saveFieldLayout } = await import('../core/designer/layout');
       const json = await saveFieldLayout(source.info, fields.map(({ spec }) => spec));
@@ -211,7 +231,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
   }
 
   function create(useInFill: boolean) {
-    if (!source) return;
+    if (!source || !canExport) return;
     void perform('preparing', async () => {
       const { authorFlatPdf } = await import('../core/designer/author');
       const bytes = await authorFlatPdf(source.bytes, fields.map(({ spec }) => spec));
@@ -252,7 +272,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
         {busy && <p className="quiet" role="status">{copy[busy]}</p>}
         {notice && <p className="quiet" role="status">{notice}</p>}
         <p className="sr-only" role="status">
-          {page && <>{copy.fieldsOnPage}{' · '}{pageFields.length}{selected && <> · <bdi dir="auto">{selected.spec.name}</bdi></>}</>}
+          {page && <>{copy.fieldsOnPage}{' · '}{pageFields.length}{selected && <> · <bdi dir="auto">{fieldCaption(selected.spec)}</bdi></>}</>}
         </p>
         {!page && !busy && !error && <p className="quiet">{copy.chooseFirst}</p>}
         {page && source && (
@@ -260,7 +280,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
             <div className="designer-paper">
               <div className="designer-toolbar">
                 <div className="actions" role="group" aria-label={copy.tools}>
-                  {(['text', 'checkbox'] as const).map((kind) => (
+                  {designerKinds.map((kind) => (
                     <button type="button" key={kind} className={`button ${tool === kind ? 'primary' : 'secondary'}`}
                       aria-pressed={tool === kind} data-testid={`designer-tool-${kind}`} disabled={Boolean(busy)}
                       onClick={() => setTool(kind)}>{copy[kind]}</button>
@@ -275,6 +295,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
                   <select data-testid="designer-page" value={pageIndex + 1} disabled={Boolean(busy)}
                     onChange={(event) => {
                       setFocusId(undefined);
+                      setDropdownDraft(undefined);
                       setSnapshot({ fields, pageIndex: Number(event.currentTarget.value) - 1 });
                       setError(undefined);
                     }}>
@@ -283,6 +304,7 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
                 </label>
               </div>
               <p className="quiet">{copy.help}</p>
+              {tool === 'radio' && <p className="quiet">{copy.radioHelp}</p>}
               <Suspense fallback={<p className="quiet" role="status">{copy.previewLoading}</p>}>
                 <DesignerCanvas key={source.info.sourceSha256} bytes={source.bytes} page={page} pageIndex={pageIndex} fields={pageFields}
                   selectedId={selectedId} focusId={focusId} copy={copy} disabled={Boolean(busy)} onPlace={place} onSelect={select}
@@ -290,11 +312,18 @@ export default function FieldDesigner({ arabic, initialSource, onUseInFill }: {
               </Suspense>
             </div>
             <DesignerInspector copy={copy} fields={pageFields} selected={selected} disabled={Boolean(busy)} onSelect={select}
-              onChange={(spec) => selected ? edit(selected.id, spec) : false} onDelete={remove} />
+              onChange={(spec) => selected ? edit(selected.id, spec) : false} onChangeKind={changeKind} onDelete={remove}
+              options={pendingOptions ? dropdownDraft?.text : dropdownText} optionsPending={Boolean(pendingOptions)}
+              onOptionText={(text) => {
+                setDropdownDraft(text === undefined || !selected ? undefined : { id: selected.id, text });
+                if (error?.code === 'invalid-field-options' && error.kind === 'dropdown') setError(undefined);
+              }} />
           </div>
         )}
         {error && <p className="alert" role="alert" data-testid="designer-error" data-code={error.code}>
-          {copy.errors[error.code]}{error.geometry && <>{' '}<bdi dir="ltr">[X, Y, W, H: {error.geometry}]</bdi></>}
+          {error.code === 'invalid-field-options' && error.kind === 'dropdown' ? copy.invalidOptions
+            : error.code === 'invalid-field-options' && error.kind === 'radio' ? copy.invalidRadio : copy.errors[error.code]}
+          {error.geometry && <>{' '}<bdi dir="ltr">[X, Y, W, H: {error.geometry}]</bdi></>}
         </p>}
         {source && <div className="designer-outputs">
           <div className="actions">
