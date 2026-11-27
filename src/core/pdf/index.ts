@@ -5,6 +5,7 @@ import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { copyBundledFont } from './bundled-fonts';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
+import type { FieldTypographyMap } from './field-typography';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
 import { key, number, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
 
@@ -49,6 +50,7 @@ export interface PreflightOptions {
   preferredFont?: 'auto' | keyof FontBytes;
   customFont?: Uint8Array;
   alignOverrides?: Readonly<Record<string, AlignOverride>>;
+  fieldTypography?: FieldTypographyMap;
 }
 
 export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<TemplateMetadata> {

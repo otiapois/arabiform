@@ -1,5 +1,7 @@
 import { isAlignOverride, type AlignOverride } from '../pdf/alignment';
+import { validateApprovalSealSettings, type ApprovalSealSettings } from '../pdf/approval-seal-settings';
 import type { Imposition } from '../pdf/exports';
+import type { FieldTypographyMap } from '../pdf/field-typography';
 import { isCoverLanguage, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../pdf/qr-settings';
 import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
 import { isVirtualColumnId, validateVirtualTemplate, type VirtualColumnMapping } from '../roster/virtual-columns';
@@ -26,12 +28,15 @@ export type MappingPresetV6 = Omit<MappingPresetV5, 'version'> & { version: 6; v
 export type MappingPresetV7 = Omit<MappingPresetV6, 'version'> & { version: 7; qrStamp: QrStampSettings; coverLanguage: CoverLanguage };
 export type MappingPresetV8 = Omit<MappingPresetV7, 'version'> & { version: 8; imposition: Imposition };
 export type MappingPresetV9 = Omit<MappingPresetV8, 'version'> & { version: 9; groupByColumn: string | null };
+export type MappingPresetV10 = Omit<MappingPresetV9, 'version'> & {
+  version: 10; fieldTypography: FieldTypographyMap; approvalSeal: ApprovalSealSettings | null;
+};
 
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -59,9 +64,29 @@ function validateVirtualMappings(value: unknown, mapping: PresetSettings['mappin
   return Object.fromEntries(bindings);
 }
 
+function validateFieldTypography(value: unknown, mapping: PresetSettings['mapping'], virtualMappings: MappingPresetV6['virtualMappings']): FieldTypographyMap | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries: [string, FieldTypographyMap[string]][] = [];
+  for (const [field, typography] of Object.entries(value)) {
+    const mapped = Object.hasOwn(mapping, field) && mapping[field] || Object.hasOwn(virtualMappings, field);
+    if (!mapped || !isRecord(typography)) return undefined;
+    const { numeralPolicy, lineHeightScale, paddingPt } = typography;
+    if (Object.keys(typography).some((key) => key !== 'numeralPolicy' && key !== 'lineHeightScale' && key !== 'paddingPt')
+      || Object.hasOwn(typography, 'numeralPolicy') && numeralPolicy !== 'preserve' && numeralPolicy !== 'eastern-arabic' && numeralPolicy !== 'western-ascii'
+      || Object.hasOwn(typography, 'lineHeightScale') && lineHeightScale !== 1 && lineHeightScale !== 1.15 && lineHeightScale !== 1.3
+      || Object.hasOwn(typography, 'paddingPt') && paddingPt !== 2 && paddingPt !== 4 && paddingPt !== 6) return undefined;
+    entries.push([field, {
+      ...(numeralPolicy !== undefined && { numeralPolicy: numeralPolicy as NonNullable<FieldTypographyMap[string]['numeralPolicy']> }),
+      ...(lineHeightScale !== undefined && { lineHeightScale: lineHeightScale as NonNullable<FieldTypographyMap[string]['lineHeightScale']> }),
+      ...(paddingPt !== undefined && { paddingPt: paddingPt as NonNullable<FieldTypographyMap[string]['paddingPt']> }),
+    }]);
+  }
+  return Object.fromEntries(entries);
+}
+
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9)
-    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0)
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10)
+    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version === 10 ? 1 : 0)
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
@@ -111,5 +136,10 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (data.version === 8) return { version: 8, ...settingsWithStamps, imposition };
   const { groupByColumn } = data;
   if (!Object.hasOwn(data, 'groupByColumn') || (groupByColumn !== null && (typeof groupByColumn !== 'string' || !groupByColumn.trim()))) return undefined;
-  return { version: 9, ...settingsWithStamps, imposition, groupByColumn };
+  const groupedSettings = { ...settingsWithStamps, imposition, groupByColumn };
+  if (data.version === 9) return { version: 9, ...groupedSettings };
+  const fieldTypography = Object.hasOwn(data, 'fieldTypography') && validateFieldTypography(data.fieldTypography, settings.mapping, virtualMappings);
+  const approvalSeal = Object.hasOwn(data, 'approvalSeal') ? validateApprovalSealSettings(data.approvalSeal) : undefined;
+  if (!fieldTypography || approvalSeal === undefined) return undefined;
+  return { version: 10, ...groupedSettings, fieldTypography, approvalSeal };
 }
