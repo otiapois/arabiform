@@ -74,8 +74,11 @@ export function prepareApprovalSeal(settings: ApprovalSealSettings, fonts: FontB
     layout: (pages: readonly PDFPage[], qrFootprints?: readonly RectangleBounds[]) =>
       pages.map((page, index) => planPage(page, index + 1, settings.placement, qrFootprints?.[index])),
     async paint(doc: PDFDocument, matrices: readonly ReturnType<typeof planPage>[]) {
-      const refs = await Promise.all([...families].map(async (family) => [family,
-        await copyBundledFont(doc, fonts, family === 'arabic' ? 'arabic' : 'latin', 'ArabiFormApprovalSeal')] as const));
+      const refs = await Promise.all([...families].map(async (family) => {
+        const bundled = family === 'arabic' ? 'arabic' : 'latin';
+        const name = bundled === 'arabic' ? 'ArabiFormApprovalSealNaskh' : 'ArabiFormApprovalSealSans';
+        return [family, await copyBundledFont(doc, fonts, bundled, name)] as const;
+      }));
       for (const [index, page] of doc.getPages().entries()) {
         const pageFonts = new Map<FontKey, AppearanceFont>(refs.map(([family, ref]) => [family, {
           ref, name: page.node.newFontDictionary('ArabiFormApprovalSeal', ref).decodeText(),

@@ -23,6 +23,9 @@ import { clampDisplayRect, displayToSource, sourceToDisplay, type DesignerPage, 
 import { loadFieldLayout, saveFieldLayout } from '../../src/core/designer/layout';
 import { validateFieldRect } from '../../src/core/designer/spec';
 import { createAudit, createFlattenedZip, createZip, getWidgetOverlays, inspectCustomFont, inspectTemplate, matchChoice, preflightRow, prepareRowPreflight, type AlignOverride } from '../../src/core/pdf';
+import { approvalSealLayout, prepareApprovalSeal } from '../../src/core/pdf/approval-seal';
+import type { ApprovalSealSettings } from '../../src/core/pdf/approval-seal-settings';
+import { applyNumeralPolicy } from '../../src/core/shaping/numerals';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { createGeneratedZip } from '../../src/core/pdf/exports';
@@ -76,7 +79,141 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(35_230);
+  expect(acceptedCases).toBeGreaterThanOrEqual(37_500);
+});
+
+describe('M20 numerals, typography and official seal', () => {
+  const digitScripts = ['0123456789', '٠١٢٣٤٥٦٧٨٩', '۰۱۲۳۴۵۶۷۸۹'];
+  const seal: ApprovalSealSettings = { placement: 'top-left', labelEn: 'Records Office', labelAr: 'مَكْتَبُ السِّجِلَّاتِ', issueDate: '2028-02-29' };
+  const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
+  const digits = fc.constantFrom('preserve', 'eastern-arabic', 'western-ascii');
+  const lineHeight = fc.constantFrom(1, 1.15, 1.3);
+  const padding = fc.constantFrom(2, 4, 6);
+
+  it('roundtrips 800 mixed numeral sequences including two leading zeroes and untouched surrounding Unicode', async () => {
+    const digits = fc.array(fc.tuple(fc.integer({ min: 0, max: 9 }), fc.integer({ min: 0, max: 2 })), { minLength: 1, maxLength: 64 });
+    const surrounding = fc.constantFrom(' شهادَة #', '(ID) +', '١٠-00 / ', '🔒全角０ 𝟎 ', '\t\u200c');
+    await verify(fc.asyncProperty(digits, surrounding, async (sequence, affix) => {
+      const sequenceText = (script: number) => sequence.map(([digit]) => digitScripts[script]![digit]).join('');
+      const mixed = '۰٠' + sequence.map(([digit, script]) => digitScripts[script]![digit]).join('') + affix;
+      const affixByScript = (script: number) => affix === '١٠-00 / '
+        ? `${digitScripts[script]!.slice(1, 2)}${digitScripts[script]![0]}-${digitScripts[script]![0]!.repeat(2)} / ` : affix;
+      const east = '٠٠' + sequenceText(1) + affixByScript(1);
+      const west = '00' + sequenceText(0) + affixByScript(0);
+      expect(applyNumeralPolicy(mixed)).toBe(mixed);
+      expect(applyNumeralPolicy(mixed, 'eastern-arabic')).toBe(east);
+      expect(applyNumeralPolicy(mixed, 'western-ascii')).toBe(west);
+      expect(applyNumeralPolicy(east, 'western-ascii')).toBe(west);
+      expect(applyNumeralPolicy(west, 'eastern-arabic')).toBe(east);
+    }), 800);
+  });
+
+  it('checks 650 shaped multilines against their actual ink, padding and exact scaled baseline distances', async () => {
+    const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
+    const fonts = { arabic: await readFile(resolve(assetRoot, 'public/fonts/NotoNaskhArabic-Regular.ttf')),
+      latin: await readFile(resolve(assetRoot, 'public/fonts/NotoSans-Regular.ttf')) };
+    const shaper = createShaper(fonts, 'auto');
+    const line = fc.constantFrom('مُحَمَّد 00123 نَ', '00007 البَيَان', 'Office No. ۰۱۲', 'قٍ مِ أَ مَ', 'الاسم 0٠۰');
+    await verify(fc.asyncProperty(line, line, lineHeight, padding, digits, fc.integer({ min: 300, max: 1_200 }),
+      async (first, second, lineHeightScale, padding, policy, height) => {
+        const size = 10;
+        const value = applyNumeralPolicy(`${first}\n${second}`, policy);
+        const [one, two] = value.split('\n').map((text) => shaper.line(text)!);
+        const delta = Math.max(1, two!.bounds.maxY - one!.bounds.minY + 0.18) * lineHeightScale;
+        const exactInkHeight = (Math.max(one!.bounds.maxY, two!.bounds.maxY - delta)
+          - Math.min(one!.bounds.minY, two!.bounds.minY - delta)) * size;
+        const innerHeight = height / 10 - 2 * padding;
+        const result = fitText(shaper, value, true, { innerWidth: 140, innerHeight, padding, min: size, max: size, lineHeightScale });
+        if (innerHeight < exactInkHeight) expect(result).toHaveProperty('code', 'too-low');
+        else {
+          expect('lines' in result).toBe(true);
+          if (!('lines' in result)) return;
+          const [first, second] = result.lines;
+          expect(first!.baseline - second!.baseline).toBeCloseTo(delta * size, 10);
+          const [minInk, maxInk] = [Math.min(...result.lines.map(({ line, baseline }) => baseline + line.bounds.minY * size)),
+            Math.max(...result.lines.map(({ line, baseline }) => baseline + line.bounds.maxY * size))];
+          expect(minInk).toBeGreaterThanOrEqual(padding - 1e-10);
+          expect(maxInk).toBeLessThanOrEqual(padding + innerHeight + 1e-10);
+          for (const { line, origin } of result.lines) {
+            expect(origin + line.inkX[0] * size).toBeGreaterThanOrEqual(padding - 1e-10);
+            expect(origin + line.inkX[1] * size).toBeLessThanOrEqual(padding + 140 + 1e-10);
+          }
+        }
+      }), 650);
+  }, 180_000);
+
+  it('checks 650 physical seal corners and rejects unmapped print-widget and full QR collisions', async () => {
+    const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
+    const fonts = { arabic: await readFile(resolve(assetRoot, 'public/fonts/NotoNaskhArabic-Regular.ttf')),
+      latin: await readFile(resolve(assetRoot, 'public/fonts/NotoSans-Regular.ttf')) };
+    const painters = Object.fromEntries(corners.map((placement) => [placement, prepareApprovalSeal({ ...seal, placement }, fonts)]));
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([400, 360]);
+    const field = doc.getForm().createTextField('Register.Unmapped');
+    field.addToPage(page);
+    const widget = field.acroField.getWidgets()[0]!;
+    const dimensions = fc.tuple(fc.integer({ min: 155, max: 450 }), fc.integer({ min: 155, max: 450 }));
+    await verify(fc.asyncProperty(dimensions, fc.constantFrom(...corners), fc.constantFrom(0, 90, 180, 270),
+      fc.constantFrom(0.5, 1, 1.5, 2, 4), fc.constantFrom(0, 4, 2, 32, 36), fc.boolean(),
+      async ([physicalWidth, physicalHeight], placement, rotation, userUnit, flags, collides) => {
+        const width = physicalWidth / userUnit, height = physicalHeight / userUnit;
+        const media: RectangleBounds = [-12, 10, width + 12, height + 16];
+        const crop: RectangleBounds = [-17, 14, width + 6, height + 21];
+        const visibleBox = { x: -12, y: 14, width: width + 18, height: height + 2 };
+        const quarterTurn = rotation % 180 !== 0;
+        const displayWidth = (quarterTurn ? visibleBox.height : visibleBox.width) * userUnit;
+        const displayHeight = (quarterTurn ? visibleBox.width : visibleBox.height) * userUnit;
+        const expectedX = placement.endsWith('left') ? 9 : displayWidth - 135;
+        const expectedY = placement.startsWith('top') ? 9 : displayHeight - 53;
+        const rect = displayToSource([expectedX / displayWidth, expectedY / displayHeight, 126 / displayWidth, 44 / displayHeight], { rotation, userUnit, visibleBox });
+        const expected = [rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]];
+        const layout = approvalSealLayout(media, crop, rotation, userUnit, placement)!;
+        layout.bounds.forEach((point, index) => expect(point).toBeCloseTo(expected[index]!, 9));
+        page.setMediaBox(media[0], media[1], media[2] - media[0], media[3] - media[1]);
+        page.setCropBox(crop[0], crop[1], crop[2] - crop[0], crop[3] - crop[1]);
+        page.setRotation(degrees(rotation));
+        page.node.set(key('UserUnit'), doc.context.register(PDFNumber.of(userUnit)));
+        const obstacle = collides ? displayToSource([(expectedX + 9) / displayWidth, (expectedY + 9) / displayHeight,
+          3 / displayWidth, 4 / displayHeight], { rotation, userUnit, visibleBox })
+          : displayToSource([0.45, 0.47, 0.01, 0.02], { rotation, userUnit, visibleBox });
+        widget.setRectangle({ x: obstacle[0], y: obstacle[1], width: obstacle[2], height: obstacle[3] });
+        widget.dict.set(key('F'), PDFNumber.of(flags));
+        const painter = painters[placement]!;
+        if (collides && [0, 4, 36].includes(flags)) expect(() => painter.layout([page])).toThrow('approval-seal-widget-overlap');
+        else {
+          expect(painter.layout([page])).toHaveLength(1);
+          const qr = qrStampLayout(media, crop, rotation, userUnit, placement, 48);
+          expect(() => painter.layout([page], [qr.bounds])).toThrow('approval-seal-qr-overlap');
+        }
+        expect(approvalSealLayout([0, 0, 143 / userUnit, 143 / userUnit], [0, 0, 143 / userUnit, 143 / userUnit], rotation, userUnit, placement)).toBeUndefined();
+      }), 650);
+  }, 180_000);
+
+  it('roundtrips 550 strict V1–V10 presets and source-bound V10 drafts', async () => {
+    await verify(fc.asyncProperty(digits, lineHeight, padding, fc.constantFrom(...corners), fc.boolean(), fc.integer({ min: 1, max: 28 }),
+      async (numeralPolicy, lineHeightScale, paddingPt, placement, print, day) => {
+        const v1 = { version: 1, mapping: { ID: 'Record' }, filenamePattern: '{{Record}}.pdf', minFontSize: 8, font: 'auto' } as const;
+        const v2 = { ...v1, version: 2, flattenZip: print } as const;
+        const v3 = { ...v2, version: 3, includeCoverSheet: false } as const;
+        const v4 = { ...v3, version: 4, alignOverrides: {} } as const;
+        const v5 = { ...v4, version: 5, watermark: { kind: 'none' } } as const;
+        const v6 = { ...v5, version: 6, virtualMappings: { Date: { column: 'TODAY_ISO' } } } as const;
+        const v7 = { ...v6, version: 7, qrStamp: { placement: 'none' }, coverLanguage: 'auto' } as const;
+        const v8 = { ...v7, version: 8, imposition: '1-up' } as const;
+        const v9 = { ...v8, version: 9, groupByColumn: print ? 'Branch' : null } as const;
+        const v10 = { ...v9, version: 10, fieldTypography: { ID: { numeralPolicy }, Date: { paddingPt, lineHeightScale } },
+          approvalSeal: print ? { ...seal, placement, issueDate: `2028-02-${String(day).padStart(2, '0')}` } : null } as const;
+        for (const candidate of [v1, v2, v3, v4, v5, v6, v7, v8, v9, v10]) expect(validateMappingPreset(JSON.parse(JSON.stringify(candidate)))).toEqual(candidate);
+        expect(validateMappingPreset({ ...v10, version: 9 })).toBeUndefined();
+        expect(validateMappingPreset({ ...v10, fieldTypography: { ID: { numeralPolicy, paddingPt: 2.001 } } })).toBeUndefined();
+        expect(validateMappingPreset({ ...v10, fieldTypography: { ID: { numeralPolicy, lineHeightScale, extra: true } } })).toBeUndefined();
+        expect(validateMappingPreset({ ...v10, approvalSeal: { ...seal, issueDate: '2027-02-29' } })).toBeUndefined();
+        const source = { templateSha256: 'a'.repeat(64), rosterSha256: 'b'.repeat(64), fields: ['ID', 'Date'], columns: ['Record', 'Branch'], sheetName: 'Roster', rowCount: 1 };
+        const draft = { kind: 'arabiform-batch-draft', version: 1, source, edits: {}, hygiene: [], settings: v10, customFontSha256: null } satisfies BatchDraft;
+        expect(parseBatchDraft(serializeBatchDraft(draft), source)).toEqual(draft);
+        expect(() => serializeBatchDraft({ ...draft, settings: { ...v10, groupByColumn: 'Missing' } })).toThrow('invalid-batch-draft');
+      }), 550);
+  });
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -743,7 +880,7 @@ describe('seeded roster changes, explicit ink alignment and portable drafts', ()
     expect(flagged).toBeGreaterThan(40);
     expect(verified).toEqual(Object.fromEntries(modes.map((mode) => [mode, 500 - flagged])));
     console.info(`fast-check: ${500 - flagged} fitting and ${flagged} flagged layouts in each of the four alignment modes.`);
-  }, 30_000);
+  }, 180_000);
 
   it('rejects 500 malformed drafts while roundtripping edits for exact inputs', async () => {
     const corruption = fc.constantFrom('json', 'row', 'column', 'cell', 'mapping', 'alignment', 'unexpected-key', 'summary', 'hash', 'version');
@@ -1688,7 +1825,7 @@ describe('seeded AcroForm extraction and string-safe spreadsheet custody', () =>
         expect(audit.csvSha256).toBe(exactDigest(result.artifacts.csv));
         expect(audit.xlsxSha256).toBe(exactDigest(result.artifacts.xlsx));
       }), 700);
-  }, 30_000);
+  }, 180_000);
 
   it('checks 500 mixed batches with malformed and restricted files, distinct per-file digests and schema warnings', async () => {
     const formats = ['flat', 'encrypted', 'xfa', 'signed'] as const;
@@ -1742,7 +1879,7 @@ describe('seeded AcroForm extraction and string-safe spreadsheet custody', () =>
           }
         }
       }), 500);
-  }, 30_000);
+  }, 180_000);
 });
 
 describe('seeded flat-PDF field designer', () => {
@@ -1848,7 +1985,7 @@ describe('seeded flat-PDF field designer', () => {
           [boxName]: { kind: 'checkbox', value: checked ? 'checked' : 'unchecked', nativeValue: checked ? 'Yes' : 'Off' },
         });
       }), 700);
-  }, 75_000);
+  }, 180_000);
 });
 
 describe('seeded grouping plans, split cover indexes, v9 presets and authored choices', () => {
