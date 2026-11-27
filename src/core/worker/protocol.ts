@@ -35,7 +35,7 @@ export type BatchRequest = BatchCommand & { id: number };
 export interface BatchPreflightResult { rows: BatchRowResult[]; custody: CustodySources }
 export interface BatchZipResult { bytes: Uint8Array; entries: CustodyEntry[]; groupByColumn?: string; qrRecords?: CustodyQrRecord[] }
 export interface BatchMergedResult { bytes: Uint8Array; mergedPdfSha256: string; qrRecords?: CustodyQrRecord[] }
-export interface BatchSplitResult { bytes: Uint8Array; groupByColumn: string; groups: GroupedCustodyEntry[] }
+export interface BatchSplitResult { bytes: Uint8Array; groupByColumn: string; groups: GroupedCustodyEntry[]; qrRecords?: readonly CustodyQrRecord[] }
 export type BatchResult = BatchPreflightResult | BatchZipResult | BatchMergedResult | BatchSplitResult | Uint8Array | undefined;
 export type BatchResponse = { id: number } & (
   | { kind: 'progress'; progress: BatchProgress }

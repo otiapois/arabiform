@@ -16,6 +16,9 @@ import { displayToSource, type NormalizedRect } from '../src/core/designer/geome
 import { loadFieldLayout, saveFieldLayout } from '../src/core/designer/layout';
 import { extractBatch } from '../src/core/extractor/extract';
 import { planGroupedOutput, SPLIT_CUSTODY_PATH } from '../src/core/export/grouping';
+import { createCustodyManifest, MERGED_CUSTODY_FILENAME } from '../src/core/audit/custody';
+import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../src/core/custody/verify';
+import { generateStudioTemplate, STUDIO_TEMPLATE_IDS } from '../src/core/studio/templates';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -832,6 +835,97 @@ for (const rotation of [0, 90, 180, 270]) {
   }
 }
 
+const studioProofs = [];
+const studioTitles = [
+  ['Certificate of Completion', 'شهادة إتمام'],
+  ['Employment Verification', 'إفادة عمل'],
+  ['Patient Consent Form', 'نموذج موافقة المريض'],
+  ['Visitor Badge', 'بطاقة زائر'],
+];
+for (const [templateIndex, id] of STUDIO_TEMPLATE_IDS.entries()) {
+  const organizationName = 'مَرْكَزُ الأَمَان · Example Studio 00123';
+  const documentSubtitle = 'دَوْرَةُ ٢٠٢٦ / Workshop';
+  const studio = await generateStudioTemplate(id, { organizationName, documentSubtitle, accentPalette: 'burgundy' }, settings.fonts);
+  const template = Buffer.from(studio.pdfBytes);
+  const templateDoc = await PDFDocument.load(template);
+  const page = templateDoc.getPage(0);
+  const resources = page.node.Resources()!.lookup(key('Font'), PDFDict);
+  for (const [name, local] of [['ArabiFormStudioArabic', settings.fonts.arabic], ['ArabiFormStudioLatin', settings.fonts.latin]] as const) {
+    const descriptor = resources.lookup(key(name), PDFDict).lookup(key('DescendantFonts'), PDFArray).lookup(0, PDFDict).lookup(key('FontDescriptor'), PDFDict);
+    const embedded = descriptor.lookup(key('FontFile2'));
+    assert(embedded instanceof PDFRawStream);
+    assert.deepEqual(Buffer.from(decodePDFRawStream(embedded).decode()), local);
+  }
+  const roster = new TextEncoder().encode(studio.csv);
+  const rows = (await readRoster(roster, studio.csvFilename)).sheets[0]!.rows.map(({ values }) => values);
+  const { fields } = await inspectTemplate(template);
+  const records = [];
+  for (const [index, values] of rows.entries()) {
+    const expected = { ...values };
+    const choices: Required<ExpectedChoices> = { checkboxes: {}, dropdowns: {}, radios: {} };
+    for (const { kind, name, choices: options } of fields) {
+      if (kind === 'checkbox') expected[name] = choices.checkboxes[name] = values[name] === 'yes' ? 'Yes' : 'Off';
+      if (kind === 'dropdown') choices.dropdowns[name] = { label: values[name]! };
+      if (kind === 'radio') {
+        const selected = options!.findIndex(({ value }) => values[name] === value);
+        choices.radios[name] = { state: String(selected), widgets: options!.map((_, option) => option === selected ? String(option) : 'Off') };
+      }
+    }
+    const record = await passingCase(template, values, `m17-${id}-${index + 1}.pdf`,
+      `M17 ${id} ${index === 0 ? 'vocalized Arabic' : 'English'}`, settings.minFontSize, { ...choices, expected });
+    const extracted = await extractBatch([{ filename: record.filename, bytes: record.pdfBytes }]);
+    assert.equal(extracted.rows[0]!.status, 'extracted');
+    for (const { kind, name } of fields) {
+      assert.equal(extracted.rows[0]!.fields[name]!.value, kind === 'checkbox' ? values[name] === 'yes' ? 'checked' : 'unchecked' : values[name]);
+    }
+    records.push(record);
+  }
+  const printed = `m17-${id}-print-parity.pdf`;
+  await writeFile(resolve(root, printed), await createMergedPdf(records));
+  studioProofs.push({ id, before: await snapshotSource(template), after: records.map(({ filename }) => filename),
+    header: [organizationName, ...studioTitles[templateIndex]!, documentSubtitle], sizePt: [page.getWidth(), page.getHeight()], printed });
+  const worker = createBatchProcessor();
+  const prepared = await worker({ phase: 'preflight', input: { template, roster, rows, options: settings } }, () => {});
+  assert(prepared && 'custody' in prepared && prepared.rows.every(({ status }) => status === 'pass'));
+  const filenames = records.map(({ filename }) => filename);
+  const corner = 'bottom-right', sizePt = 72;
+  const qrStamp = { placement: corner, sizePt, custodyRecord: true } as const;
+  const rowSelection = [1];
+  const flatZip = await worker({ phase: 'zip', filenames, rowSelection, flattenZip: true, qrStamp }, () => {});
+  const merged = await worker({ phase: 'merged', rowSelection, qrStamp }, () => {});
+  assert(flatZip && !(flatZip instanceof Uint8Array) && 'entries' in flatZip && merged && 'mergedPdfSha256' in merged);
+  assert.deepEqual(flatZip.qrRecords, merged.qrRecords);
+  const receipt = await parseCustodyManifest(createCustodyManifest(prepared.custody, { ...flatZip, ...merged }, {
+    exportScope: 'selected-subset', selectedRowNumbers: rowSelection,
+  }));
+  const payload = flatZip.qrRecords![0]!.payload;
+  assert.equal(verifyCustodyQr(receipt, payload).status, 'VERIFIED_QR_RECORD');
+  assert.equal((await verifyCustodyPdf(receipt, { filename: MERGED_CUSTODY_FILENAME, bytes: merged.bytes })).status, 'VERIFIED_EXACT_MATCH');
+  assert.equal((await verifyCustodyPdf(receipt, { filename: filenames[0]!, bytes: unzipSync(flatZip.bytes)[filenames[0]!]! })).status, 'VERIFIED_EXACT_MATCH');
+  const symbol = encodeQr(payload);
+  proveQrMatrix(symbol, payload);
+  const qr = { pdf: `m17-${id}-stamped.pdf`, plainPdf: `m17-${id}-plain.pdf`, zip: `m17-${id}-stamped.zip`,
+    member: filenames[0]!, coverPages: 0, corner, sizePt, modules: symbol.modules };
+  await writeFile(resolve(root, qr.pdf), merged.bytes);
+  await writeFile(resolve(root, qr.plainPdf), await createMergedPdf([records[0]!]));
+  await writeFile(resolve(root, qr.zip), flatZip.bytes);
+  qrProofs.push(qr);
+
+  const twoUp = await worker({ phase: 'merged', imposition: '2-up', qrStamp }, () => {});
+  assert(twoUp && 'mergedPdfSha256' in twoUp && twoUp.qrRecords?.length === 2);
+  const payloads = twoUp.qrRecords.map(({ payload }) => payload);
+  const modules = payloads.map((value) => {
+    const symbol = encodeQr(value);
+    proveQrMatrix(symbol, value);
+    return symbol.modules;
+  });
+  const imposed = { pdf: `m17-${id}-2up.pdf`, referencePdf: `m17-${id}-2up-reference.pdf`,
+    coverPages: 0, filenames, rowNumbers: [1, 2], corner, sizePt, modules, payloads, requireWatermark: false };
+  await writeFile(resolve(root, imposed.pdf), twoUp.bytes);
+  await writeFile(resolve(root, imposed.referencePdf), await createMergedPdf(records, undefined, undefined, undefined, { placement: corner, sizePt, payloads }));
+  impositionProofs.push(imposed);
+}
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -871,5 +965,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

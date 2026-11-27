@@ -7,7 +7,6 @@ export type CoverLanguage = 'auto' | 'en' | 'ar' | 'bilingual';
 
 export const DEFAULT_QR_STAMP: QrStampSettings = { placement: 'none' };
 export const DEFAULT_QR_SIZE_PT = 48;
-export const CUSTODY_QR_PATTERN = '{{CUSTODY_RECORD}}';
 
 function isRecord(data: unknown): data is Record<string, unknown> {
   if (typeof data !== 'object' || data === null) return false;

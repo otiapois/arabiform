@@ -225,6 +225,10 @@ export async function createSplitMergedZip(
   const paths = groups.map(({ folder }) => `${folder}-merged.pdf`);
   const zip = openZip([...paths, SPLIT_CUSTODY_PATH], undefined, true, 'split');
   const total = scope.selectedRowNumbers.length;
+  if (qrRecords && (qrRecords.length !== total || qrRecords.some(({ rowNumber, payload }, index) =>
+    rowNumber !== scope.selectedRowNumbers[index] || payload !== qrStamp?.payloads[index]))) {
+    throw new Error('qr-stamp-invalid-settings');
+  }
   const qr = await getQrStamp(qrStamp, total);
   const stamp = await getPrintStamp(watermark);
   const qrIndices = new Map(scope.selectedRowNumbers.map((number, index) => [number, index]));
@@ -240,7 +244,7 @@ export async function createSplitMergedZip(
   }
   const receipt = createCustodyManifest(sources, { groupByColumn, groups: entries, qrRecords }, scope);
   zip.add(new TextEncoder().encode(receipt));
-  return { bytes: zip.finish(), groupByColumn, groups: entries };
+  return { bytes: zip.finish(), groupByColumn, groups: entries, ...(qrRecords && { qrRecords }) };
 }
 
 async function buildMergedPdf(

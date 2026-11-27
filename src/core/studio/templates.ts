@@ -59,14 +59,14 @@ const templates: Record<StudioTemplateId, StarterTemplate> = {
     rows: [
       [{ name: 'EmployeeName', kind: 'text', label: ['Employee name', 'اسم الموظف'] }],
       [{ name: 'EmployeeID', kind: 'text', label: ['Employee ID', 'الرقم الوظيفي'] },
+        { name: 'JobTitle', kind: 'text', label: ['Job title', 'المسمى الوظيفي'] }],
+      [{ name: 'Department', kind: 'text', label: ['Department', 'القسم'] },
         { name: 'StartDate', kind: 'text', label: ['Start date', 'تاريخ بدء العمل'] }],
-      [{ name: 'JobTitle', kind: 'text', label: ['Job title', 'المسمى الوظيفي'] }],
-      [{ name: 'Department', kind: 'text', label: ['Department', 'القسم'] }],
       [{ name: 'ActiveStatus', kind: 'checkbox', label: ['Currently employed', 'على رأس العمل'] }],
     ],
     sampleRows: [
-      ['سَلْمَى بِنْتُ يَاسِين', '00123', '2021-03-15', 'مُدِيرَةُ المَشَارِيع', 'الْعَمَلِيَّات', 'yes'],
-      ['Alex Taylor', '00007', '2024-08-12', 'Operations Coordinator', 'Operations', 'no'],
+      ['سَلْمَى بِنْتُ يَاسِين', '00123', 'مُدِيرَةُ المَشَارِيع', 'الْعَمَلِيَّات', '2021-03-15', 'yes'],
+      ['Alex Taylor', '00007', 'Operations Coordinator', 'Operations', '2024-08-12', 'no'],
     ],
   },
   'clinic-consent-bilingual': {
@@ -168,7 +168,9 @@ export async function generateStudioTemplate(id: StudioTemplateId, customization
     page.pushOperators(...operators, PDFOperator.of(Op.PopGraphicsState));
   };
 
-  let y = height - (compact ? 25 : 52);
+  // Whole-point widgets keep their ink raster-equivalent when print exports
+  // replace interactive annotations with their vector appearance streams.
+  let y = Math.floor(height) - (compact ? 25 : 52);
   page.drawRectangle({ x: left, y: y + (compact ? 12 : 17), width: inner, height: compact ? 2 : 3, color: rgb(...accent) });
   draw(organization || sampleOrganization, left, y, inner, compact ? 12 : 17, 'center', undefined, true);
   y -= compact ? 23 : 42;
@@ -196,7 +198,7 @@ export async function generateStudioTemplate(id: StudioTemplateId, customization
   };
   for (const row of rows) {
     const gap = compact ? 14 : 24;
-    const column = (inner - (row.length - 1) * gap) / row.length;
+    const column = Math.floor((inner - (row.length - 1) * gap) / row.length);
     for (const [index, field] of row.entries()) {
       const { name, kind, label } = field;
       const x = left + (column + gap) * index;
@@ -205,7 +207,7 @@ export async function generateStudioTemplate(id: StudioTemplateId, customization
         labeled(label, x + 28, y, column - 28);
       } else if (kind === 'radio') {
         labeled(label, x, y, column);
-        const optionWidth = column / field.options.length;
+        const optionWidth = Math.floor(column / field.options.length);
         for (const [position, option] of field.options.entries()) {
           const xOption = x + position * optionWidth;
           specs.push({ name, kind, pageIndex: 0, rectPdf: [xOption, y - 33, 15, 15], exportValue: option.value });
