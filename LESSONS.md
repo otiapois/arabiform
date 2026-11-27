@@ -92,7 +92,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 6**（M1、M2、M5、M9、M10、M11，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 7**（M1、M2、M5、M9、M10、M11、M12，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
@@ -150,3 +150,10 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **原因**　M11 的选中标记向控件内侧画了一圈白边。导出的 PDF 完整保留了 `CERT-0001`，画布中的首字母 C 却被遮住。桌面比较检出 7 个消失的笔画像素，手机检出 4 个。
 - **证据**　提交 `20c5a6b` 把描边移到外侧。复跑在 1440 px 和 390 px 视口分别检查 86、43 个墨迹采样点，两边遮挡均为 0。[浏览器操作](tests/e2e/m11-canvas-virtual.spec.ts) · [实绘像素比较](tests/e2e/m11-overlay-ink.py) · [修复后画布](docs/reports/screenshots/m11/desktop-m11-virtual-serial.png)
 - **Seen: 1**（M11 预览选中态，两种视口合计一个开发周期）。
+
+### 样本加载器与样本数据使用可区分的分包名（2026-11-27）
+
+- **规则**　给样本加载器命名时，把 `sample-` 前缀保留给具体的样本数据包。用生产构建的浏览器请求确认每次选择只加载对应的数据包。
+- **原因**　M12 将示例选择逻辑拆为按需加载模块，生成的 `sample-workflows-*.js` 与实际样本包都命中了图库原有的 `sample-` 请求检查。四个图库场景都在一次选择后计到两个包。
+- **证据**　提交 `ddf41f2` 调整加载器名称后，保留原断言，在桌面和手机分别验证四个示例，均只观察到一个对应的样本数据包。[图库用例](tests/e2e/m6-workflows.spec.ts) · [M12 验收](docs/reports/M12-verification.md)
+- **Seen: 1**（M12 分包重命名，两种视口合计一次）。
