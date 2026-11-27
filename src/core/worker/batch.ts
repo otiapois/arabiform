@@ -1,6 +1,7 @@
 import { hashCustodySources, sha256 } from '../audit/custody';
+import { validateGroupingPlan } from '../export/grouping';
 import { createMergedPdf, preflightRow, prepareRowPreflight } from '../pdf';
-import { createGeneratedZip } from '../pdf/exports';
+import { createGeneratedZip, createSplitMergedZip } from '../pdf/exports';
 import { isCoverLanguage, validateQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 import { resolveRowSelection } from './row-selection';
@@ -56,27 +57,34 @@ export function createBatchProcessor() {
       return undefined;
     }
 
-    const coverSheet = phase === 'merged' ? command.coverSheet : undefined;
+    const coverSheet = phase === 'zip' ? undefined : command.coverSheet;
     const filenames = phase === 'zip' ? command.filenames : coverSheet?.filenames;
     if (filenames && filenames.length !== results.length) {
       throw new Error(phase === 'zip' ? 'batch-filename-count-mismatch' : 'cover-sheet-invalid-metadata');
     }
-    const { selectedRowNumbers } = resolveRowSelection(results, command.rowSelection);
+    const grouping = phase === 'merged' ? undefined : command.grouping;
+    if (grouping) validateGroupingPlan(grouping, results.length);
+    const scope = resolveRowSelection(results, command.rowSelection);
+    const { selectedRowNumbers } = scope;
     if (!selectedRowNumbers.length) throw new Error('empty-export');
     const ready = selectedRowNumbers.map((rowNumber) => {
       const index = rowNumber - 1;
-      return { filename: filenames?.[index] ?? '', getPdfBytes: () => getPdfBytes(index) };
+      return { filename: grouping?.rows[index]?.filename ?? filenames?.[index] ?? '', getPdfBytes: () => getPdfBytes(index) };
     });
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
     let qrStamp: QrPrintRequest | undefined;
-    if (command.qrStamp !== undefined && (phase === 'merged' || command.flattenZip)) {
+    if (command.qrStamp !== undefined && (phase !== 'zip' || command.flattenZip)) {
       const { placement, sizePt, payloads } = validateQrPrintRequest(command.qrStamp, results.length);
       qrStamp = { placement, sizePt, payloads: selectedRowNumbers.map((number) => payloads[number - 1]!) };
     }
-    if (phase === 'zip') return createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp);
+    if (phase === 'zip') {
+      const paths = grouping && selectedRowNumbers.map((number) => grouping.rows[number - 1]!.zipPath);
+      const zip = await createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp, paths);
+      return grouping ? { ...zip, groupByColumn: grouping.groupByColumn } : zip;
+    }
     const coverLanguage = coverSheet?.coverLanguage ?? 'auto';
     if (!isCoverLanguage(coverLanguage)) throw new Error('cover-sheet-invalid-metadata');
-    const bytes = await createMergedPdf(ready, progress, coverSheet && {
+    const cover = coverSheet && {
       locale: coverLanguage === 'auto' ? coverSheet.locale : coverLanguage,
       templateName: coverSheet.templateName,
       exportedAt: new Date(),
@@ -85,7 +93,21 @@ export function createBatchProcessor() {
       flagged: results.filter(({ status }) => status === 'flagged').length,
       skipped: results.length - ready.length,
       custody: coverSheet.includeCustody ? custody : undefined,
-    }, watermark, qrStamp, command.imposition);
+    };
+    if (phase === 'split') {
+      const byRow = new Map(selectedRowNumbers.map((number, index) => [number, ready[index]!]));
+      const groups = command.grouping.groups.flatMap(({ groupValue, folder, rowNumbers }) => {
+        const members = rowNumbers.filter((number) => byRow.has(number));
+        if (!members.length) return [];
+        return [{ groupValue, folder, rowNumbers: members, rows: members.map((number) => byRow.get(number)!), cover: cover && {
+          ...cover, rowNumbers: members,
+          flagged: rowNumbers.filter((number) => results[number - 1]!.status === 'flagged').length,
+          skipped: rowNumbers.length - members.length,
+        } }];
+      });
+      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition);
+    }
+    const bytes = await createMergedPdf(ready, progress, cover, watermark, qrStamp, command.imposition);
     return { bytes, mergedPdfSha256: await sha256(bytes) };
   }
 

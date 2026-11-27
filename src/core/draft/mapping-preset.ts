@@ -25,12 +25,13 @@ export type MappingPresetV6 = Omit<MappingPresetV5, 'version'> & { version: 6; v
 
 export type MappingPresetV7 = Omit<MappingPresetV6, 'version'> & { version: 7; qrStamp: QrStampSettings; coverLanguage: CoverLanguage };
 export type MappingPresetV8 = Omit<MappingPresetV7, 'version'> & { version: 8; imposition: Imposition };
+export type MappingPresetV9 = Omit<MappingPresetV8, 'version'> & { version: 9; groupByColumn: string | null };
 
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -59,7 +60,7 @@ function validateVirtualMappings(value: unknown, mapping: PresetSettings['mappin
 }
 
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6 && data.version !== 7 && data.version !== 8)
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9)
     || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0)
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
@@ -107,5 +108,8 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (data.version === 7) return { version: 7, ...settingsWithStamps };
   const { imposition } = data;
   if (!Object.hasOwn(data, 'imposition') || (imposition !== '1-up' && imposition !== '2-up')) return undefined;
-  return { version: 8, ...settingsWithStamps, imposition };
+  if (data.version === 8) return { version: 8, ...settingsWithStamps, imposition };
+  const { groupByColumn } = data;
+  if (!Object.hasOwn(data, 'groupByColumn') || (groupByColumn !== null && (typeof groupByColumn !== 'string' || !groupByColumn.trim()))) return undefined;
+  return { version: 9, ...settingsWithStamps, imposition, groupByColumn };
 }

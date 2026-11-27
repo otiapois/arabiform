@@ -15,6 +15,7 @@ import { authorFlatPdf, inspectFlatPdf, type FieldDraftSpec } from '../src/core/
 import { displayToSource, type NormalizedRect } from '../src/core/designer/geometry';
 import { loadFieldLayout, saveFieldLayout } from '../src/core/designer/layout';
 import { extractBatch } from '../src/core/extractor/extract';
+import { planGroupedOutput, SPLIT_CUSTODY_PATH } from '../src/core/export/grouping';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -32,7 +33,7 @@ interface ExpectedChoices {
 
 type AlignmentMode = 'auto' | 'rtl' | 'ltr' | 'center';
 type ExpectedAlignment = Record<string, { mode: AlignmentMode; anchor: 'rtl' | 'ltr' | 'center' }>;
-interface DesignerProof { source: string; rotation: number; rects: Record<string, NormalizedRect> }
+interface DesignerProof { source: string; rotation: number; rects: Record<string, NormalizedRect | readonly NormalizedRect[]> }
 const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean;
   alignments?: ExpectedAlignment; designer?: DesignerProof } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
@@ -738,6 +739,97 @@ for (const [rotation, mode] of [[0, 'auto'], [90, 'rtl'], [180, 'ltr'], [270, 'c
   await writeFile(resolve(root, spec.pdf), await createMergedPdf(rows, undefined, undefined, watermark, qrStamp, '2-up'));
   await writeFile(resolve(root, spec.referencePdf), await createMergedPdf(rows, undefined, undefined, watermark, qrStamp));
   impositionProofs.push(spec);
+}
+
+for (const rotation of [0, 90, 180, 270]) {
+  const flat = await PDFDocument.create({ updateMetadata: false });
+  const page = flat.addPage([430, 385]);
+  page.setCropBox(22.25, 18.75, 360, 330);
+  page.setRotation(degrees(rotation));
+  page.drawRectangle({ x: 34, y: 28, width: 310, height: 302, borderWidth: 1.5, borderColor: rgb(0.12, 0.25, 0.42) });
+  page.drawRectangle({ x: 64, y: 308, width: 94, height: 8, color: rgb(0.07, 0.21, 0.37) });
+  const original = await flat.save();
+  const meta = await inspectFlatPdf(original);
+  const rects = {
+    Clinic: [0.20, 0.32, 0.58, 0.12],
+    Contact: [[0.24, 0.53, 0.07, 0.09], [0.54, 0.53, 0.07, 0.09]],
+  } as const;
+  const dropdowns = ['مُسْتَوْصَف الرِّيَاض 00123', 'Jeddah Clinic 00007'];
+  const radios = ['بَرِيد', 'CALL'];
+  const fields: FieldDraftSpec[] = [
+    { name: 'Clinic', kind: 'dropdown', pageIndex: 0, options: dropdowns, rectPdf: displayToSource(rects.Clinic, meta.pages[0]!) },
+    ...rects.Contact.map((rect, index): FieldDraftSpec => ({
+      name: 'Contact', kind: 'radio', pageIndex: 0, exportValue: radios[index]!, rectPdf: displayToSource(rect, meta.pages[0]!),
+    })),
+  ];
+  const restored = await loadFieldLayout(await saveFieldLayout(meta, fields), meta);
+  const template = Buffer.from(await authorFlatPdf(original, restored));
+  const inspected = await inspectTemplate(template);
+  assert.deepEqual(inspected.fields.map(({ kind, choices }) => ({ kind, choices })), [
+    { kind: 'dropdown', choices: dropdowns.map((value) => ({ value, label: value })) },
+    { kind: 'radio', choices: radios.map((value) => ({ value, label: value })) },
+  ]);
+  const designer = { source: await snapshotSource(original), rotation, rects };
+  const passed: PdfExportRow[] = [];
+  for (const [index, locale] of ['ar', 'en'].entries()) {
+    const values = { Clinic: dropdowns[index]!, Contact: radios[index]! };
+    const row = await passingCase(template, values, `m16-designer-${rotation}-${locale}.pdf`,
+      `M16 dropdown and radio, rotation ${rotation}, ${locale}`, settings.minFontSize, {
+        designer, dropdowns: { Clinic: { label: values.Clinic } },
+        radios: { Contact: { state: String(index), widgets: index === 0 ? ['0', 'Off'] : ['Off', '1'] } },
+      });
+    const readback = await extractBatch([{ filename: row.filename, bytes: row.pdfBytes }]);
+    assert.deepEqual({ ...readback.rows[0]?.fields }, {
+      Clinic: { kind: 'dropdown', value: values.Clinic },
+      Contact: { kind: 'radio', value: values.Contact, nativeValue: String(index) },
+    });
+    passed.push(row);
+  }
+  if (rotation !== 90) continue;
+  const rows = ['الرياض', 'Jeddah', '', 'الرياض', 'Jeddah', 'الرياض'].map((Branch, index) => ({
+    Branch, Clinic: dropdowns[index % 2]!, Contact: radios[index % 2]!, ID: String(index + 1).padStart(5, '0'),
+  }));
+  const grouping = planGroupedOutput(rows, 'Branch', '{{ID}}.pdf');
+  const rowSelection = [6, 4, 5, 2, 1];
+  const payloads = rows.map(({ Clinic, ID }) => `${ID} ${Clinic}`);
+  const corner = 'bottom-right', sizePt = 48;
+  const qrStamp: QrPrintRequest = { placement: corner, sizePt, payloads };
+  const watermark = { kind: 'draft-ar', opacity: 0.22, angle: -45 } as const;
+  const roster = new TextEncoder().encode(JSON.stringify(rows));
+  const worker = createBatchProcessor();
+  await worker({ phase: 'preflight', input: { template, roster, rows: rows.map(({ Clinic, Contact }) => ({ Clinic, Contact })), options: settings } }, () => {});
+  const coverSheet = { locale: 'en', coverLanguage: 'bilingual', templateName: 'Clinic.pdf', filenames: makeFilenames(rows, '{{ID}}.pdf') } as const;
+  const split = await worker({ phase: 'split', grouping, rowSelection, coverSheet, watermark, qrStamp, imposition: '2-up' }, () => {});
+  assert(split && 'groups' in split);
+  const members = unzipSync(split.bytes);
+  const receipt = JSON.parse(new TextDecoder().decode(members[SPLIT_CUSTODY_PATH]));
+  assert.equal(receipt.templateSha256, createHash('sha256').update(template).digest('hex'));
+  assert.equal(receipt.rosterSha256, createHash('sha256').update(roster).digest('hex'));
+  assert.deepEqual(receipt.groups, split.groups);
+  assert.deepEqual(receipt.groups.map(({ rowNumbers }: { rowNumbers: number[] }) => rowNumbers), [[1, 4, 6], [2, 5]]);
+  for (const [index, { zipPath, rowNumbers, sha256, bytes }] of split.groups.entries()) {
+    const pack = members[zipPath]!;
+    assert.equal(pack.length, bytes);
+    assert.equal(createHash('sha256').update(pack).digest('hex'), sha256);
+    const recordPayloads = rowNumbers.map((number) => payloads[number - 1]!);
+    const modules = recordPayloads.map((payload) => {
+      const symbol = encodeQr(payload);
+      proveQrMatrix(symbol, payload);
+      return symbol.modules;
+    });
+    const records = rowNumbers.map((number) => ({
+      pdfBytes: passed[(number - 1) % 2]!.pdfBytes, filename: grouping.rows[number - 1]!.filename,
+    }));
+    const cover = { locale: 'bilingual', templateName: coverSheet.templateName, exportedAt: new Date(),
+      preflight: settings, rowNumbers, flagged: 0, skipped: 0 } as const;
+    const reference = await createMergedPdf(records, undefined, cover, { settings: watermark, fonts: settings.fonts },
+      { placement: corner, sizePt, payloads: recordPayloads });
+    const spec = { pdf: `m16-split-${index}.pdf`, referencePdf: `m16-split-${index}-reference.pdf`,
+      coverPages: 1, filenames: records.map(({ filename }) => filename), rowNumbers, corner, sizePt, modules, payloads: recordPayloads };
+    await writeFile(resolve(root, spec.pdf), pack);
+    await writeFile(resolve(root, spec.referencePdf), reference);
+    impositionProofs.push(spec);
+  }
 }
 
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;

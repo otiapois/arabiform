@@ -1,4 +1,5 @@
 import type { RosterRow } from './index';
+import { escapeSpreadsheetCell } from './spreadsheet-csv';
 import { resolveVirtualColumn, VIRTUAL_COLUMNS, type VirtualColumnId } from './virtual-columns';
 
 const illegal = /[\\/:*?"<>|\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
@@ -34,7 +35,10 @@ export type FilenamePlan = { filename: string } & (
   | { filenameAdjusted: true; filenameAdjustReason: 'sanitized' | 'reserved-name' | 'collision-dedup' }
 );
 
-export function planFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern, context?: { localDate: string }): FilenamePlan[] {
+export function planFilenames(
+  rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern, context?: { localDate: string },
+  scope?: { folders?: readonly string[]; spreadsheetSafe?: boolean },
+): FilenamePlan[] {
   const seen = new Set<string>();
   return rows.map((row, index) => {
     const values = Array.isArray(row.warnings) ? (row as RosterRow).values : row as Record<string, string>;
@@ -56,12 +60,14 @@ export function planFilenames(rows: readonly (Record<string, string> | RosterRow
     base = base.replace(/[.\s]+$/u, '');
     const reservedName = reservedStem(base);
     if (reservedName) base = `_${base}`;
+    if (scope?.spreadsheetSafe && escapeSpreadsheetCell(base) !== base) base = '_' + base;
     if (!isSafePdfFilename(`${base}.pdf`)) base = `row-${index + 1}`;
     const candidate = `${base}.pdf`;
     let filename = candidate;
     let suffix = 2;
-    while (seen.has(filenameKey(filename))) filename = `${base}-${suffix++}.pdf`;
-    seen.add(filenameKey(filename));
+    const folder = scope?.folders ? `${filenameKey(scope.folders[index]!)}\0` : '';
+    while (seen.has(folder + filenameKey(filename))) filename = `${base}-${suffix++}.pdf`;
+    seen.add(folder + filenameKey(filename));
     if (filename !== candidate) return { filename, filenameAdjusted: true, filenameAdjustReason: 'collision-dedup' };
     if (reservedName) return { filename, filenameAdjusted: true, filenameAdjustReason: 'reserved-name' };
     if (base !== raw || trimmed !== requested) return { filename, filenameAdjusted: true, filenameAdjustReason: 'sanitized' };

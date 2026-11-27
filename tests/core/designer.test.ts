@@ -128,6 +128,72 @@ describe('flat AcroForm authoring', () => {
       .rejects.toMatchObject({ code: 'invalid-field-page', fieldIndex: 0 });
     await expect(loadFieldLayout('{"version":2}', source)).rejects.toMatchObject({ code: 'invalid-layout' });
   });
+
+  it('authors native combo and radio widgets on rotated and cropped pages without changing the artwork', async () => {
+    const flat = await PDFDocument.load(await sourceFile('flat'));
+    const page = flat.getPage(0);
+    page.setRotation(degrees(270));
+    page.setCropBox(15, 20, 510, 695);
+    flat.addPage([200, 240]);
+    const bytes = await flat.save();
+    const source = await inspectFlatPdf(bytes);
+    const drop = { ...field, name: 'Person.Clinic', kind: 'dropdown', rectPdf: [160, 100, 38, 230], options: ['الرِّيَاض', 'Jeddah 00123'] } as const;
+    const radioA = { ...field, name: 'Person.Contact', kind: 'radio', rectPdf: [215, 130, 22, 30], exportValue: 'بَرِيد' } as const;
+    const radioB = { ...radioA, pageIndex: 1, rectPdf: [30, 45, 25, 22], exportValue: 'Off' } as const;
+    const specs = [{ ...drop, options: [...drop.options] }, radioA, radioB];
+    await expect(loadFieldLayout(await saveFieldLayout(source, specs), source)).resolves.toEqual(specs);
+    const authored = await authorFlatPdf(bytes, specs);
+    const info = await inspectTemplate(authored);
+    expect(info.fields.map(({ name, kind, choices }) => ({ name, kind, choices }))).toEqual([
+      { name: drop.name, kind: 'dropdown', choices: drop.options.map((value) => ({ value, label: value })) },
+      { name: radioA.name, kind: 'radio', choices: [radioA, radioB].map(({ exportValue: value }) => ({ value, label: value })) },
+    ]);
+    expect(info.fields[1]?.widgets.map(({ pageIndex, rotation, x, y, width, height, usable }) =>
+      ({ pageIndex, rotation, rect: [x, y, width, height], usable }))).toEqual([
+      { pageIndex: 0, rotation: 270, rect: radioA.rectPdf, usable: true },
+      { pageIndex: 1, rotation: 0, rect: radioB.rectPdf, usable: true },
+    ]);
+    const native = await PDFDocument.load(authored);
+    const form = native.getForm();
+    expect(native.getPage(0).node.get(key('Contents'))?.toString()).toBe(page.node.get(key('Contents'))?.toString());
+    const combo = form.getDropdown(drop.name);
+    expect(combo.getOptions()).toEqual(drop.options);
+    expect(combo.isEditable()).toBe(false);
+    expect(combo.acroField.dict.get(key('FT'))).toBe(key('Ch'));
+    const radio = form.getRadioGroup(radioA.name);
+    expect(radio.getOptions()).toEqual([radioA.exportValue, radioB.exportValue]);
+    expect(radio.acroField.dict.get(key('FT'))).toBe(key('Btn'));
+    expect(radio.acroField.getValue()).toBe(key('Off'));
+    for (const [index, widget] of radio.acroField.getWidgets().entries()) {
+      expect(widget.getAppearanceState()).toBe(key('Off'));
+      expect(widget.getOnValue()).toBe(key(String(index)));
+      const ap = widget.dict.lookup(key('AP'), PDFDict);
+      for (const state of ['Off', String(index)]) expect(ap.lookup(key('N'), PDFDict).lookup(key(state))).toBeInstanceOf(PDFRawStream);
+    }
+    const fonts = {
+      arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+      latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+    };
+    for (const [index, choice] of [radioA, radioB].entries()) {
+      const values = { [drop.name]: drop.options[index]!, [radioA.name]: choice.exportValue };
+      const filled = await preflightRow(authored, values, { fonts });
+      expect(filled.status).toBe('pass');
+      const extracted = await extractBatch([{ filename: 'choice.pdf', bytes: filled.pdfBytes! }]);
+      expect(extracted.rows[0]?.fields).toEqual({
+        [drop.name]: { kind: 'dropdown', value: drop.options[index] },
+        [radioA.name]: { kind: 'radio', value: choice.exportValue, nativeValue: String(index) },
+      });
+    }
+    for (const options of [[], ['', 'x'], [' x ', ' x '], ['\ud800'], ['x\0y'], ['x\ny'], ['x\u2028y'], [undefined]]) {
+      await expect(authorFlatPdf(bytes, [{ ...drop, options } as FieldDraftSpec])).rejects.toMatchObject({ code: 'invalid-field-options' });
+    }
+    await expect(authorFlatPdf(bytes, [{ ...radioA, exportValue: ' ' }])).rejects.toMatchObject({ code: 'invalid-field-options' });
+    await expect(authorFlatPdf(bytes, [radioA, { ...radioB, exportValue: radioA.exportValue }])).rejects.toMatchObject({ code: 'duplicate-field-name' });
+    await expect(authorFlatPdf(bytes, [radioA, { ...field, name: radioA.name }])).rejects.toMatchObject({ code: 'duplicate-field-name' });
+    for (const pair of [[radioA, { ...field, name: radioA.name + '.Child' }], [{ ...field, name: 'Person' }, radioA]]) {
+      await expect(authorFlatPdf(bytes, pair)).rejects.toMatchObject({ code: 'field-name-conflict' });
+    }
+  });
 });
 
 describe('designer geometry', () => {
