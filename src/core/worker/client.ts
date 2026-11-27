@@ -1,6 +1,6 @@
 import type { Imposition } from '../pdf';
 import type { GroupingPlan } from '../export/grouping';
-import type { QrPrintRequest } from '../pdf/qr-settings';
+import type { BatchQrPrintRequest } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { BatchCommand, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRequest, BatchResponse,
   BatchResult, BatchSplitResult, BatchZipResult, MergeCoverSheet } from './protocol';
@@ -57,11 +57,11 @@ export function createBatchWorker() {
   return {
     preflight: (input: BatchInput, onProgress?: ProgressListener) => send({ phase: 'preflight', input }, onProgress) as Promise<BatchPreflightResult>,
     preview: (rowIndex: number) => send({ phase: 'preview', rowIndex }) as Promise<Uint8Array | undefined>,
-    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: QrPrintRequest, grouping?: GroupingPlan) =>
+    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, grouping?: GroupingPlan) =>
       send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection, qrStamp, grouping }, onProgress) as Promise<BatchZipResult>,
-    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: QrPrintRequest, imposition?: Imposition) =>
+    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition) =>
       send({ phase: 'merged', coverSheet, watermark, rowSelection, qrStamp, imposition }, onProgress) as Promise<BatchMergedResult>,
-    split: (grouping: GroupingPlan, onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: QrPrintRequest, imposition?: Imposition) =>
+    split: (grouping: GroupingPlan, onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition) =>
       send({ phase: 'split', grouping, coverSheet, watermark, rowSelection, qrStamp, imposition }, onProgress) as Promise<BatchSplitResult>,
     dispose: () => stop(new DOMException('Batch canceled', 'AbortError')),
   };

@@ -1,6 +1,12 @@
 # ArabiForm
 
-ArabiForm turns flat PDFs into reusable AcroForm templates, fills interactive PDFs from a CSV or Excel (`.xlsx`) roster, and extracts saved field values into a spreadsheet. All three workflows run in your browser. [اقرأ بالعربية](#العربية)
+ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), extracts saved field values into a spreadsheet, and compares delivered PDFs or QR text with a batch custody manifest. Files and data are processed in your browser. [اقرأ بالعربية](#العربية)
+
+## Create a starter template
+
+1. On `/` or `/ar/pdf-mail-merge`, open **Create template**. Choose **Bilingual Certificate** (A4 landscape), **HR Employment Letter** (A4 portrait), **Clinic Consent Form** (A4 portrait), or **A6 Visitor Badge** (landscape).
+2. Set the organization name, subtitle, accent palette, and Arabic, English, or bilingual header. Check the generated PDF in the preview.
+3. Choose **Download AcroForm Template (.pdf)** for a reusable interactive PDF and **Download Starter CSV** for a roster with matching headers and fictional sample rows. **Use in Fill PDFs Now** opens the generated PDF in the usual fill workflow and keeps your current roster, if one is loaded.
 
 ## Design fields
 
@@ -21,6 +27,14 @@ Use **Download CSV** for a UTF-8 file with a byte order mark (BOM) and formula-l
 
 **Download Custody JSON** saves the original filenames, extraction statuses, exact field values, and full SHA-256 hashes for each source PDF and the generated CSV and Excel files. Compare a file's hash with the digest in a trusted copy of the receipt to check that its bytes match. The receipt is unsigned.
 
+## Verify a batch receipt
+
+1. On `/` or `/ar/pdf-mail-merge`, open **Verify receipt**. Choose the batch custody JSON you saved after export, or the `batch-custody.json` inside a ZIP of split merged PDFs.
+2. Add one or more delivered PDFs, paste the text read from a custody QR stamp, or do both. Select **Verify**. For a PDF, ArabiForm computes SHA-256 from the exact file bytes and compares it with the recorded output digest. A matching file is verified. A known filename with a different hash is reported as a byte mismatch. A file without a matching name or hash is reported as unknown.
+3. A QR result confirms that the pasted text identifies a row recorded in the supplied receipt. To check the PDF's bytes, supply the PDF itself. Both results depend on the unsigned manifest you provide. Issuer authenticity requires separate evidence.
+
+Earlier batch manifests still support byte checks when they include output hashes. QR record verification requires the optional custody QR mode and the matching post-export receipt.
+
 ## Fill PDFs
 
 Map roster columns, preview Arabic and mixed-script text, and correct flagged rows in your browser before export.
@@ -40,7 +54,7 @@ The ZIP contains separate editable PDFs by default. Turn on **Flatten individual
 2. Review the folders and ready-row counts under **Download batch**. Empty or whitespace-only values go into `_Ungrouped`. Folder names retain Arabic and Latin text and are made safe for ZIP extraction. If different group values resolve to the same folder name, the later folders receive numeric suffixes. The individual ZIP uses paths such as `Riyadh/00123.pdf` and resolves filename collisions inside each folder. The `zipPath` field shows the planned path in the CSV and JSON preflight audits and the actual path in the standalone custody manifest after export.
 3. Choose **Download Split Merged PDFs by Group (.zip)** for one printable PDF per group with ready rows in the current scope, such as `Riyadh-merged.pdf`. Each output can use the selected cover language, including **Bilingual (EN + AR)**, and the cover's counts and page ranges refer to that group. Watermarks, local vector QR stamps, and A4 2-up for single-page templates apply to the record pages when enabled. The ZIP includes a root `batch-custody.json` with source fingerprints, scope, group names, original roster row numbers, and the path, byte length, and SHA-256 of each merged PDF. **Download Merged Printable PDF** still provides one combined file.
 
-Use **Download Custody Manifest (.json)** in **Download batch** to save the full SHA-256 hashes of the original PDF template and CSV or Excel file. For Excel, the hash covers the entire workbook. The receipt adds `sheetName` with the exact worksheet name after you switch tabs, even if you switch back to the first visible tab. While you use the worksheet opened by default, the workbook hash and the first-visible rule identify that sheet. CSV uses the existing receipt fields. The receipt identifies the export scope and the original roster positions of the ready rows in scope, starting at 1. After a successful ZIP export, it records each PDF member's name, byte length, and hash. After a successful merged PDF export, it records the hash of that PDF. Download the receipt after the exports you want to compare and before changing the worksheet, selection, or output settings. Expand a source fingerprint to view or copy its full value. To check a file against a trusted receipt, compute SHA-256 for that file and compare all 64 hexadecimal characters. A match verifies that the file has the recorded bytes. The receipt is unsigned.
+Use **Download Custody Manifest (.json)** in **Download batch** to save the full SHA-256 hashes of the original PDF template and CSV or Excel file. For Excel, the hash covers the entire workbook. The receipt adds `sheetName` with the exact worksheet name after you switch tabs, even if you switch back to the first visible tab. While you use the worksheet opened by default, the workbook hash and the first-visible rule identify that sheet. CSV uses the existing receipt fields. The receipt identifies the export scope and the original roster positions of the ready rows in scope, starting at 1. After a successful ZIP export, it records each PDF member's name, byte length, and hash. After a successful merged PDF export, it records the hash of that PDF. Download the receipt after the exports you want to compare and before changing the worksheet, selection, or output settings. Expand a source fingerprint to view or copy its full value. Use [Verify receipt](#verify-a-batch-receipt) to compare a delivered PDF or custody QR with the unsigned receipt.
 
 The template inspector lists each field and its widgets, including page, rotation, usable width and height in points, and `/MaxLen` when set. Download the table as CSV to share with whoever prepares the roster. The Arabic and Latin capacity numbers come from shaping representative text with the bundled Noto Naskh Arabic and Noto Sans fonts at the current minimum font size. Arabic samples include diacritics. Text estimates count Unicode code points, including marks and spaces. Actual fit depends on the characters and their combinations. Preflight checks the actual values against every mapped widget.
 
@@ -73,6 +87,8 @@ In **Output settings**, use **Print watermark (optional)** to choose `DRAFT`, `C
 Open **Print QR stamp (optional)** in **Output settings**, choose a corner, and enter a pattern such as `CERT-{{ID}}` or `CERT-[[@PADDED_ROW_001]]`. The live preview follows the selected row and uses its current cell values, including edits. The default size is 48 pt. The 36–72 pt white square includes the four-module quiet zone and stays 9 pt from the two edges at the chosen corner. The stamp appears on each record page of the merged printable PDF and flattened PDFs in ZIP. Choose **None** to turn it off.
 
 Keep the resolved text within 106 bytes for ASCII or 105 UTF-8 bytes if it contains non-ASCII text. A missing or malformed token, empty payload, invalid Unicode, or overlap with a visible form field blocks the requested stamped export. The stamp carries the resolved text in the QR itself.
+
+To make a QR verifiable against the batch receipt, select a corner and enable **Use custody QR record**. The stamp then carries a source digest prefix and the original roster row number. It carries no roster cell values. After exporting, save the custody manifest alongside the stamped files. The mode starts off. Existing custom QR patterns and saved settings continue to work.
 
 Print-locked refers to removing the interactive form controls. The resulting files are ordinary PDFs and can still be modified with PDF-editing tools. If a visible field lacks a usable saved appearance, use the editable ZIP or a template with saved appearances. Before sending or printing a batch, open a test copy in the actual viewer or sharing app and check the Arabic text, selections, and page order. PDF.js and PyMuPDF checks cover specific files and display paths. A handoff through iOS, macOS Preview, WhatsApp, or a printer needs its own check.
 
@@ -126,11 +142,17 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 
 Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Each route's entry JavaScript must be under 278,000 raw bytes and under 87,000 gzip bytes. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
 
-See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v1.6.0 release brief](docs/tasks/M16-grouped-zip-split-designer-choices.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v1.7.0 release brief](docs/tasks/M17-bilingual-template-studio-qr-verifier.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## العربية
 
-تحوّل أداة ArabiForm ملفات PDF المسطّحة إلى قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتستخرج قيم الحقول المحفوظة إلى جدول بيانات. تتم المعالجة داخل متصفحك.
+تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتستخرج قيم الحقول المحفوظة إلى جدول بيانات. يمكنك أيضًا مقارنة ملفات PDF المستلمة أو نص رمز QR بسجلّ الدفعة. تتم كل المعالجة داخل متصفحك.
+
+### إنشاء قالب جاهز للتعبئة
+
+1. افتح `/ar/pdf-mail-merge` واختر «إنشاء قالب». اختر شهادة إتمام (A4 أفقي)، أو خطاب إثبات عمل (A4 عمودي)، أو استمارة موافقة المريض (A4 عمودي)، أو بطاقة زائر (A6 أفقي).
+2. أدخل اسم المؤسسة والعنوان الفرعي، واختر الألوان ولغة الترويسة. يمكن أن تكون الترويسة بالعربية أو الإنجليزية أو اللغتين معًا. راجع القالب في المعاينة.
+3. نزّل قالب AcroForm التفاعلي وملف CSV أوليًا يحتوي على عناوين الأعمدة المطابقة وصفوف تجريبية ببيانات خيالية. يمكنك فتح القالب مباشرةً في وضع التعبئة. إذا كان هناك جدول بيانات محمّل، يظلّ متاحًا للربط.
 
 ### تصميم حقول النموذج
 
@@ -151,6 +173,14 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 
 يحفظ زر «نزّل سجل الحيازة JSON» أسماء الملفات الأصلية وحالات الاستخراج وقيم الحقول كما قُرئت، وبصمات SHA-256 الكاملة لكل ملف PDF مصدر ولكل من ملفَّي CSV وExcel الناتجين. قارن بصمة الملف بالبصمة المسجّلة في نسخة موثوقة من السجل للتحقّق من تطابق محتواه. السجل غير موقّع.
 
+### التحقق من بيان الحيازة
+
+1. افتح `/ar/pdf-mail-merge` واختر «التحقق من بيان الحيازة». اختر ملف JSON الذي حفظته بعد تصدير الدفعة، أو ملف `batch-custody.json` الموجود داخل أرشيف ملفات PDF المدمجة حسب المجموعة.
+2. أضف ملف PDF مستلمًا أو أكثر، أو ألصق النص المقروء من رمز QR الخاص بالسجلّ. يمكنك أيضًا إدخال النوعين معًا. اضغط «تحقّق». تحسب الأداة بصمة SHA-256 من بايتات ملف PDF وتقارنها بالبصمة المسجّلة. تعرض نتيجة تطابق عند تساوي البصمتين، وتنبيهًا عند تطابق اسم الملف واختلاف البصمة. إذا غاب الاسم والبصمة عن البيان، تعرض النتيجة على أنها غير معروفة.
+3. يؤكّد تطابق رمز QR أن النص الملصق يشير إلى صف مسجّل في البيان المرفق. للتحقّق من بايتات ملف PDF نفسه، أضف الملف. تعتمد النتيجتان على البيان غير الموقّع الذي تختاره. يتطلّب إثبات هوية جهة الإصدار دليلًا مستقلًا.
+
+يمكن التحقّق من بايتات الملفات باستخدام بيانات الدفعات الأقدم إذا احتوت على بصمات المخرجات. يتطلّب التحقّق من رمز QR تفعيل وضع سجلّ الحيازة الاختياري واستخدام البيان المطابق الذي حُفظ بعد التصدير.
+
 ### تعبئة ملفات PDF
 
 اربط الأعمدة بالحقول وعاين النص العربي والنص المختلط، ثم صحّح الصفوف التي تحتاج إلى مراجعة قبل التصدير.
@@ -170,7 +200,7 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 2. راجع المجلدات وأعداد الصفوف الجاهزة في قسم تنزيل الدفعة. تنتقل القيم الفارغة أو المكوّنة من مسافات فقط إلى مجلد `_Ungrouped`. تحتفظ أسماء المجلدات بالحروف العربية واللاتينية، وتُهيّأ لتناسب فكّ أرشيف ZIP. إذا نتج الاسم نفسه من قيم مختلفة، يُضاف رقم إلى أسماء المجلدات اللاحقة. يستخدم أرشيف الملفات الفردية مسارات مثل `Riyadh/00123.pdf` ويعالج تكرار أسماء الملفات داخل كل مجلد. يعرض حقل `zipPath` المسار المقرّر في تقرير الفحص بصيغتَي CSV وJSON، والمسار الفعلي بعد التصدير في بيان سلسلة الحيازة المستقل.
 3. اختر «تنزيل ملفات PDF المدمجة لكل مجموعة (.zip)» للحصول على ملف صالح للطباعة لكل مجموعة فيها صفوف جاهزة ضمن النطاق الحالي، مثل `Riyadh-merged.pdf`. يمكنك استخدام لغة الغلاف المحدّدة، بما فيها العربية والإنجليزية معًا. تخصّ أعداد الغلاف ونطاقات الصفحات كل مجموعة على حدة. عند تفعيل العلامة المائية أو رمز QR المحلي أو طباعة سجلين على ورقة A4 لقالب من صفحة واحدة، تسري الإعدادات على صفحات السجلات. يحتوي جذر الأرشيف على `batch-custody.json` وفيه بصمات المصادر ونطاق التصدير والمجموعات وأرقام الصفوف الأصلية ومسار كل ملف مدمج وحجمه بالبايت وبصمته SHA-256. يظلّ تنزيل ملف PDF مدمج واحد متاحًا.
 
-استخدم «نزّل بيان سلسلة الحيازة (.json)» في قسم تنزيل الدفعة لحفظ بصمات SHA-256 الكاملة لقالب PDF الأصلي وملف CSV أو Excel الأصلي. في حالة Excel، تشمل البصمة المصنّف كاملًا. بعد تبديل ورقة العمل، يضيف البيان الحقل `sheetName` وفيه اسم الورقة كما هو، حتى إذا عدت إلى أول ورقة ظاهرة. ما دمت تستخدم الورقة التي فُتحت تلقائيًا، تكفي بصمة المصنّف وترتيب أوراقه لتحديد أول ورقة ظاهرة. يحتفظ بيان CSV بحقول الإصدار الحالي. يسجّل البيان نطاق التصدير وأرقام الصفوف الجاهزة فيه حسب ترتيبها في القائمة الأصلية، بدءًا من الرقم 1. بعد تصدير ZIP بنجاح، يسجّل البيان اسم كل ملف PDF داخله وحجمه بالبايت وبصمته. وبعد تصدير ملف PDF مدمج بنجاح، يسجّل بصمته أيضًا. نزّل البيان بعد اكتمال عمليات التصدير التي تريد التحقّق منها وقبل تغيير ورقة العمل أو التحديد أو إعدادات الإخراج. افتح أيّ بصمة مصدرية لعرضها كاملة أو نسخها. للتحقّق من ملف باستخدام بيان موثوق، احسب بصمة SHA-256 للملف وقارن الخانات السداسية العشرية الـ64 كاملة. تطابق البصمتين يؤكّد تطابق محتوى الملف مع النسخة المسجَّلة. البيان غير موقّع.
+استخدم «نزّل بيان سلسلة الحيازة (.json)» في قسم تنزيل الدفعة لحفظ بصمات SHA-256 الكاملة لقالب PDF الأصلي وملف CSV أو Excel الأصلي. في حالة Excel، تشمل البصمة المصنّف كاملًا. بعد تبديل ورقة العمل، يضيف البيان الحقل `sheetName` وفيه اسم الورقة كما هو، حتى إذا عدت إلى أول ورقة ظاهرة. ما دمت تستخدم الورقة التي فُتحت تلقائيًا، تكفي بصمة المصنّف وترتيب أوراقه لتحديد أول ورقة ظاهرة. يحتفظ بيان CSV بحقول الإصدار الحالي. يسجّل البيان نطاق التصدير وأرقام الصفوف الجاهزة فيه حسب ترتيبها في القائمة الأصلية، بدءًا من الرقم 1. بعد تصدير ZIP بنجاح، يسجّل البيان اسم كل ملف PDF داخله وحجمه بالبايت وبصمته. وبعد تصدير ملف PDF مدمج بنجاح، يسجّل بصمته أيضًا. نزّل البيان بعد اكتمال عمليات التصدير التي تريد التحقّق منها وقبل تغيير ورقة العمل أو التحديد أو إعدادات الإخراج. افتح أيّ بصمة مصدرية لعرضها كاملة أو نسخها. افتح وضع «التحقق من بيان الحيازة» لمقارنة ملف PDF مستلم أو رمز QR الخاص بالسجلّ بالبيان غير الموقّع.
 
 يعرض فحص سعة الحقول كل حقل ومواضع ظهوره في النموذج، مع رقم الصفحة وزاوية الدوران والعرض والارتفاع المتاحين بالنقاط والحدّ `/MaxLen` عند وجوده. يمكنك تنزيل التقرير بصيغة CSV ومشاركته مع من يعدّ جدول البيانات. تحسب الأداة السعة التقريبية من عينات نصية بالحد الأدنى الحالي لحجم الخط، بخط نوتو نسخ عربي مع التشكيل وخط نوتو سانس للنص اللاتيني. يشمل العدّ علامات التشكيل والمسافات. يختلف النص الذي يتّسع له الحقل بحسب الحروف وطريقة اتصالها. يتحقّق الفحص المسبق من القيم الفعلية في كل موضع للحقل.
 
@@ -203,6 +233,8 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 افتح «رمز QR للطباعة (اختياري)» من **إعدادات الإخراج**، واختر إحدى زوايا الصفحة، وأدخل نمطًا مثل `CERT-{{ID}}` أو `CERT-[[@PADDED_ROW_001]]`. تتغيّر المعاينة مباشرة عند اختيار صف آخر أو تعديل قيم الصف الحالي. المقاس الافتراضي 48 نقطة. يشمل المربّع الأبيض، الذي يتراوح طول ضلعه بين 36 و72 نقطة، هامشًا أبيض بعرض أربع وحدات حول الرمز، ويبعد 9 نقاط عن حافتَي الزاوية المختارة. يظهر الرمز على كل صفحة من صفحات السجلات في ملف PDF المدمج للطباعة وفي ملفات PDF المسطّحة داخل ZIP. يمكنك إيقاف الرمز من قائمة المواضع.
 
 الحد الأقصى للنص بعد تطبيق النمط هو 106 بايت لنص ASCII، أو 105 بايت بترميز UTF-8 إذا احتوى النص على محارف خارج ASCII. يتوقّف التصدير المطلوب عند وجود مرجع مفقود أو غير صالح، أو نص فارغ، أو محارف Unicode غير صالحة، أو تداخل مع حقل مرئي. يحمل الرمز نفسه النص الناتج من النمط.
+
+لإنشاء رمز QR يمكن التحقّق منه باستخدام بيان الدفعة، اختر زاوية وفعّل خيار استخدام رمز QR لسجلّ الحيازة. يحمل الرمز بداية بصمة المصادر ورقم الصف في الجدول الأصلي، وتظلّ قيم الخلايا خارج الرمز. احفظ بيان الحيازة مع الملفات بعد التصدير. الخيار متوقّف افتراضيًا، وتظلّ الأنماط المخصّصة والإعدادات المحفوظة سابقًا قابلة للاستخدام.
 
 قفل الحقول للطباعة يعني إزالة عناصر النموذج التفاعلية. تبقى الملفات بصيغة PDF عادية ويمكن تعديلها بأدوات تحرير PDF. إذا تعذّر التسطيح لأن أحد الحقول المرئية يفتقر إلى مظهر محفوظ صالح، نزّل ملفات ZIP القابلة للتعديل أو استخدم قالبًا يحتوي على مظاهر محفوظة لحقوله. افتح نسخة تجريبية في برنامج العرض أو المشاركة الذي ستستخدمه، وتحقّق من النص العربي والخيارات وترتيب الصفحات قبل إرسال الدفعة أو طباعتها. تغطّي اختبارات PDF.js وPyMuPDF ملفات ومسارات عرض محددة. اختبر النتيجة بنفسك إذا كنت ستستخدم iOS أو تطبيق «المعاينة» في macOS أو واتساب أو طابعة.
 

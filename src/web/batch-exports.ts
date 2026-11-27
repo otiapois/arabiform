@@ -1,4 +1,4 @@
-import type { QrPrintRequest } from '../core/pdf/qr-settings';
+import type { BatchQrPrintRequest } from '../core/pdf/qr-settings';
 import type { BatchProgress, BatchRowResult } from '../core/worker/client';
 import type { ExportScope } from '../core/worker/row-selection';
 import { errorCode } from './resources';
@@ -28,20 +28,24 @@ export async function buildDownload(
   }
 
   const isZip = kind === 'zip';
-  let qrRequest: QrPrintRequest | undefined;
+  let qrRequest: BatchQrPrintRequest | undefined;
   if (qrStamp && (!isZip || flattenZip)) {
-    const { resolveQrPayload } = await import('../core/pdf/qr-encoder');
-    if (!isCurrent()) return;
     const { placement, sizePt, pattern } = qrStamp;
-    const payloads = Array<string | null>(rows.length).fill(null);
-    for (const rowNumber of scope.selectedRowNumbers) {
-      try {
-        payloads[rowNumber - 1] = resolveQrPayload(pattern, rows[rowNumber - 1]!.values, rowNumber, localDate);
-      } catch (error) {
-        throw Object.assign(new Error(errorCode(error, 'qr-stamp-invalid-payload')), { rowNumber });
+    if (qrStamp.custodyRecord) {
+      qrRequest = { placement, sizePt, custodyRecord: true };
+    } else {
+      const { resolveQrPayload } = await import('../core/pdf/qr-encoder');
+      if (!isCurrent()) return;
+      const payloads = Array<string | null>(rows.length).fill(null);
+      for (const rowNumber of scope.selectedRowNumbers) {
+        try {
+          payloads[rowNumber - 1] = resolveQrPayload(pattern, rows[rowNumber - 1]!.values, rowNumber, localDate);
+        } catch (error) {
+          throw Object.assign(new Error(errorCode(error, 'qr-stamp-invalid-payload')), { rowNumber });
+        }
       }
+      qrRequest = { placement, sizePt, payloads };
     }
-    qrRequest = { placement, sizePt, payloads };
   }
   const filenames = isZip || cover ? filenamePlans.map(({ filename }) => filename) : [];
   const coverSheet = cover ? { ...cover, filenames } : undefined;

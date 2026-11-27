@@ -58,6 +58,17 @@
 - Field Layout JSON stores `version: 1`, `sourceSha256`, and the field specs, including dropdown options and radio export values. Earlier text and checkbox layouts use the same format. The digest covers the exact original flat PDF bytes. Loading a layout checks that digest, schema, and field geometry against the open source before applying changes. Save the original PDF with the layout for later revision.
 - The downloadable template has standard AcroForm fields and a standard blank-template edit font. Explicit text alignment uses `/Q`. Auto leaves `/Q` absent for direction-based placement in Fill. The authored template opens through ordinary AcroForm intake. Fill shapes mapped text with the chosen bundled or local font, checks each widget's ink bounds and length, then writes the exact text value and field appearance for passing rows.
 
+## Bilingual Starter Templates
+
+`src/core/studio/templates.ts` generates editable templates with locally bundled Noto Naskh Arabic and Noto Sans. The operator can set the organization name, subtitle, header language (`bilingual`, `ar`, or `en`) and accent palette (`forest`, `navy`, `burgundy`, or `slate`). The matching UTF-8 CSV starts with a BOM, uses the template's exact field names as column headers, and contains synthetic example data. Without an organization name, the PDF includes a synthetic sample label in the selected language. The generated PDF goes through ordinary AcroForm intake, mapping, and preflight. Editable outputs can be read by the extractor.
+
+| Template ID | Page | AcroForm fields |
+| --- | --- | --- |
+| `certificate-bilingual` | A4 landscape | `RecipientName`, `CourseTitle`, `IssueDate`, `CertificateID`, `HonorsCheck` (checkbox) |
+| `hr-letter-bilingual` | A4 portrait | `EmployeeName`, `EmployeeID`, `JobTitle`, `Department`, `StartDate`, `ActiveStatus` (checkbox) |
+| `clinic-consent-bilingual` | A4 portrait | `PatientName`, `NationalID`, `ClinicBranch` (dropdown), `ConsentCheck` (checkbox), `ContactPreference` (radio) |
+| `visitor-badge-a6` | A6 landscape | `VisitorName`, `Organization`, `BadgeID`, `AccessZone` (dropdown) |
+
 ## Custody Manifest
 
 `src/core/audit/custody.ts` calculates SHA-256 locally. The receipt uses `version: 1`, `templateSha256`, and `rosterSha256`. Workbench receipts add `exportScope` (`'all-ready'` or `'selected-subset'`) and `selectedRowNumbers`, the original 1-based positions of the passing rows in scope, in roster order. The source hashes cover the exact bytes of the original PDF and original CSV or XLSX file, including the full workbook for XLSX. With the worksheet opened by default, the existing v1 fields apply and the workbook hash plus the first-visible rule identify the worksheet. After an explicit tab switch, add `sheetName` with the exact active worksheet name even if the operator returns to the first visible tab. CSV uses the existing v1 fields.
@@ -65,6 +76,21 @@
 A successful ZIP export adds `entries`, with `filename`, `sha256`, and `bytes` for each final PDF member. Each digest covers the final member bytes, including any flattening, watermark, and QR stamp. A successful merged export adds `mergedPdfSha256`, computed over the complete saved PDF, including any cover, watermarks, and QR stamps. Both sets of hashes can be present for the same batch and settings. The standalone JSON receipt has its own schema, leaving the CSV and JSON preflight audit formats intact. Recipients can compare file bytes using the full digests and a trusted copy of the unsigned receipt.
 
 For a grouped individual ZIP, each standalone receipt entry also carries the exact `zipPath`. The split ZIP includes its own unsigned `batch-custody.json` at the archive root. It records the source hashes and optional worksheet name, version, export scope, selected original row numbers, and `groupByColumn`. Its `groups` entries record the raw `groupValue` (null for blanks), safe `folder`, `zipPath`, `rowNumbers`, `filename`, `sha256`, and `bytes`. Each digest covers the final grouped PDF, including any cover and print options. The row numbers in the receipt correspond to the exported records' original 1-based roster positions.
+
+Optionally record `qrRecords` as `{ rowNumber, payload }` entries in the v1 receipt after a successful print export in custody QR mode. Only rows actually stamped in the exported scope qualify. Combined merged PDFs, split merged PDFs, and flattened ZIP members can carry these records. Editable ZIP members and custom QR patterns leave the QR record ledger untouched. Each structured payload is `ARABIFORM:1:<12 lowercase hex digits>:<original 1-based row number>`. Compute the prefix from the first 12 lowercase hex digits of the SHA-256 of the UTF-8 JSON array `["ArabiForm custody QR v1", templateSha256, rosterSha256, sheetName ?? null]`. Cell values are outside this payload.
+
+## Offline Receipt Verification
+
+`src/core/custody/verify.ts` reads local unsigned v1 batch manifests. Earlier receipts with output hashes still provide byte comparisons. A source-only receipt supplies no evidence of an exported file. PDF verification hashes the submitted bytes and looks for the full digest among relevant `entries`, `mergedPdfSha256`, and split `groups`. An exact grouped path identifies one member. The standard merged file is `arabiform-merged.pdf`. A bare filename can have multiple candidate digests when groups share that name. A renamed file with an unrecognized name can match an issued output by digest.
+
+| Verdict | Meaning relative to the supplied receipt |
+| --- | --- |
+| `VERIFIED_EXACT_MATCH` | The submitted PDF's complete SHA-256 matches a recorded output digest. |
+| `TAMPERED_BYTE_MISMATCH` | The name or path identifies a recorded PDF, and none of its candidate digests match the submitted bytes. |
+| `VERIFIED_QR_RECORD` | The structured QR text and original row match a record in `qrRecords` for this receipt's source digest prefix. |
+| `UNMATCHED_UNKNOWN` | The receipt identifies no applicable matching PDF output or QR record. |
+
+QR verification covers record membership only. Use the PDF input for a byte comparison. The receipt is unsigned, so both results rely on the supplied manifest. Issuer authenticity requires separate evidence.
 
 ## Bulk Filled PDF Extraction
 

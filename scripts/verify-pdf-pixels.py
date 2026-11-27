@@ -600,15 +600,48 @@ def check_imposition(spec, directory):
                     assert sum(value < 200 for line in range(top, b)
                                for value in rgb[(line * w + left) * CHANNELS:(line * w + r) * CHANNELS:CHANNELS]) >= 12
                     allowed.append((left, top, r, b))
-                assert any(0.20 < span["opacity"] < 0.24 and
-                           fitz.Rect(x, y, right, bottom).contains(fitz.Rect(span["bbox"]))
-                           for span in page.get_texttrace()), (spec["pdf"], first + slot, "vector watermark missing from slot")
+                if spec.get("requireWatermark", True):
+                    assert any(0.20 < span["opacity"] < 0.24 and
+                               fitz.Rect(x, y, right, bottom).contains(fitz.Rect(span["bbox"]))
+                               for span in page.get_texttrace()), (spec["pdf"], first + slot, "vector watermark missing from slot")
             assert_same_outside((w, h, b"\xff" * (w * h * CHANNELS)), image, allowed, spec["pdf"])
             sheets.append({"sheet": cover_count + sheet_index + 1, "records": slot_proofs,
                            "cutLines": 8 * len(sources), "blankSlots": 2 - len(sources), "pixelsOutsideRecordsAndCutLines": 0})
     warnings = fitz.TOOLS.mupdf_warnings(reset=True)
     assert not warnings, f"{spec['pdf']}: MuPDF emitted warnings: {warnings}"
     return {"pdf": spec["pdf"], "coverPages": cover_count, "exactCoverIndexRows": len(records) if cover_count else 0, "sheets": sheets}
+
+
+def check_studio(spec, directory):
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    label = spec["id"]
+    with fitz.open(directory / spec["before"]) as original:
+        assert len(original) == 1
+        page = original[0]
+        size = spec["sizePt"]
+        assert all(abs(actual - expected) < 0.01 for actual, expected in zip((page.rect.width, page.rect.height), size, strict=True))
+        spans = [bytes.fromhex(value.decode("ascii")).decode("utf-16") for value, _ in COVER_SPAN.findall(page.read_contents())]
+        assert spans[:4] == spec["header"], (label, spans[:4])
+        width, height, pixels = render(page, False)
+        header_height = 116 if label == "visitor-badge-a6" else 196
+        assert sum(pixels[:width * header_height * 4 * CHANNELS:CHANNELS].translate(DARK_PIXELS)) > 1000, (label, "header has no rendered ink")
+    for filename in [spec["before"], *spec["after"]]:
+        with fitz.open(directory / filename) as doc:
+            width, height, pixels = render(doc[0])
+            # The side gutters include each 72 pt corner square, its 9 pt
+            # printer inset, plus one raster pixel of rounding tolerance.
+            gutter = 81 * 4 + 1
+            blank = b"\xff" * (gutter * CHANNELS)
+            stride = width * CHANNELS
+            for offset in range(0, len(pixels), stride):
+                assert pixels[offset:offset + len(blank)] == pixels[offset + stride - len(blank):offset + stride] == blank, (
+                    label, filename, "template artwork or filled ink entered the corner gutter")
+            stripe = 9 * 4 * stride
+            assert pixels[:stripe] == pixels[-stripe:] == b"\xff" * stripe, (label, filename, "ink crossed the vertical print margin")
+    equal_pages = check_merged({"pdf": spec["printed"], "rows": spec["after"]}, directory)
+    assert not fitz.TOOLS.mupdf_warnings(reset=True), label
+    return {"id": label, "sizePt": size, "bilingualHeader": spec["header"], "fourClearQrCorners": True,
+            "verticalPrintMarginPt": 9, "editableAndPrintedPixelIdentical": equal_pages}
 
 
 def main():
@@ -631,11 +664,13 @@ def main():
     watermarks = [check_watermark(spec, path.parent) for spec in manifest.get("watermarkProofs", [])]
     qr_proofs = [check_qr_stamp(spec, path.parent) for spec in manifest.get("qrProofs", [])]
     imposition_proofs = [check_imposition(spec, path.parent) for spec in manifest.get("impositionProofs", [])]
+    studio_proofs = [check_studio(spec, path.parent) for spec in manifest.get("studioProofs", [])]
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "flattenedZipPagesPixelIdentical": zipped,
         "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs, "impositionProofs": imposition_proofs,
+        "studioProofs": studio_proofs,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -664,6 +699,9 @@ def main():
         sheets = [sheet for proof in imposition_proofs for sheet in proof["sheets"]]
         print(f"2-up: {len(sheets)} A4 sheets, {sum(len(sheet['records']) for sheet in sheets)} vector stamped records "
               f"with exact QR rasters, {sum(sheet['cutLines'] for sheet in sheets)} cut lines, 0 outside ink.")
+    if studio_proofs:
+        print(f"Template studio: {len(studio_proofs)} bilingual one-page designs with four clear 72 pt QR corners, "
+              "9 pt vertical print margins, and both Arabic and English fills.")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createCustodyManifest, hashCustodySources, sha256 } from '../../src/core/audit/custody';
+import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../../src/core/custody/verify';
 import { extractBatch } from '../../src/core/extractor/extract';
 import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
@@ -35,6 +36,7 @@ import { inspectRosterWorkbook, makeFilenames, planFilenames, readRoster, type R
 import { filenameKey } from '../../src/core/roster/filenames';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
+import { generateStudioTemplate, STUDIO_ACCENT_PALETTES, STUDIO_HEADER_LANGUAGES, STUDIO_TEMPLATE_IDS } from '../../src/core/studio/templates';
 
 import { proveQrMatrix } from './qr-proof';
 
@@ -69,7 +71,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(27_660);
+  expect(acceptedCases).toBeGreaterThanOrEqual(30_180);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -267,6 +269,73 @@ describe('seeded adversarial files and PDF geometry', () => {
       expect(result.pdfBytes).toBeUndefined();
     }), 420);
   }, 60_000);
+});
+
+describe('seeded bilingual template studio and issued custody QR records', () => {
+  const title = fc.tuple(
+    fc.constantFrom('مَرْكَز', 'مَدْرَسَة', 'عِيَادَة', 'مُؤَسَّسَة', 'مُجَمَّع', 'المُسْتَقْبَل'),
+    fc.constantFrom('Riyadh', 'Alexandria', 'Cairo', 'Abu Dhabi', 'Learning', 'Clinic', 'Workshop', 'Office'),
+    fc.constantFrom(' / ', ' · ', ' - ', ' + ', ' — '),
+    fc.integer({ min: 0, max: 99999 }),
+    fc.boolean(),
+  ).map(([ar, en, separator, serial, reverse]) => {
+    const latin = `${en} ${String(serial).padStart(5, '0')}`;
+    return reverse ? `${latin}${separator}${ar}` : `${ar}${separator}${latin}`;
+  });
+  const fonts = async () => ({
+    arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+    latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+  });
+
+  it.each(STUDIO_TEMPLATE_IDS)('roundtrips 625 real %s AcroForms and rejects actual single-byte and QR tampering', async (id) => {
+    const options = { fonts: await fonts() };
+    await verify(fc.asyncProperty(
+      title, title, fc.constantFrom(...STUDIO_ACCENT_PALETTES), fc.constantFrom(...STUDIO_HEADER_LANGUAGES),
+      fc.integer({ min: 1, max: 2 }), fc.nat(), fc.integer({ min: 0, max: 7 }),
+      async (organizationName, documentSubtitle, accentPalette, headerLanguage, originalRow, offset, bit) => {
+        const studio = await generateStudioTemplate(id, { organizationName, documentSubtitle, accentPalette, headerLanguage }, options.fonts);
+        const { fields, pages } = await inspectTemplate(studio.pdfBytes);
+        const roster = encoder.encode(studio.csv);
+        const sheet = (await readRoster(roster, studio.csvFilename)).sheets[0]!;
+        const rows = sheet.rows.map(({ values }) => values);
+        expect(pages).toHaveLength(1);
+        expect(fields.map(({ name }) => name)).toEqual(sheet.headers);
+        const selected = rows[originalRow - 1]!;
+        const worker = createBatchProcessor();
+        const preflight = await worker({ phase: 'preflight', input: { template: studio.pdfBytes, roster, rows, options } }, () => {});
+        if (!preflight || !('custody' in preflight)) throw new Error('missing preflight');
+        expect(preflight.rows.map(({ status, diagnostics }) => ({ status, diagnostics }))).toEqual(
+          rows.map(() => ({ status: 'pass', diagnostics: [] })),
+        );
+        const filled = await worker({ phase: 'preview', rowIndex: originalRow - 1 }, () => {});
+        if (!(filled instanceof Uint8Array)) throw new Error('missing filled PDF');
+        const filename = 'issued.pdf';
+        const extracted = await extractBatch([{ filename, bytes: filled }]);
+        expect(extracted.rows[0]!.status).toBe('extracted');
+        expect(Object.fromEntries(fields.map(({ name }) => [name, extracted.rows[0]!.fields[name]!.value]))).toEqual(
+          Object.fromEntries(fields.map(({ name, kind }) => [
+            name, kind === 'checkbox' ? selected[name] === 'yes' ? 'checked' : 'unchecked' : selected[name],
+          ])),
+        );
+        const rowSelection = [originalRow];
+        const qrStamp = { placement: 'bottom-right', sizePt: 72, custodyRecord: true } as const;
+        const result = await worker({ phase: 'zip', filenames: rows.map(() => filename), flattenZip: true, qrStamp, rowSelection }, () => {});
+        if (!result || result instanceof Uint8Array || !('entries' in result) || !result.qrRecords?.length) throw new Error('missing print receipt');
+        const receipt = await parseCustodyManifest(createCustodyManifest(preflight.custody, result, {
+          exportScope: 'selected-subset', selectedRowNumbers: rowSelection,
+        }));
+        const issued = unzipSync(result.bytes)[filename]!;
+        expect((await verifyCustodyPdf(receipt, { filename, bytes: issued })).status).toBe('VERIFIED_EXACT_MATCH');
+        const altered = issued.slice();
+        const position = offset % altered.length;
+        altered[position] = altered[position]! ^ (1 << bit);
+        expect((await verifyCustodyPdf(receipt, { filename, bytes: altered })).status).toBe('TAMPERED_BYTE_MISMATCH');
+        const { payload } = result.qrRecords[0]!;
+        expect(verifyCustodyQr(receipt, payload)).toMatchObject({ status: 'VERIFIED_QR_RECORD', rowNumber: originalRow });
+        expect(verifyCustodyQr(receipt, payload.slice(0, -1) + (3 - originalRow)).status).toBe('UNMATCHED_UNKNOWN');
+      },
+    ), 625);
+  }, 300_000);
 });
 
 describe('seeded cover pagination and batch font recommendations', () => {

@@ -1,8 +1,9 @@
 import { hashCustodySources, sha256 } from '../audit/custody';
+import { createCustodyQrRecords, type CustodyQrRecord } from '../custody/records';
 import { validateGroupingPlan } from '../export/grouping';
 import { createMergedPdf, preflightRow, prepareRowPreflight } from '../pdf';
 import { createGeneratedZip, createSplitMergedZip } from '../pdf/exports';
-import { isCoverLanguage, validateQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
+import { isCoverLanguage, validateBatchQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 import { resolveRowSelection } from './row-selection';
 
@@ -73,14 +74,20 @@ export function createBatchProcessor() {
     });
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
     let qrStamp: QrPrintRequest | undefined;
+    let qrRecords: CustodyQrRecord[] | undefined;
     if (command.qrStamp !== undefined && (phase !== 'zip' || command.flattenZip)) {
-      const { placement, sizePt, payloads } = validateQrPrintRequest(command.qrStamp, results.length);
-      qrStamp = { placement, sizePt, payloads: selectedRowNumbers.map((number) => payloads[number - 1]!) };
+      const request = validateBatchQrPrintRequest(command.qrStamp, results.length);
+      if ('custodyRecord' in request) qrRecords = await createCustodyQrRecords(custody, selectedRowNumbers);
+      const { placement, sizePt } = request;
+      qrStamp = {
+        placement, sizePt,
+        payloads: 'payloads' in request ? selectedRowNumbers.map((number) => request.payloads[number - 1]!) : qrRecords!.map(({ payload }) => payload),
+      };
     }
     if (phase === 'zip') {
       const paths = grouping && selectedRowNumbers.map((number) => grouping.rows[number - 1]!.zipPath);
       const zip = await createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp, paths);
-      return grouping ? { ...zip, groupByColumn: grouping.groupByColumn } : zip;
+      return { ...zip, ...(grouping && { groupByColumn: grouping.groupByColumn }), ...(qrRecords && { qrRecords }) };
     }
     const coverLanguage = coverSheet?.coverLanguage ?? 'auto';
     if (!isCoverLanguage(coverLanguage)) throw new Error('cover-sheet-invalid-metadata');
@@ -105,10 +112,10 @@ export function createBatchProcessor() {
           skipped: rowNumbers.length - members.length,
         } }];
       });
-      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition);
+      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords);
     }
     const bytes = await createMergedPdf(ready, progress, cover, watermark, qrStamp, command.imposition);
-    return { bytes, mergedPdfSha256: await sha256(bytes) };
+    return { bytes, mergedPdfSha256: await sha256(bytes), ...(qrRecords && { qrRecords }) };
   }
 
   return (command: BatchCommand, notify: ProgressListener) => {
