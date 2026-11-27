@@ -45,3 +45,7 @@
 - [手机](screenshots/m12/mobile-m12-qr.png) 显示 390 px 视口完整的二维码预览和封面语言。
 
 开发时图库加载器的分包名占用了样本数据的 `sample-` 前缀，旧图库测试在一次选择后计到两个包。提交 `ddf41f2` 明确了加载器名称，原测试在两个视口均通过。该问题按 M12 记一次。Windows 像素命令启动问题累计七个周期，适用做法已纳入代码标准。[经验记录](../../LESSONS.md) · [代码标准](../code-standards.md)
+
+## 主线收口
+
+验收结果和经验记录已快进至 `main`。清理前 4187、4191、4192 均拒绝连接。四个 M12 工作树、D 盘团队临时目录和对应临时分支已删除，只保留 ArabiForm 主工作树。主工作树的 TypeScript 依赖仍可读，本机验收原始收据保存在 `test-results/m12-evidence/`。[清理收据](../../test-results/m12-evidence/lead-worktree-cleanup.json)
