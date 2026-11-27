@@ -10,7 +10,7 @@
 |---|---|
 | `npm run typecheck` | 通过。 |
 | `npm test` | 18 个文件，100/100 项通过。 |
-| `npm run test:fuzz` | 30/30 组通过。同一主干、种子 1243704626 的详细重放记录 12,050 例实际接受、0 例丢弃、0 个失败属性。 |
+| `npm run test:fuzz` | 30/30 组通过。同一主干、种子 1243704626 的详细重放记录 12,050 例实际接受、0 例丢弃、0 个失败属性。800 组原始输入和字节子视图的 SHA-256 用例有独立的 15,000 ms 超时。 |
 | `npm run generate:fixtures -- --check` | 23 个合成夹具匹配。另对本机缓存的 4 个官方空白模板复验 SHA-256、页数及字段，4/4 通过。 |
 | `npm run verify:pixels` | pdf-lib 读回 36 次填充，4 个受保护输入按约定拒绝。PyMuPDF 4× 验证 120 个有墨迹的控件，0 个裁切像素、0 个控件外变化，全部案例最小墨迹内距为 6 个渲染像素。 |
 | `npm run build`、`npm run verify:release` | 5 条静态路由。最大入口 282,637 字节 / gzip 88,944 字节，分别距严格上限 2,363 / 56 字节。站点地图、响应头、许可与 CI 校验通过。 |
@@ -46,3 +46,11 @@
 - [手机画布](screenshots/m11/mobile-m11-canvas-map.png) 在 390 px 宽度显示完整工作表及选中的 ID 控件。
 
 主工作区本机目录 `test-results/m11-evidence/` 保留原生命令日志、精确提交、场景清单、四旋转独立对照、选中态红绿图、真实 ZIP / PDF、审计及 PyMuPDF 输出。该目录由 Git 忽略，三张截图和复跑用例随仓库提交。
+
+## 主线交付
+
+四个 D 盘临时工作树、对应分支及工作树目录均已移除，Git 只登记主工作区。早期冒烟测试的一条日志仍由孤立的无头 Edge 渲染进程占用，按文件锁确认进程和启动时刻后结束了该测试进程。4187、4191、4192 均已关闭。正式验收提交后的变更限于本报告和经验记录。[工作树清理](../../test-results/m11-evidence/lead-worktree-cleanup.json) · [临时日志锁释放](../../test-results/m11-evidence/lead-web-cleanup-lock-released.json) · [预览端口](../../test-results/m11-evidence/lead-preview-shutdown.json)
+
+本轮新增的画布遮墨经验计一次。Windows 像素校验启动问题累计六个周期，继续沿用已纳入代码标准的同版本复跑办法。[经验记录](../../LESSONS.md) · [代码标准](../code-standards.md)
+
+[96 项场景汇总](../../test-results/m11-evidence/qa-formal-summary.json) · [Fuzz 实际计数](../../test-results/m11-evidence/qa-main-fuzz-observed.log) · [下载成员独立复算](../../test-results/m11-evidence/lead-final-zip-readback.json) · [四方向坐标对照](../../test-results/m11-evidence/lead-widget-geometry-integrated.json) · [截图尺寸与哈希](../../test-results/m11-evidence/lead-screenshots.json)
