@@ -17,6 +17,7 @@ import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
 import { validateMappingPreset } from '../../src/core/draft/mapping-preset';
 import { isSafeGroupedPdfPath, planGroupedOutput, validateGroupingPlan } from '../../src/core/export/grouping';
+import { estimatePrintJob, type PrintSheetTotals } from '../../src/core/export/print-estimator';
 import { authorFlatPdf, inspectFlatPdf, type FieldDraftSpec } from '../../src/core/designer/author';
 import { clampDisplayRect, displayToSource, sourceToDisplay, type DesignerPage, type NormalizedRect } from '../../src/core/designer/geometry';
 import { loadFieldLayout, saveFieldLayout } from '../../src/core/designer/layout';
@@ -33,8 +34,9 @@ import { qrStampLayout } from '../../src/core/pdf/qr-stamp';
 import type { RectangleBounds } from '../../src/core/pdf/template';
 import { createShaper, fitText } from '../../src/core/pdf/shaping';
 import { watermarkLayout } from '../../src/core/pdf/watermark';
+import { selectBoundaryRows } from '../../src/core/preflight/spotlight';
 import { createBatchProcessor } from '../../src/core/worker/batch';
-import { resolveRowSelection } from '../../src/core/worker/row-selection';
+import { resolveRowSelection, type RowSelection } from '../../src/core/worker/row-selection';
 import { inspectRosterWorkbook, makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { filenameKey } from '../../src/core/roster/filenames';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
@@ -61,8 +63,8 @@ const mixedText = fc.oneof(
   fc.string({ minLength: 1, maxLength: 28 }),
 );
 
-async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns: number) {
-  const details = await fc.check(property, { seed, numRuns });
+async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns: number, examples?: T[]) {
+  const details = await fc.check(property, { seed, numRuns, examples });
   discardedCases += details.numSkips;
   if (details.failed) failedProperties++;
   if (details.failed) throw new Error(`Replay seed ${details.seed}, path ${details.counterexamplePath}: ${JSON.stringify(details.counterexample)}`, { cause: details.errorInstance });
@@ -74,7 +76,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(32_680);
+  expect(acceptedCases).toBeGreaterThanOrEqual(35_230);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1089,6 +1091,195 @@ describe('seeded subset exports', () => {
           mergedPdfSha256: digest(merged.bytes) });
     }), 60);
   }, 30_000);
+});
+
+// M19 verifies page totals independently of the cover layout and then reopens
+// emitted PDFs so the count contract is exercised through the real print paths.
+describe('seeded boundary rows and print sheet estimates', () => {
+  const exportedAt = '2026-11-27';
+  const templateName = 'Certificate نموذج مُحَمَّد 00007.pdf';
+  const longName = 'مُحَمَّد سَالم بن يَاسِين Certificate ' + 'W'.repeat(55);
+  const coverLanguage = fc.constantFrom('auto', 'en', 'ar', 'bilingual');
+  const locale = fc.constantFrom('en', 'ar');
+  const imposition = fc.constantFrom('1-up', '2-up');
+  const choices = [{ value: 'AR', label: 'مَكَّة المُكَرَّمَة' }, { value: 'EN', label: 'UK' }];
+  const fields = [{ name: 'Recipient', kind: 'text' }, { name: 'Serial', kind: 'text' },
+    { name: 'Office', kind: 'dropdown', choices }, { name: 'Accepted', kind: 'checkbox' }] as const;
+
+  async function bundledFonts() {
+    return {
+      arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+      latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+    };
+  }
+
+  function assertTotals(
+    totals: PrintSheetTotals, records: number, templatePages: number, coverPages: number, recordSheets: number | null, mode: '1-up' | '2-up',
+  ) {
+    const one = records * templatePages + coverPages;
+    const two = recordSheets === null ? null : recordSheets + coverPages;
+    const saved = two === null ? null : one - two;
+    const percentage = saved === null ? null : one ? Math.floor((20_000 * saved + one) / (2 * one)) / 100 : 0;
+    expect(totals).toMatchObject({
+      totalRecords: records, templatePagesPerRecord: templatePages, coverPages, oneUpPhysicalSheets: one, twoUpPhysicalSheets: two,
+      activePhysicalSheets: mode === '2-up' ? two : one, sheetsSavedByTwoUp: saved, percentPaperSaved: percentage,
+    });
+  }
+
+  it('ranks 1,500 effective rosters by Unicode length, painted font and original row order', async () => {
+    const value = fc.oneof(mixedText, fc.constantFrom('', '   ', '𐍈', 'مَ', 'A', ' A ', '0007', 'أ'));
+    const candidateRows = fc.array(fc.record({
+      Recipient: value, serial: fc.boolean(),
+      Office: fc.constantFrom('', ' AR', 'AR', 'UK', 'EN', 'invalid'),
+      status: fc.constantFrom('pass', 'flagged'), size: fc.option(fc.integer({ min: 600, max: 1_200 }), { nil: undefined }),
+    }), { maxLength: 48 });
+    await verify(fc.asyncProperty(candidateRows, async (records) => {
+      const input = records.map(({ Recipient, Office, serial }, index) => ({
+        Recipient, Office, Accepted: 'ignore '.repeat(100),
+        ...serial && { Serial: resolveVirtualMapping({ column: 'PADDED_ROW_001', template: '[{{PADDED_ROW_001}}]' }, index + 1, exportedAt) },
+      }));
+      const results = records.map(({ status, size }) => ({ status, smallestInkFontSizePt: size === undefined ? undefined : size / 100 }));
+      const length = (s: string) => [...s.trim()].length;
+      const ranked = input.map((row, index) => ({
+        number: index + 1,
+        length: Math.max(length(row.Recipient), length(row.Serial ?? ''),
+          length(({ AR: choices[0]!.label, EN: choices[1]!.label, UK: choices[1]!.label } as Record<string, string>)[row.Office.trim()] ?? '')),
+      })).filter(({ length }) => length > 0);
+      const fonts = results.flatMap(({ status, smallestInkFontSizePt }, index) => status === 'pass' && smallestInkFontSizePt !== undefined
+        ? [{ size: smallestInkFontSizePt, number: index + 1 }] : []);
+      const firstFlagged = results.findIndex(({ status }) => status === 'flagged');
+      const expected = {
+        longestMappedTextRow: ranked.toSorted((a, b) => b.length - a.length || a.number - b.number)[0]?.number,
+        smallestFontRow: fonts.toSorted((a, b) => a.size - b.size || a.number - b.number)[0]?.number,
+        firstFlaggedRow: firstFlagged < 0 ? undefined : firstFlagged + 1,
+        shortestMappedTextRow: ranked.toSorted((a, b) => a.length - b.length || a.number - b.number)[0]?.number,
+      };
+      expect(selectBoundaryRows(input, results, fields)).toEqual(expected);
+      expect(selectBoundaryRows(input.map((row) => ({ ...row })), results, [...fields].reverse())).toEqual(expected);
+    }), 1_500);
+  });
+
+  it('lays out actual localized cover text at every record count from 1 through 500', async () => {
+    const fonts = await bundledFonts();
+    const variants = fc.record({
+      coverLanguage, locale, imposition, includeCustody: fc.boolean(), templatePages: fc.constantFrom(1, 1, 2, 4), denseNames: fc.boolean(),
+    });
+    const cases = fc.sample(variants, { seed, numRuns: 500 }).map((variant, index): [number, typeof variant] => [index + 1, variant]);
+    const custody = { templateSha256: 'ab'.repeat(32), rosterSha256: 'cd'.repeat(32) };
+    const visited: number[] = [];
+    await verify(fc.asyncProperty(fc.integer({ min: 1, max: 500 }), variants, async (count, settings) => {
+      visited.push(count);
+      const { imposition, templatePages, includeCustody, denseNames, locale, coverLanguage } = settings;
+      const rows = Array.from({ length: count }, () => ({ status: 'pass' as const }));
+      const filenames = rows.map((_, index) => denseNames
+        ? longName + '-' + (index % 7) + '.pdf'
+        : (index % 2 ? 'مَرْيَم' : 'Layla') + '-' + (index % 11) + '.pdf');
+      const input = { rows, preflight: { fonts }, exportedAt, templatePagesPerRecord: templatePages, custody, imposition };
+      const estimate = estimatePrintJob({ ...input, coverSheet: { templateName, locale, coverLanguage, filenames, includeCustody } });
+      expect(estimate.coverPages).toBeGreaterThanOrEqual(Math.ceil(count / 33));
+      const validTwoUp = templatePages === 1;
+      const active = validTwoUp ? imposition : '1-up';
+      expect(estimate.imposition).toBe(active);
+      assertTotals(estimate, count, templatePages, estimate.coverPages, validTwoUp ? Math.ceil(count / 2) : null, active);
+      assertTotals(estimatePrintJob(input), count, templatePages, 0, validTwoUp ? Math.ceil(count / 2) : null, active);
+    }), 500, cases);
+    expect(visited).toEqual(Array.from({ length: 500 }, (_, index) => index + 1));
+  }, 60_000);
+
+  it('conserves physical sheets across 500 grouped and selected jobs including empty exports', async () => {
+    const settings = fc.record({
+      Clinic: fc.constantFrom('A', 'B', 'جَدَّة', '', '_Ungrouped', '../A'),
+      status: fc.constantFrom('pass', 'flagged'), selected: fc.boolean(),
+    });
+    const fonts = { arabic: new Uint8Array(), latin: new Uint8Array() };
+    await verify(fc.asyncProperty(fc.array(settings, { maxLength: 100 }), fc.boolean(), imposition, fc.constantFrom(1, 1, 2, 5),
+      async (rows, useSubset, imposition, templatePagesPerRecord) => {
+        const grouping = planGroupedOutput(rows.map(({ Clinic }) => ({ Clinic })), 'Clinic');
+        const rowSelection = useSubset ? rows.flatMap(({ selected }, index) => selected ? [index + 1, index + 1] : []).reverse() : 'all-ready';
+        const selected = rows.flatMap(({ status, selected }, index) => status === 'pass' && (!useSubset || selected) ? [index + 1] : []);
+        const estimate = estimatePrintJob({ rows, grouping, rowSelection, imposition, templatePagesPerRecord, exportedAt, preflight: { fonts } });
+        const groups = estimate.split!.groupBreakdowns;
+        const twoUp = templatePagesPerRecord === 1;
+        const active = twoUp ? imposition : '1-up';
+        assertTotals(estimate, selected.length, templatePagesPerRecord, 0, twoUp ? Math.ceil(selected.length / 2) : null, active);
+        const selectedGroups = [...new Set(selected.map((number) => rows[number - 1]!.Clinic))];
+        expect(groups).toHaveLength(selectedGroups.length);
+        for (const group of groups) {
+          const members = selected.filter((number) => (rows[number - 1]!.Clinic || null) === group.groupValue);
+          expect(group.rowNumbers).toEqual(members);
+          expect(group.filename).toBe(group.folder + '-merged.pdf');
+          assertTotals(group, members.length, templatePagesPerRecord, 0, twoUp ? Math.ceil(members.length / 2) : null, active);
+        }
+        const sheets = groups.reduce((sum, { rowNumbers }) => sum + Math.ceil(rowNumbers.length / 2), 0);
+        assertTotals(estimate.split!, selected.length, templatePagesPerRecord, 0, twoUp ? sheets : null, active);
+      }), 500);
+  });
+
+  it('reopens merged and split PDF bytes for 24 print jobs, including a 500-record bilingual run', async () => {
+    const fonts = await bundledFonts();
+    const templates = await Promise.all([1, 2, 3].map(async (pageCount) => {
+      const document = await PDFDocument.create({ updateMetadata: false });
+      const first = document.addPage([200, 170]);
+      document.getForm().createCheckBox('Accepted').addToPage(first, { x: 25, y: 30, width: 18, height: 18 });
+      for (let index = 1; index < pageCount; index++) document.addPage([200, 170]);
+      return document.save();
+    }));
+    const scenarios = fc.record({ coverLanguage, locale, includeCustody: fc.boolean(), subset: fc.boolean() });
+    const sizes = [1, 2, 3, 4, 5, 7, 8, 11, 15, 16, 23, 24, 25, 27, 31, 35, 41, 42, 43, 48, 50, 80, 101, 500];
+    const jobs = fc.sample(scenarios, { seed, numRuns: sizes.length }).map((scenario, index) => ({
+      count: sizes[index]!, templatePages: index % 4 === 2 ? 2 : index % 4 === 0 && index > 0 ? 3 : 1,
+      mode: index % 4 === 3 ? '2-up' as const : '1-up' as const,
+      enabled: index === 23 || index % 6 !== 0,
+      ...scenario, ...(index === 23 && { coverLanguage: 'bilingual' as const, subset: false, includeCustody: true }),
+    }));
+    await verify(fc.asyncProperty(fc.integer({ min: 0, max: jobs.length - 1 }), async (index) => {
+      const job = jobs[index]!;
+      const values = Array.from({ length: job.count }, (_, ordinal) => ({
+        Division: ['First', 'حَرَم أ', ''][ordinal % 3]!,
+        Filename: ordinal % 2 ? longName + (ordinal % 5) : 'ليلى - Certificate ' + ordinal,
+        Accepted: ordinal % 11 === 10 && job.count !== 500 ? 'invalid' : 'yes',
+      }));
+      const rows = values.map(({ Accepted }) => ({ Accepted }));
+      const template = templates[job.templatePages - 1]!;
+      const batch = createBatchProcessor();
+      const idle = () => {};
+      await batch({ phase: 'preflight', input: { template, roster: encoder.encode(Papa.unparse(values)), rows, options: { fonts } } }, idle);
+      const grouping = planGroupedOutput(values, 'Division', '{{Filename}}.pdf');
+      const filenames = makeFilenames(values, '{{Filename}}.pdf');
+      const coverSheet = job.enabled ? { templateName, filenames, exportedAt, locale: job.locale,
+        coverLanguage: job.coverLanguage, includeCustody: job.includeCustody } : undefined;
+      const rowSelection: RowSelection = job.subset ? rows.flatMap((_, ordinal) => ordinal % 5 === 4 ? [] : [ordinal + 1]).reverse() : 'all-ready';
+      const print = { coverSheet, rowSelection, imposition: job.mode };
+      const estimate = await batch({ phase: 'estimate', grouping, ...print }, idle);
+      const merged = await batch({ phase: 'merged', ...print }, idle);
+      const split = await batch({ phase: 'split', grouping, ...print }, idle);
+      if (!estimate || !('activePhysicalSheets' in estimate) || !estimate.split
+        || !merged || !('mergedPdfSha256' in merged) || !split || !('groups' in split)) throw new Error('Missing print outputs');
+      const readback = async (bytes: Uint8Array) => {
+        const document = await PDFDocument.load(bytes, { updateMetadata: false });
+        const coverPages = document.getPages().filter((page) => page.node.Resources()?.lookupMaybe(key('Font'), PDFDict)
+          ?.has(key('ArabiFormCoverLatin'))).length;
+        return { pages: document.getPageCount(), coverPages };
+      };
+      const combined = await readback(merged.bytes);
+      expect(estimate.activePhysicalSheets).toBe(combined.pages);
+      expect(estimate.coverPages).toBe(combined.coverPages);
+      const archive = unzipSync(split.bytes);
+      expect(estimate.split.groupBreakdowns.map(({ filename }) => filename)).toEqual(split.groups.map(({ filename }) => filename));
+      let splitPages = 0;
+      let splitCoverPages = 0;
+      for (const [position, group] of split.groups.entries()) {
+        const actual = await readback(archive[group.filename]!);
+        expect(estimate.split.groupBreakdowns[position]).toMatchObject({ rowNumbers: group.rowNumbers,
+          activePhysicalSheets: actual.pages, coverPages: actual.coverPages });
+        splitPages += actual.pages;
+        splitCoverPages += actual.coverPages;
+      }
+      expect(estimate.split.activePhysicalSheets).toBe(splitPages);
+      expect(estimate.split.coverPages).toBe(splitCoverPages);
+      if (job.count === 500) expect(estimate.totalRecords).toBe(500);
+    }), jobs.length, jobs.map((_, index) => [index]));
+  }, 90_000);
 });
 
 describe('seeded virtual columns, presets and canvas geometry', () => {
