@@ -1,6 +1,6 @@
 # ArabiForm v1.4.0 独立验收
 
-M14 通过本机验收。真实 Edge 从可编辑 PDF 的 ZIP 拖入提取器，下载的 CSV、XLSX 与源 PDF 均保留阿文附标、前导零、复选框和选项值。原文件及两种表格的 SHA-256 全部吻合。116/116 个浏览器场景通过，完整保留此前的 110 个。固定种子接受 22,600 例，丢弃与失败均为 0。[正式浏览器收据](../../test-results/m14-evidence/qa-edge-summary.json) · [主线命令及退出码](../../test-results/m14-evidence/qa-formal.json)
+M14 通过本机验收。在真实 Edge 中，将可编辑 ZIP 解出的 PDF 拖入提取器。下载的 CSV、XLSX 与源 PDF 均保留阿文附标、前导零、复选框和选项值。原文件及两种表格的 SHA-256 全部吻合。116/116 个浏览器场景通过，完整保留此前的 110 个。固定种子接受 22,600 例，丢弃与失败均为 0。[正式浏览器收据](../../test-results/m14-evidence/qa-edge-summary.json) · [主线命令及退出码](../../test-results/m14-evidence/qa-formal.json)
 
 ## 验收版本
 
@@ -37,3 +37,7 @@ M14 通过本机验收。真实 Edge 从可编辑 PDF 的 ZIP 拖入提取器，
 首轮全套 Edge 中，两个既有的 200 行进度及取消场景超时。新模式条占用了 `#workbench`，队列已经显示 200 行就绪，挂在工作台上的观察器却无法看见进度。修复后，工作台同时包含模式条、填表与提取内容。保持原 M2 用例不动，在两个视口复跑受影响的 4 项和 M14 的 6 项，10/10 通过，再开始最终主线整套验收。[首轮主线日志](../../test-results/m14-evidence/qa-edge-before-workbench.log) · [修复后 10 项收据](../../test-results/m14-evidence/qa-focused-anchor-summary.json)
 
 首次 Windows 沙箱调用在 tsx 创建临时路径时返回 `uv_os_get_passwd ENOMEM`。按既有规则在获准环境中用相同主线、D 盘数据和临时目录重跑，PDF 生成及 PyMuPDF 像素比较均完成。此项为第九个独立周期，已有代码标准继续适用。[首次启动错误](../../test-results/m14-evidence/qa-pixels.log) · [同版本重跑](../../test-results/m14-evidence/qa-pixels-native.log) · [现行标准](../code-standards.md)
+
+## 收口
+
+已清理四个 M14 工作树、临时分支及 D 盘 `.arabiform-wt` 目录。`git worktree list` 仅列 `main`，预览端口 `4187`、`4194` 和 `43873` 均关闭。主线依赖仍可用，`fixtures/.gitattributes` 已复核为基线 Git blob。[清理回执](../../test-results/m14-evidence/lead-worktree-cleanup.json)
