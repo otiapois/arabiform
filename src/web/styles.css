@@ -301,6 +301,7 @@ select, input[type="text"], textarea {
   font-weight: 450;
 }
 select { padding-inline-end: 1.55rem; }
+.imposition-select { font-size: .82rem; padding-inline-end: .75rem; }
 input[type="range"] { display: block; width: 100%; min-height: 1.45rem; accent-color: var(--forest); }
 textarea { display: block; resize: vertical; }
 small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1.35; }

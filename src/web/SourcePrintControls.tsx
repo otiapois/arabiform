@@ -32,7 +32,7 @@ export function PrintLayout({ desk, arabic }: { desk: Desk; arabic: boolean }) {
     <>
       <label className="full-control">
         {arabic ? 'تخطيط الأوراق في ملف PDF المدمج' : 'Merged PDF sheet layout'}
-        <select data-testid="imposition" value={desk.printLayout} disabled={unavailable || desk.exporting}
+        <select className="imposition-select" data-testid="imposition" value={desk.printLayout} disabled={unavailable || desk.exporting}
           aria-describedby={unavailable ? 'imposition-unavailable' : undefined}
           onChange={(event) => desk.changeImposition(event.currentTarget.value as Imposition)}>
           <option value="1-up">{arabic ? 'سجل واحد لكل ورقة (قياسي)' : '1-up (standard)'}</option>
