@@ -9,6 +9,8 @@ const groupName = 'قسم & Team';
 const prefix = 'npm run arabiform-cli -- ';
 const defaultCommand = prefix + '--mode fill --template template.pdf --roster roster.csv --preset arabiform-mapping-preset.json --out-dir output --imposition 1-up --strict';
 
+test.use({ timezoneId: 'Asia/Shanghai' });
+
 async function roster() {
   const entries = unzipSync(await readFile('fixtures/m13/multi-sheet-roster.xlsx'));
   const book = 'xl/workbook.xml';
@@ -24,6 +26,8 @@ for (const language of ['en', 'ar'] as const) {
     const requested: string[] = [];
     page.on('request', request => requested.push(new URL(request.url()).pathname));
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL });
+    // Local November 27 starts while the UTC calendar still reads November 26.
+    await page.clock.setFixedTime(new Date('2026-11-26T18:30:00Z'));
     const response = await page.goto(ar ? '/ar/' : '/');
     expect(new URL(page.url()).pathname).toBe(ar ? '/ar/pdf-mail-merge' : '/');
     if (ar) {
@@ -83,7 +87,16 @@ for (const language of ['en', 'ar'] as const) {
     await page.getByTestId('imposition').selectOption('2-up');
     await page.getByTestId('group-by-column').selectOption(groupName);
     await page.getByTestId('include-cover-sheet').check();
-    await page.getByTestId('cover-language').selectOption('bilingual');
+    if (ar) {
+      await summary.click();
+      const note = helper.getByText(/يستخدم الأمر الإنجليزية للغلاف/);
+      await expect(note).toBeVisible();
+      await page.getByTestId('cover-language').selectOption('bilingual');
+      await expect(note).toHaveCount(0);
+      await summary.click();
+    } else {
+      await page.getByTestId('cover-language').selectOption('bilingual');
+    }
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('preset-download').click()]);
     expect(download.suggestedFilename()).toBe('arabiform-mapping-preset.json');
     await mkdir(info.outputDir, { recursive: true });
@@ -102,7 +115,7 @@ for (const language of ['en', 'ar'] as const) {
     const parsed = parseCliArgs(args);
     expect(parsed).toMatchObject({ mode: 'fill', strict: true, cover: true, imposition: '2-up',
       files: { template: 'template.pdf', roster: 'roster.xlsx', preset: download.suggestedFilename(), outDir: 'output',
-        sheet: sheetName, groupBy: groupName, date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) } });
+        sheet: sheetName, groupBy: groupName, date: '2026-11-27' } });
     await page.keyboard.press('Tab');
     await expect(field).toBeFocused();
     await page.keyboard.press('Tab');
