@@ -45,3 +45,9 @@ QA 用 PyMuPDF 4× 比较两个视口实际下载的 4 份填表文件，6 个�
 开发期第一次在 390 px 视口加载设计器后，页面实际宽度达到 715 px。修正画布所在网格的收缩方式后，英、阿界面在两种视口均保持页面宽度。[首次溢出](../../test-results/m15-evidence/implementation-checks/mobile-overflow-before.log) · [修复后实测](../../test-results/m15-evidence/implementation-checks/web-edge-smoke.json)
 
 首次聚焦验收有两个用例同时找到填表与设计器的已渲染画布。收窄到当前模式的具名可见画布后，实际读取该画布的像素，6/6 个新用例通过。切换同名来源时，还等待旧画布退出和新画布完成渲染，再加载布局。英阿空载检测同时涵盖 `.js` 和 `.mjs`。[首次浏览器日志](../../test-results/m15-evidence/qa-focused-a.log) · [修正后的聚焦收据](../../test-results/m15-evidence/qa-focused-c-summary.json) · [本轮经验](../../LESSONS.md)
+
+## 主线收尾
+
+核心层共 46 个跟踪文件，DOM 与网络 API 扫描命中为 0。依赖声明无增减。[核心扫描](../../test-results/m15-evidence/lead-full-core-scan.json) · [依赖比较](../../test-results/m15-evidence/lead-engine-invariants.json)
+
+四个 M15 工作树和已合并的临时分支均已清理，D 盘 `.arabiform-wt` 已移除。首次注销 QA 工作树后，Windows 留下了一个空目录，核实路径和内容后已单独移除。Git 仅列出主线工作树，TypeScript 依赖可用，四个验收端口均已关闭。[清理回执](../../test-results/m15-evidence/lead-worktree-cleanup.json)
