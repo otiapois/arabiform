@@ -1,6 +1,18 @@
 # ArabiForm
 
-ArabiForm fills text fields, checkboxes, dropdowns, and radio groups in interactive AcroForm PDFs from a CSV or Excel (`.xlsx`) roster. Map columns, preview Arabic and mixed-script text, and correct flagged rows in your browser before export. [اقرأ بالعربية](#العربية)
+ArabiForm fills interactive AcroForm PDFs from a CSV or Excel (`.xlsx`) roster and extracts values from completed PDFs into a spreadsheet. It handles text fields, checkboxes, dropdowns, and radio groups in your browser. [اقرأ بالعربية](#العربية)
+
+## Extract filled PDFs
+
+On `/`, select **Extract PDFs → CSV / .xlsx**. Drop or choose 1–200 PDFs, or select **Try Synthetic Arabic Filled-PDFs Demo** to generate three fictional examples locally. Use PDFs with saved interactive form fields. Flattened exports and scans without form fields get their own blocked rows, as do encrypted, signed, XFA, and unreadable PDFs. The table uses the combined field names in first-seen order. Review each file's status for missing or additional fields and field type changes compared with the first readable form.
+
+Use **Download CSV** for a UTF-8 file with a byte order mark (BOM) and formula-like cells escaped. If importing CSV into Excel, set ID columns to Text to keep leading zeros. Use **Download .xlsx** for explicit text cells that preserve `00123`, Arabic diacritics, and mixed-script punctuation. Each checkbox has a `checked` or `unchecked` value and a separate column with its native PDF value. Choice fields include their export value and a separate label where it differs.
+
+**Download Custody JSON** saves the original filenames, extraction statuses, exact field values, and full SHA-256 hashes for each source PDF and the generated CSV and Excel files. Compare a file's hash with the digest in a trusted copy of the receipt to check that its bytes match. The receipt is unsigned.
+
+## Fill PDFs
+
+Map roster columns, preview Arabic and mixed-script text, and correct flagged rows in your browser before export.
 
 1. Choose an AcroForm PDF with supported editable fields. Open **Inspect template field capacities** before selecting a roster, or choose both files to start filling. **Try Synthetic Arabic Sample** opens Workshop Attendance, which has a deliberately overlong entry. The **Synthetic sample workflows** gallery loads Workshop Attendance, Clinic Consent, Multi-Page HR Choices, or Landscape Visitor Badge when you select it. All four use fictional data.
 2. Click a field in the PDF preview, or use `Tab` to reach it and `Enter` or `Space` to activate it. The matching control in **Field mapping** receives focus. Focusing a mapping control highlights its field in the preview and opens its page when needed. Choose a roster column or, for text fields, a locally computed value. Use **Leave unchanged** to keep a field as it is. For checkboxes, use `true`/`false`, `yes`/`no`, `1`/`0`, `x`/an empty cell, or `نعم`/`لا`. Checkbox values are trimmed, and English letter case is ignored. For a dropdown or radio group, copy a label shown in the mapping panel or the PDF's export value when it differs. ArabiForm checks for a unique exact match first, then a unique match after trimming surrounding whitespace. Keep the original Unicode characters, diacritics, and letter case.
@@ -81,13 +93,13 @@ The committed synthetic PDFs, CSV, and workbook support offline testing after in
 
 For a local run, use `npm run dev`. Use `npm run preview` after a build to serve the production headers at `http://127.0.0.1:4173`. Run `npm run test:e2e` with Microsoft Edge installed. The Edge suite is separate from the CI checks above and uses the installed browser.
 
-The seeded fuzz tests exercise roster parsing and worksheet selection, checkbox and choice inputs, font handling, filenames, mixed-direction text, capacity estimates, stamp geometry, page-edge clearance, SHA-256 digest consistency, and AcroForm exports. For M13 acceptance, run at least 20,000 deterministic cases with zero discards or crashes, including 2-up layout, cover indexing, and preset compatibility. The 4× PyMuPDF checks compare filled fixtures with source templates and compare flattened exports with their editable renders. Inspect the preview and a test export with your own template, font, and PDF viewer before printing a batch. [M13 acceptance criteria](docs/tasks/M13-xlsx-sheet-picker-2up-imposition.md)
+The seeded fuzz tests cover roster parsing, worksheet selection, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, and custody hashes. M14 acceptance calls for at least 22,500 deterministic cases with zero discards or crashes, including extraction from mixed batches, schema warnings, string-valued XLSX output, and CSV formula neutralization. The 4× PyMuPDF checks compare filled fixtures with source templates and compare flattened exports with their editable renders. Inspect the preview and a test export with your own template, font, and PDF viewer before printing a batch. [M14 acceptance criteria](docs/tasks/M14-bulk-pdf-form-extractor.md)
 
 For Windows development, keep the checkout, worktrees, dependencies, and Python environment on `D:`. Direct npm and pip caches to `D:\cache\arabiform\npm` and `D:\cache\arabiform\pip` with their `--cache` and `--cache-dir` flags. Point the local session’s `TEMP` and `TMP` to an existing `D:` directory. If you need a Playwright browser cache, set `PLAYWRIGHT_BROWSERS_PATH=D:\cache\ms-playwright`.
 
 ## Static build
 
-`npm run build` writes five static routes to `dist/` along with local assets, a sitemap, `robots.txt`, Cloudflare Pages `_headers`, and license notices.
+`npm run build` writes five static routes to `dist/` along with local assets, a sitemap, `robots.txt`, Cloudflare Pages `_headers` and `_redirects`, and license notices. `/ar` and `/ar/` redirect to `/ar/pdf-mail-merge`.
 
 - `/`
 - `/arabic-pdf-form-filler`
@@ -97,11 +109,23 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 
 Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
 
-See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v1.3.0 release brief](docs/tasks/M13-xlsx-sheet-picker-2up-imposition.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v1.4.0 release brief](docs/tasks/M14-bulk-pdf-form-extractor.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## العربية
 
-تملأ أداة ArabiForm الحقول النصية وخانات الاختيار والقوائم المنسدلة ومجموعات أزرار الاختيار في نماذج PDF التفاعلية من جدول CSV أو Excel (`.xlsx`). اربط الأعمدة بالحقول وعاين النص العربي والنص المختلط، ثم صحّح الصفوف التي تحتاج إلى مراجعة قبل التصدير. تتم المعالجة داخل متصفحك.
+تملأ أداة ArabiForm نماذج PDF التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتستخرج قيم الحقول من النماذج المعبّأة إلى جدول بيانات. تدعم الحقول النصية وخانات الاختيار والقوائم المنسدلة ومجموعات أزرار الاختيار. تتم المعالجة داخل متصفحك.
+
+### استخراج بيانات ملفات PDF المعبّأة
+
+افتح `/ar/pdf-mail-merge` واختر «استخراج بيانات PDF إلى CSV / .xlsx». اسحب أو اختر من ملف PDF واحد إلى 200 ملف، أو اضغط «جرّب ملفات PDF عربية مُعبّأة تجريبياً» لإنشاء ثلاثة أمثلة ببيانات خيالية داخل المتصفح. استخدم ملفات PDF التي تحتفظ بحقول النموذج التفاعلية. يظهر سبب تعذّر الاستخراج أمام كل ملف مسطّح أو ممسوح ضوئيًا يخلو من الحقول، أو ملف مشفّر أو موقّع أو تالف أو يحتوي على نموذج XFA. يجمع الجدول أسماء الحقول بترتيب ظهورها لأول مرة. راجع حالة كل ملف، وأي حقول ناقصة أو زائدة أو مختلفة النوع مقارنةً بأول نموذج أمكن قراءته.
+
+يستخدم ملف CSV ترميز UTF-8 مع علامة BOM، ويضيف بادئة إلى القيم التي قد يفسّرها برنامج الجداول على أنها صيغ. إذا استوردت CSV إلى Excel، فاضبط نوع أعمدة المعرّفات على «نص» للحفاظ على الأصفار في بدايتها. يحفظ ملف `.xlsx` الخلايا كنص، ويُبقي المعرّفات مثل `00123` والتشكيل العربي وعلامات الترقيم في النص المختلط كما هي. يضمّ الجدول حالة كل خانة اختيار (`checked` أو `unchecked`) وقيمتها الأصلية من PDF في عمود مستقل. ويعرض قيمة التصدير لحقول الخيارات وتسميتها في عمود مستقل عند اختلافهما.
+
+يحفظ زر «نزّل سجل الحيازة JSON» أسماء الملفات الأصلية وحالات الاستخراج وقيم الحقول كما قُرئت، وبصمات SHA-256 الكاملة لكل ملف PDF مصدر ولكل من ملفَّي CSV وExcel الناتجين. قارن بصمة الملف بالبصمة المسجّلة في نسخة موثوقة من السجل للتحقّق من تطابق محتواه. السجل غير موقّع.
+
+### تعبئة ملفات PDF
+
+اربط الأعمدة بالحقول وعاين النص العربي والنص المختلط، ثم صحّح الصفوف التي تحتاج إلى مراجعة قبل التصدير.
 
 1. اختر نموذج AcroForm فيه حقول مدعومة قابلة للتعديل. افتح «افحص سعة حقول القالب» قبل اختيار جدول البيانات. يفتح زر «جرّب العينة العربية الاصطناعية» نموذج حضور ورشة العمل، وفيه اسم طويل عمدًا لتجربة تعديله. يتيح معرض العينات فتح حضور ورشة العمل أو موافقة العيادة أو خيارات الموارد البشرية متعددة الصفحات أو بطاقة زائر أفقية. تستخدم العينات الأربع بيانات خيالية.
 2. انقر على الحقل في معاينة PDF، أو انتقل إليه بمفتاح `Tab` وفعّله بمفتاح `Enter` أو المسافة. ينتقل التركيز إلى إعداد الحقل في لوحة **ربط الحقول**. وعند التركيز على إعداد الربط، يبرز الحقل في المعاينة وتُفتح صفحته عند الحاجة. اختر عمودًا من الجدول أو قيمة محسوبة محليًا للحقول النصية. حدّد «أبقِ المحتوى الأصلي» للحقول التي تريد الإبقاء عليها. تقبل خانات الاختيار `true` أو `false`، و`yes` أو `no`، و`1` أو `0`، و`x` أو خلية فارغة، و«نعم» أو «لا». وتتجاهل المسافات في بداية القيمة ونهايتها وحالة الأحرف الإنجليزية. للقوائم المنسدلة وأزرار الاختيار، انسخ اسم الخيار المعروض في لوحة الربط أو قيمة التصدير المعرّفة له في PDF إذا اختلفت. تبحث الأداة أولًا عن تطابق حرفي مع خيار واحد، ثم تعيد المحاولة بعد تجاهل المسافات في بداية القيمة ونهايتها. احتفظ بالحروف وعلامات التشكيل وحالة الأحرف كما تظهر في الخيار.
@@ -162,6 +186,6 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 
 راجع [واجهة العمل بالعربية مع عينة اصطناعية](docs/reports/screenshots/m3/desktop-m3-ar-rtl-filenames.png) و[سيناريو العرض بالعربية والإنجليزية](docs/launch/demo-walkthrough.md).
 
-بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يختبر `npm run test:fuzz` حالات مولّدة يمكن تكرارها، منها قراءة الجداول وقيم خانات الاختيار والقوائم المنسدلة وأزرار الاختيار والخطوط وأسماء الملفات واتجاه النص وتقدير سعة الحقول وموضع العلامة المائية والمسافة إلى حافة الصفحة وثبات بصمات SHA-256 والتصدير. يقارن PyMuPDF النماذج المملوءة بالقوالب الأصلية ويقارن النسخ المسطّحة بالنسخ القابلة للتعديل بتكبير 4 أضعاف. تغطّي النتائج الملفات وبرامج العرض المستخدمة في الاختبارات. راجع المعاينة وملفًا تجريبيًا بقالبك وخطك وبرنامج عرض PDF الذي تستخدمه قبل طباعة الدفعة.
+بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة وبصمات الملفات. يتطلّب قبول M14 اجتياز 22,500 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، بما فيها دفعات تضمّ ملفات صالحة وأخرى يتعذّر استخراجها، وتنبيهات اختلاف الحقول، والخلايا النصية في XLSX وحماية CSV من الصيغ. يقارن PyMuPDF النماذج المملوءة بالقوالب الأصلية ويقارن النسخ المسطّحة بالنسخ القابلة للتعديل بتكبير 4 أضعاف. راجع المعاينة وملفًا تجريبيًا بقالبك وخطك وبرنامج عرض PDF الذي تستخدمه قبل طباعة الدفعة.
 
 استخدم أوامر التحقق أعلاه مع Node.js 24 وPython 3.13. لمعاينة النسخة المبنية مع ترويسات الأمان، شغّل `npm run preview` بعد البناء. يتطلب `npm run test:e2e` تثبيت Microsoft Edge. على Windows، احتفظ بملفات العمل والملفات المؤقتة وذاكرات التخزين المؤقت على القرص `D:`. تُحفَظ صفحات الموقع الثابتة الخمس في `dist/`، وتُضبَط قيمة `SITE_URL` على عنوان الموقع الفعلي عند تجهيز نسخة للنشر. [أوامر بناء الإصدار والتحقق من عنوان الموقع](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)

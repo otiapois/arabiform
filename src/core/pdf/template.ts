@@ -1,4 +1,4 @@
-import { PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFNumber, PDFRadioGroup, PDFString, PDFTextField, PDFWidgetAnnotation } from 'pdf-lib';
+import { PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFNumber, PDFPage, PDFRadioGroup, PDFString, PDFTextField, PDFWidgetAnnotation } from 'pdf-lib';
 import type { FieldChoice } from './choice-match';
 import { dropdownChoices, radioChoices } from './choices';
 
@@ -117,17 +117,59 @@ export interface WidgetTarget {
   padding: number;
 }
 
+export function inspectAcroFormCatalog(doc: PDFDocument): PDFDict | undefined {
+  const rawForm = doc.catalog.lookupMaybe(key('AcroForm'), PDFDict);
+  if (rawForm?.has(key('XFA'))) throw new PdfIntakeError('xfa-unsupported');
+  if (doc.catalog.has(key('Perms'))) {
+    const permissions = doc.catalog.lookupMaybe(key('Perms'), PDFDict);
+    if (permissions?.keys().some((name) => ['DocMDP', 'UR', 'UR3', 'FieldMDP'].includes(name.decodeText()))) {
+      throw new PdfIntakeError('signed-pdf-warning');
+    }
+  }
+  return rawForm;
+}
+
+export function collectPageWidgets(pdfPages: readonly PDFPage[]): Map<PDFDict, number> {
+  const widgetPages = new Map<PDFDict, number>();
+  for (const [pageIndex, page] of pdfPages.entries()) {
+    const annots = page.node.Annots();
+    for (let index = 0; annots && index < annots.size(); index++) {
+      const dict = annots.lookup(index, PDFDict);
+      if (dict.lookupMaybe(key('Subtype'), PDFName) !== key('Widget')) continue;
+      if (widgetPages.has(dict)) throw new PdfIntakeError('invalid-pdf');
+      widgetPages.set(dict, pageIndex);
+    }
+  }
+  return widgetPages;
+}
+
+export function requireUnsignedAcroForm(doc: PDFDocument, rawForm: PDFDict | undefined, widgets: Iterable<PDFDict>) {
+  // Inspect the raw field tree and signature dictionaries before pdf-lib's getForm can mutate XFA.
+  const stack = [...widgets];
+  const roots = rawForm?.lookupMaybe(key('Fields'), PDFArray);
+  for (let index = 0; roots && index < roots.size(); index++) stack.push(roots.lookup(index, PDFDict));
+  const visited = new Set<PDFDict>();
+  while (stack.length) {
+    const dict = stack.pop()!;
+    if (visited.has(dict)) continue;
+    visited.add(dict);
+    if (dict.lookupMaybe(key('FT'), PDFName) === key('Sig')) throw new PdfIntakeError('signed-pdf-warning');
+    const parent = dict.lookupMaybe(key('Parent'), PDFDict);
+    const kids = dict.lookupMaybe(key('Kids'), PDFArray);
+    if (parent) stack.push(parent);
+    for (let index = 0; kids && index < kids.size(); index++) stack.push(kids.lookup(index, PDFDict));
+  }
+  if (doc.context.enumerateIndirectObjects().some(([, object]) => object instanceof PDFDict && object.get(key('Type')) === key('Sig'))) {
+    throw new PdfIntakeError('signed-pdf-warning');
+  }
+  if (!rawForm || !roots?.size()) throw new PdfIntakeError('flat-scanned-no-fields');
+  return { rawForm, roots };
+}
+
 export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
   const doc = await loadPdf(bytes);
   try {
-    const rawForm = doc.catalog.lookupMaybe(key('AcroForm'), PDFDict);
-    if (rawForm?.has(key('XFA'))) throw new PdfIntakeError('xfa-unsupported');
-    if (doc.catalog.has(key('Perms'))) {
-      const permissions = doc.catalog.lookupMaybe(key('Perms'), PDFDict);
-      if (permissions?.keys().some((name) => ['DocMDP', 'UR', 'UR3', 'FieldMDP'].includes(name.decodeText()))) {
-        throw new PdfIntakeError('signed-pdf-warning');
-      }
-    }
+    const rawForm = inspectAcroFormCatalog(doc);
 
     const pdfPages = doc.getPages();
     const cropBoxes = pdfPages.map((page) => page.getCropBox());
@@ -144,36 +186,8 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         userUnit: Number.isFinite(unit) && unit > 0 ? unit : 1,
       };
     });
-    const widgetPages = new Map<PDFDict, number>();
-    for (const [pageIndex, page] of pdfPages.entries()) {
-      const annots = page.node.Annots();
-      for (let index = 0; annots && index < annots.size(); index++) {
-        const dict = annots.lookup(index, PDFDict);
-        if (dict.lookupMaybe(key('Subtype'), PDFName) !== key('Widget')) continue;
-        if (widgetPages.has(dict)) throw new PdfIntakeError('invalid-pdf');
-        widgetPages.set(dict, pageIndex);
-      }
-    }
-
-    // Inspect the raw field tree and signature dictionaries before pdf-lib's getForm can mutate XFA.
-    const stack = [...widgetPages.keys()];
-    const roots = rawForm?.lookupMaybe(key('Fields'), PDFArray);
-    for (let index = 0; roots && index < roots.size(); index++) stack.push(roots.lookup(index, PDFDict));
-    const visited = new Set<PDFDict>();
-    while (stack.length) {
-      const dict = stack.pop()!;
-      if (visited.has(dict)) continue;
-      visited.add(dict);
-      if (dict.lookupMaybe(key('FT'), PDFName) === key('Sig')) throw new PdfIntakeError('signed-pdf-warning');
-      const parent = dict.lookupMaybe(key('Parent'), PDFDict);
-      const kids = dict.lookupMaybe(key('Kids'), PDFArray);
-      if (parent) stack.push(parent);
-      for (let index = 0; kids && index < kids.size(); index++) stack.push(kids.lookup(index, PDFDict));
-    }
-    if (doc.context.enumerateIndirectObjects().some(([, object]) => object instanceof PDFDict && object.get(key('Type')) === key('Sig'))) {
-      throw new PdfIntakeError('signed-pdf-warning');
-    }
-    if (!rawForm || !roots?.size()) throw new PdfIntakeError('flat-scanned-no-fields');
+    const widgetPages = collectPageWidgets(pdfPages);
+    const { rawForm: activeForm } = requireUnsignedAcroForm(doc, rawForm, widgetPages.keys());
 
     const linkedWidgets = new Map<PDFDict, Set<PDFDict>>();
     for (const widget of widgetPages.keys()) {
@@ -192,7 +206,7 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
       if (seen.has(name)) throw new PdfIntakeError('invalid-pdf');
       seen.add(name);
       const canonical = field.acroField.dict;
-      const defaultAppearance = fieldAttributes(canonical, 'DA') ?? rawForm.lookup(key('DA'));
+      const defaultAppearance = fieldAttributes(canonical, 'DA') ?? activeForm.lookup(key('DA'));
       const appearance = defaultAppearance instanceof PDFString || defaultAppearance instanceof PDFHexString ? defaultAppearance.decodeText() : '';
       const widgets = field.acroField.getWidgets().map((widget): WidgetTarget => {
         const rawRect = widget.Rect();
@@ -253,7 +267,7 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         alignment: alignment instanceof PDFNumber ? alignment.asNumber() : undefined }];
     });
     if (fields.every(({ meta }) => meta.readOnly || meta.choices?.length === 0)) throw new PdfIntakeError('flat-scanned-no-fields');
-    return { doc, rawForm, pages, fields };
+    return { doc, rawForm: activeForm, pages, fields };
   } catch (error) {
     if (error instanceof PdfIntakeError) throw error;
     throw new PdfIntakeError('invalid-pdf', error);

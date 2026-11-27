@@ -193,6 +193,19 @@ input:is([type="checkbox"], [type="radio"]) { accent-color: var(--forest); }
 .privacy-dot { width: .44rem; height: .44rem; border-radius: 100%; background: #387456; }
 
 .workbench { display: grid; gap: 1.2rem; }
+.workbench-modes {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: .2rem;
+  padding: .22rem;
+  margin-block-end: 1rem;
+  border: 1px solid var(--control-line);
+  border-radius: .6rem;
+  background: var(--surface);
+}
+.workbench-modes .button { color: var(--forest); }
+.workbench-modes .button:hover { background: var(--green-soft); }
+.workbench-modes [aria-pressed="true"], .workbench-modes [aria-pressed="true"]:hover { color: #fff; background: var(--forest); }
 .workbench-grid {
   display: grid;
   grid-template-columns: minmax(19rem, 22rem) minmax(0, 1fr);
