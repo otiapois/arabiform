@@ -539,6 +539,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans: grouping?.rows ?? filenamePlans,
     flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
     groupByColumn, grouping, groupingBlocked, changeGrouping,
+    output,
     includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage, printLayout, impositionUnavailable, changeImposition,
     watermark, watermarkBlocked, changeWatermark,
     qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked, changeQrStamp,

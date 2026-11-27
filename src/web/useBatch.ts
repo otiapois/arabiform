@@ -6,6 +6,7 @@ import type { AlignOverride } from '../core/pdf/alignment';
 import type { Imposition } from '../core/pdf/exports';
 import type { QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
+import type { BoundaryRowSpotlight } from '../core/preflight/spotlight';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { resolveVirtualMapping, VirtualColumnMapping } from '../core/roster/virtual-columns';
 import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
@@ -51,7 +52,9 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
   const exportLock = useRef<symbol | undefined>(undefined);
   const [revision, setRevision] = useState(0);
   const [paused, setPaused] = useState(false);
-  const [checked, setChecked] = useState<{ batch: BatchSettings; results?: BatchRowResult[]; custody?: CustodySources; error?: string }>();
+  const [checked, setChecked] = useState<{
+    batch: BatchSettings; results?: BatchRowResult[]; custody?: CustodySources; spotlight?: BoundaryRowSpotlight; client?: BatchWorker; error?: string;
+  }>();
   const [exported, setExported] = useState<{ settings: OutputSettings; digests: CustodyOutputs }>();
   const [preview, setPreview] = useState<{ results: BatchRowResult[]; row: number; bytes?: Uint8Array }>();
   const [progress, setProgress] = useState<BatchProgress>();
@@ -108,9 +111,9 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
         if (!active || generation.current !== revision) return;
         client = createBatchWorker();
         worker.current = client;
-        const { rows: results, custody } = await client.preflight(makeBatchInput(batch, fonts), trackProgress(client));
+        const { rows: results, custody, spotlight } = await client.preflight(makeBatchInput(batch, fonts), trackProgress(client));
         if (worker.current === client) {
-          setChecked({ batch, results, custody });
+          setChecked({ batch, results, custody, spotlight, client });
           setProgress(undefined);
         }
       } catch (error) {
@@ -195,6 +198,7 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
   return {
     results, checking, paused, progress: activeProgress, preflightError: current?.error,
     exportScope, exportCount, custody: current?.custody,
+    checkedWorker: current?.client, spotlight: current?.spotlight,
     custodyOutputs: exported?.settings === output ? exported.digests : undefined,
     previewBytes: currentPreview?.bytes, previewError: Boolean(currentPreview && !currentPreview.bytes),
     exporting: Boolean(exporting), exportError,

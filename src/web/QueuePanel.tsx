@@ -27,7 +27,7 @@ export function QueuePanel({ desk, language, characterKeys }: {
       </dl>
       {desk.rows.length > 0 ? (
         <Suspense fallback={<p className="quiet empty-queue" role="status">{labels.loading}</p>}>
-          <ActiveQueue desk={desk} language={language} characterKeys={characterKeys} />
+          <ActiveQueue key={desk.sourceRevision} desk={desk} language={language} characterKeys={characterKeys} />
         </Suspense>
       ) : <p className="quiet empty-queue">{desk.sheet ? labels.emptySheet : labels.noRows}</p>}
     </section>

@@ -1,0 +1,25 @@
+.print-estimate {
+  display: grid;
+  gap: .42rem;
+  padding: .65rem .75rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  font-size: .86rem;
+  overflow-wrap: anywhere;
+}
+.print-estimate h3, .print-estimate h4 { margin: 0; }
+.print-estimate h3 { font-size: 1rem; }
+.print-estimate h4 { font-size: .88rem; }
+.print-estimate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: .5rem 1rem; }
+.print-estimate-grid > div { background: var(--surface); padding: .5rem .6rem; border-radius: .3rem; border: 1px solid var(--line); }
+.sheet-counts { display: flex; flex-wrap: wrap; gap: .28rem .7rem; margin: 0; padding-block: .2rem; }
+.sheet-counts div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .35rem; }
+.sheet-counts dt { color: var(--muted); }
+.sheet-counts dd { color: var(--ink); font-weight: 680; margin: 0; }
+.sheet-savings { color: var(--forest); font-weight: 640; }
+.sheet-estimate-note { color: var(--amber); margin-block-start: .38rem; }
+.print-estimate-groups { margin-block-start: .38rem; }
+.print-estimate-groups summary { cursor: pointer; color: var(--forest); font-weight: 600; }
+.print-estimate-groups ul { margin: .35rem 0 0; padding-inline-start: 1.25rem; list-style: disc; }

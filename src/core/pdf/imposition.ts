@@ -1,5 +1,6 @@
 import { grayscale, PDFDocument, PDFObjectCopier, PDFStream, type PDFPage } from 'pdf-lib';
 import { key, type TemplateMetadata } from './template';
+import { RECORDS_PER_TWO_UP_SHEET } from './two-up-sheets';
 
 const shortSide = 595.28;
 const longSide = 841.89;
@@ -82,6 +83,18 @@ function pageGeometry({ printBounds, rotation, userUnit }: TemplateMetadata['pag
     height: (quarterTurn ? right - left : top - bottom) * userUnit };
 }
 
+export function hasValidImpositionGeometry(page: TemplateMetadata['pages'][number]): boolean {
+  try {
+    const { width, height, userUnit } = pageGeometry(page);
+    const { slots } = impositionLayout(width, height);
+    const scale = slots[0].scale * userUnit;
+    return Number.isFinite(scale) && scale > 0;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'imposition-invalid-page-geometry') return false;
+    throw error;
+  }
+}
+
 export async function imposeRecordPages(source: PDFDocument, pages: TemplateMetadata['pages']) {
   const doc = await PDFDocument.create({ updateMetadata: false });
   const sourcePages = source.getPages();
@@ -97,7 +110,7 @@ export async function imposeRecordPages(source: PDFDocument, pages: TemplateMeta
   let current: { page: PDFPage; layout: Layout } | undefined;
   for (const [index, content] of embedded.entries()) {
     const { width, height, userUnit } = geometry[index]!;
-    const slot = index % 2;
+    const slot = index % RECORDS_PER_TWO_UP_SHEET;
     let record;
     if (!slot) {
       const { layout, slots: [first] } = impositionLayout(width, height);
