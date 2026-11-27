@@ -1,4 +1,5 @@
 import type { ExportScope } from '../worker/row-selection';
+import type { CustodyQrRecord } from '../custody/records';
 
 export interface CustodySources {
   templateSha256: string;
@@ -25,6 +26,7 @@ interface CustodyOutputs {
   mergedPdfSha256?: string;
   groupByColumn?: string;
   groups?: readonly GroupedCustodyEntry[];
+  qrRecords?: readonly CustodyQrRecord[];
 }
 
 export interface CustodyManifest extends CustodySources, CustodyOutputs, Partial<ExportScope> {
@@ -32,6 +34,7 @@ export interface CustodyManifest extends CustodySources, CustodyOutputs, Partial
 }
 
 export const CUSTODY_PREFIX_LENGTH = 12;
+export const MERGED_CUSTODY_FILENAME = 'arabiform-merged.pdf';
 
 export async function sha256(bytes: Uint8Array | ArrayBuffer): Promise<string> {
   const input = bytes instanceof ArrayBuffer ? bytes : bytes.buffer instanceof ArrayBuffer
@@ -46,7 +49,7 @@ export async function hashCustodySources(template: Uint8Array | ArrayBuffer, ros
 }
 
 export function createCustodyManifest(
-  { templateSha256, rosterSha256, sheetName }: CustodySources, { entries, mergedPdfSha256, groupByColumn, groups }: CustodyOutputs = {},
+  { templateSha256, rosterSha256, sheetName }: CustodySources, { entries, mergedPdfSha256, groupByColumn, groups, qrRecords }: CustodyOutputs = {},
   scope?: ExportScope,
 ): string {
   const manifest: CustodyManifest = {
@@ -58,6 +61,7 @@ export function createCustodyManifest(
     ...(groupByColumn !== undefined && { groupByColumn }),
     ...(groups && { groups: groups.map(({ groupValue, folder, rowNumbers, filename, zipPath, sha256, bytes }) =>
       ({ groupValue, folder, rowNumbers, filename, zipPath, sha256, bytes })) }),
+    ...(qrRecords?.length && { qrRecords: qrRecords.map(({ rowNumber, payload }) => ({ rowNumber, payload })) }),
   };
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }

@@ -2,6 +2,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFOperator, PDFOpe
 import { Zip, ZipPassThrough } from 'fflate';
 import Papa from 'papaparse';
 import { createCustodyManifest, sha256, type CustodyEntry, type CustodySources, type GroupedCustodyEntry } from '../audit/custody';
+import type { CustodyQrRecord } from '../custody/records';
 import { isSafeGroupedPdfPath, SPLIT_CUSTODY_PATH, type OutputGroup } from '../export/grouping';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
@@ -217,7 +218,7 @@ type SplitPrintGroup = OutputGroup & { rows: readonly GeneratedPdfExportRow[]; c
 
 export async function createSplitMergedZip(
   groups: readonly SplitPrintGroup[], sources: CustodySources, scope: ExportScope, groupByColumn: string, onProgress?: ExportProgress,
-  watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest, imposition: Imposition = '1-up',
+  watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest, imposition: Imposition = '1-up', qrRecords?: readonly CustodyQrRecord[],
 ) {
   if (!groups.length) throw new Error('empty-export');
   if (imposition !== '1-up' && imposition !== '2-up') throw new Error('invalid-imposition');
@@ -237,7 +238,7 @@ export async function createSplitMergedZip(
     zip.add(bytes);
     completed += rows.length;
   }
-  const receipt = createCustodyManifest(sources, { groupByColumn, groups: entries }, scope);
+  const receipt = createCustodyManifest(sources, { groupByColumn, groups: entries, qrRecords }, scope);
   zip.add(new TextEncoder().encode(receipt));
   return { bytes: zip.finish(), groupByColumn, groups: entries };
 }
