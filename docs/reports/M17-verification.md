@@ -28,10 +28,16 @@ M16 已隔离的扩展名在本次修复前仍按 LTR 显示。M17 实际发现�
 | 检查 | 实测结果 |
 | --- | --- |
 | 类型、单元测试与夹具 | `npm run typecheck` 通过。`npm test` 完成 24 个文件的 177 项测试。只读复验 24 个合成夹具，`fixtures/.gitattributes` 的 Git 对象仍为 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[单元测试](../../test-results/m17-evidence/qa-unit.log) · [夹具](../../test-results/m17-evidence/qa-fixtures.log) |
-| 对抗测试 | 种子 `1243704626`，50 项属性共接受 30,180 例，丢弃 0，失败 0。原来的 27,680 例之外，每种模板另有 625 例，逐例走生成、检查、实际填充、提取、归档与单字节篡改校验。优化后复用同一份已填 PDF 做提取和打印归档。四组分别耗时 60.27、58.64、61.72、57.73 秒，独立 fuzz 命令总耗时 292.64 秒。[完整运行](../../test-results/m17-evidence/qa-fuzz.log) · [独立计数](../../test-results/m17-evidence/qa-fuzz-recount.json) |
+| 对抗测试 | 种子 `1243704626`，50 项测试通过，共接受 30,180 例，丢弃 0，失败 0。原来的 27,680 例之外，每种模板另有 625 例，逐例走生成、检查、实际填充、提取、归档与单字节篡改校验。优化后复用同一份已填 PDF 做提取和打印归档。四组分别耗时 60.27、58.64、61.72、57.73 秒，独立 fuzz 命令总耗时 292.64 秒。[完整运行](../../test-results/m17-evidence/qa-fuzz.log) · [独立计数](../../test-results/m17-evidence/qa-fuzz-recount.json) |
 | 双引擎 PDF 实绘 | pdf-lib 回读与 PyMuPDF 1.26.7 的 4 倍渲染覆盖 65 次填充、202 个有墨迹控件。裁切与已映射控件之外的像素变化均为 0。四类新模板各有带音标阿语和英语两次填充，四角最多 72 pt 印章净空及 9 pt 上下页边距均通过。12 张盖章页共核对 10,988 个模块，12 张 A4 拼版核对 21 条记录。保留的四份公开样本中三份可填，W-9 因含 XFA 如期拒绝，同时覆盖自定义 CFF 字体。[完整像素报告](../../test-results/m17-evidence/qa-pixel-output/manifest-verification.json) |
 | 界面对比度 | 两个新增面板的英／阿和桌面／移动组合中，已测文字的最低对比度为 5.64:1，控件视觉提示为 3.20:1，焦点轮廓为 5.88:1。该抽测覆盖了控件命名、地标与状态播报。[逐视口测量记录](../../test-results/m17-evidence/worker-b/smoke-exact.log) |
 | 静态发布 | 五条规范路由、五份静态 HTML 共享一个入口，原始 276,456 B、gzip 86,916 B，距上限分别为 1,544 B 和 84 B。默认来源和独立严格来源均通过，占位来源用于严格验证时按预期拒绝。恢复默认构建后再次通过。检查包括 `connect-src 'none'`、站点地图、重定向、许可告知、字体许可与 CI。[静态清单](../../test-results/m17-evidence/qa-static.json) · [严格来源](../../test-results/m17-evidence/qa-strict-release.log) · [占位来源负例](../../test-results/m17-evidence/qa-default-reject.log) · [恢复后](../../test-results/m17-evidence/qa-restored-release.log) |
 | 真实 Edge | 保留串行配置，134 项一次通过，桌面与移动各 67 项，全程 906.6 秒。通过文件、用例 ID、标题及项目四项比对，原 130 项全部保留。6,498 个 HTTP 请求均为本地请求，外联、WebSocket 与浏览器错误各 0。新流程在冷启动、模板预览、填充与验真结果处均未测得页面横向溢出，测试结束后端口 42885 已关闭。[原始浏览器日志](../../test-results/m17-evidence/qa-edge.log) · [运行汇总、下载位置与截图哈希](../../test-results/m17-evidence/qa-edge-summary.json) |
 
 Windows 沙箱首次执行 `npm run verify:pixels` 时，tsx 在用户目录解析处返回 `uv_os_get_passwd ENOMEM`。使用同一提交、同一 D 盘输入与临时目录，在获准的本机环境重跑原命令，退出码为 0。[启动错误](../../test-results/m17-evidence/qa-pixels.log) · [本机结果](../../test-results/m17-evidence/qa-pixels-native.log)
+
+## 主线收尾
+
+扫描 `src/core/` 下 50 个跟踪文件，DOM 与网络 API 命中均为 0。严格来源使用两种输入方式并拒绝占位元数据的测试，超时已调为 30 秒。[核心扫描](../../test-results/m17-evidence/lead-core-invariants.json) · [严格来源测试](../../tests/core/verify-release-bundle.test.ts)
+
+四棵 M17 工作树及对应临时分支已清理，D 盘 `.arabiform-wt` 已移除。Git 仅列出 `main` 工作树，两个验收端口已关闭，主线依赖和夹具属性哈希已核对。[清理回执](../../test-results/m17-evidence/lead-worktree-cleanup.json)
