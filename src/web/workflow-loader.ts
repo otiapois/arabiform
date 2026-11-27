@@ -1,6 +1,7 @@
 import { decodeBase64 } from './resources';
 import type { SampleWorkflow } from './useWorkbench';
 
+// The sample-* chunks contain individual fixture bytes; this module only selects one of them.
 const samples = {
   workshop: { load: () => import('virtual:arabiform/sample'), pdf: 'synthetic-acroform.pdf', roster: 'synthetic-roster.csv' },
   clinic: { load: () => import('virtual:arabiform/sample-clinic'), pdf: 'clinic-consent-mixed.pdf', roster: 'clinic-consent-roster.csv' },
