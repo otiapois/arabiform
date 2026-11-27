@@ -12,6 +12,8 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    env:
+      SITE_URL: https://release-check.invalid
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,6 +29,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:fuzz
+      - run: npm run generate:fixtures -- --check
       - run: npm run verify:pixels
       - run: npm run build
       - run: npm run verify:release
+      - run: npm run verify:release -- --strict-origin "$SITE_URL"

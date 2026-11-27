@@ -118,15 +118,25 @@ function checkLicensesAndCi() {
   '.github/workflows/ci.yml needs a build job with verify:release immediately after build')
 }
 
+function parseOrigin(value, label) {
+  const message = label + ' must be an HTTP(S) origin without credentials, path, query, or fragment'
+  requireCheck(!/[\s\x00-\x1f\x7f]/.test(value) && /^https?:\/\/[^/?#@\\]+\/?$/i.test(value) && URL.canParse(value), message)
+  const site = new URL(value)
+  requireCheck(site.href === site.origin + '/', message)
+  return site
+}
+
 function verifyRelease() {
-  const args = process.argv.slice(2)
-  const strict = args.length === 1 && args[0] === '--strict-origin'
-  requireCheck(args.length === 0 || strict, 'Usage: npm run verify:release [-- --strict-origin]')
-  requireCheck(!strict || process.env.SITE_URL, '--strict-origin requires SITE_URL')
-  const site = new URL(process.env.SITE_URL ?? 'https://' + localHost)
-  requireCheck(['http:', 'https:'].includes(site.protocol) && site.href === site.origin + '/',
-    'SITE_URL must be an HTTP(S) origin without a path, query, or fragment')
-  requireCheck(!strict || !site.hostname.includes(localHost), '--strict-origin requires a non-placeholder SITE_URL')
+  const [flag, origin, ...extra] = process.argv.slice(2)
+  const strict = flag === '--strict-origin'
+  requireCheck((flag === undefined || strict) && extra.length === 0,
+    'Usage: npm run verify:release [-- --strict-origin [ORIGIN]]')
+  const envOrigin = process.env.SITE_URL
+  requireCheck(!strict || origin !== undefined || envOrigin !== undefined, '--strict-origin requires SITE_URL or an explicit origin')
+  const configuredSite = envOrigin === undefined ? undefined : parseOrigin(envOrigin, 'SITE_URL')
+  const site = origin === undefined ? configuredSite ?? new URL('https://' + localHost) : parseOrigin(origin, '--strict-origin origin')
+  requireCheck(!configuredSite || site.origin === configuredSite.origin, '--strict-origin origin does not match SITE_URL')
+  requireCheck(!strict || !site.hostname.includes(localHost), '--strict-origin requires a non-placeholder origin')
   const read = path => {
     const source = readFileSync(join(dist, path), 'utf8')
     requireCheck(!strict || !source.toLowerCase().includes(localHost), 'dist/' + path + ' contains the ' + localHost + ' placeholder')
