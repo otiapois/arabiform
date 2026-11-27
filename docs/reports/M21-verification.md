@@ -32,3 +32,9 @@ Microsoft Edge 124.0.2478.80 在 1440 × 900 和 390 × 844 各通过 79 项。�
 夹具属性仍为基线 Git 对象 `16687c743d52cd6832cb834023e0b8160b38bf1e`。Windows 工作副本的 CRLF 原始字节 SHA-256 与开工前完全一致，PDF、XLSX 的 binary 规则和 CSV 的 `-text whitespace=cr-at-eol` 规则均保留。[基线与当前字节](../../test-results/m21-evidence/lead-fixture-bytes.json)
 
 首次像素命令和 CLI 在受限 Windows 环境的 tsx 初始化处因 `uv_os_get_passwd ENOMEM` 退出。两者在获准的本机环境使用相同冻结提交和 D 盘输入复跑通过。默认单元报告省略了 fast-check 汇总行，单独启动的默认 fuzz 运行在生成汇总计数前由 QA 结束。正式专项使用同一测试文件和 verbose 报告器，日志直接记录接受、丢弃与失败数。[像素首次退出](../../test-results/m21-evidence/qa-pixels.log) · [本机像素](../../test-results/m21-evidence/qa-pixels-native.log) · [CLI 首次退出](../../test-results/m21-evidence/qa-cli-sandbox-ready.log) · [报告器切换回执](../../test-results/m21-evidence/qa-fuzz-reporter-switch.json)
+
+## 主线收尾
+
+64 个核心文件的边界扫描中，DOM、网络和文件系统 API 匹配数均为 0。锁文件只更新版本号。冻结后的变更限于报告、经验和代码标准。[核心与锁文件核验](../../test-results/m21-evidence/lead-core-invariants.json) · [五路由入口复算](../../test-results/m21-evidence/lead-static-recount.json)
+
+已清理四个工作树、对应分支及 D 盘 `.arabiform-wt`。Windows 曾暂时占用已注销的文档工作树目录，核对为空后重试删除成功。Git 只登记 `main`，两个本地预览端口均关闭，夹具属性文件与开工前逐字节一致。[清理回执](../../test-results/m21-evidence/lead-worktree-cleanup.json)
