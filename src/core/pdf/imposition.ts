@@ -33,13 +33,23 @@ function fitRecord(layout: Layout, width: number, height: number, slot: number) 
   };
 }
 
+function checkedFit(record: ReturnType<typeof fitRecord>) {
+  const { x, y, width, height, scale } = record;
+  const right = x + width;
+  const top = y + height;
+  // A tiny dimension can round away when added to its position on the sheet.
+  if (!Number.isFinite(scale) || !Number.isFinite(right) || !Number.isFinite(top)
+    || !(scale > 0 && right > x && top > y)) throw new Error('imposition-invalid-page-geometry');
+  return record;
+}
+
 export function impositionLayout(width: number, height: number) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     throw new Error('imposition-invalid-page-geometry');
   }
   const layout = layouts.reduce((best, candidate) =>
     fitRecord(candidate, width, height, 0).scale > fitRecord(best, width, height, 0).scale ? candidate : best);
-  return { layout, slots: [fitRecord(layout, width, height, 0), fitRecord(layout, width, height, 1)] as const };
+  return { layout, slots: [checkedFit(fitRecord(layout, width, height, 0)), checkedFit(fitRecord(layout, width, height, 1))] as const };
 }
 
 function drawCutMarks(page: PDFPage, { x, y, width, height }: ReturnType<typeof fitRecord>) {
@@ -88,12 +98,17 @@ export async function imposeRecordPages(source: PDFDocument, pages: TemplateMeta
   for (const [index, content] of embedded.entries()) {
     const { width, height, userUnit } = geometry[index]!;
     const slot = index % 2;
+    let record;
     if (!slot) {
-      const { layout } = impositionLayout(width, height);
+      const { layout, slots: [first] } = impositionLayout(width, height);
       current = { page: doc.addPage([layout.width, layout.height]), layout };
+      record = first;
+    } else {
+      record = checkedFit(fitRecord(current!.layout, width, height, slot));
     }
-    const { page, layout } = current!;
-    const record = fitRecord(layout, width, height, slot);
+    const { page } = current!;
+    const scale = record.scale * userUnit;
+    if (!Number.isFinite(scale) || scale <= 0) throw new Error('imposition-invalid-page-geometry');
     const group = sourcePages[index]!.node.get(key('Group'));
     if (group) {
       await content.embed();
@@ -101,7 +116,6 @@ export async function imposeRecordPages(source: PDFDocument, pages: TemplateMeta
     }
     // The form matrix restores crop origin and clockwise page rotation.
     // Use equal scales in native units to retain the vector source geometry.
-    const scale = record.scale * userUnit;
     page.drawPage(content, { x: record.x, y: record.y, xScale: scale, yScale: scale });
     drawCutMarks(page, record);
   }

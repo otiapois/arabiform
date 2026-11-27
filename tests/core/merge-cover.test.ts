@@ -4,7 +4,7 @@ import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFNa
 import { beforeAll, expect, it } from 'vitest';
 import { createMergedPdf, type MergeCoverOptions } from '../../src/core/pdf';
 import { createCustodyManifest, sha256 } from '../../src/core/audit/custody';
-import { impositionLayout } from '../../src/core/pdf/imposition';
+import { imposeRecordPages, impositionLayout } from '../../src/core/pdf/imposition';
 import { createBatchProcessor } from '../../src/core/worker/batch';
 
 const key = PDFName.of;
@@ -96,6 +96,23 @@ it('checks the extreme aspect ratio candidates and only permits 2-up for printab
   const annotatedRows = [{ filename: 'annotated.pdf', pdfBytes: await annotated.save() }];
   expect((await PDFDocument.load(await createMergedPdf(annotatedRows))).getPage(0).node.Annots()?.size()).toBe(1);
   await expect(createMergedPdf(annotatedRows, undefined, undefined, undefined, undefined, '2-up')).rejects.toThrow('imposition-unsupported-print-annotation');
+});
+
+it('rejects overflowing or collapsed record geometry even when it occupies the second slot', async () => {
+  for (const [width, height] of [[1e-320, 1e-320], [1e-16, 1e12], [1e12, 1e-16]] as const) {
+    expect(() => impositionLayout(width, height)).toThrow('imposition-invalid-page-geometry');
+  }
+  expect(Number.isFinite(impositionLayout(1e-150, 1e-150).slots[0].scale)).toBe(true);
+
+  for (const [width, height, userUnit] of [[1e-320, 1e-320, 1], [1e-16, 1e12, 1], [1e-308, 1e-308, 1e300]] as const) {
+    const sample = await PDFDocument.create();
+    const pages = ([[160, 120, 1], [width, height, userUnit]] as const).map(([width, height, userUnit]) => {
+      sample.addPage([width, height]);
+      return { width, height, userUnit, rotation: 0,
+        printBounds: [0, 0, width, height] as const, visibleBox: { x: 0, y: 0, width, height } };
+    });
+    await expect(imposeRecordPages(sample, pages)).rejects.toThrow('imposition-invalid-page-geometry');
+  }
 });
 
 it.each([1, 25, 80])('creates a complete printable index for %i mixed-page rows', async (count) => {
