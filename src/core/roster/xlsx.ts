@@ -3,7 +3,7 @@ import { XMLParser } from 'fast-xml-parser';
 import type { RosterSheet, RosterWarningCode } from './index';
 
 interface XmlRelationship { '@_Id': string; '@_Target': string; '@_Type': string; '@_TargetMode'?: string }
-interface XmlSheet { '@_name': string; '@_id': string }
+interface XmlSheet { '@_name': string; '@_id': string; '@_state'?: string }
 interface XmlText { '#text'?: string }
 interface XmlString { t?: string | XmlText; r?: { t?: string | XmlText }[] }
 interface XmlCell {
@@ -65,12 +65,22 @@ function columnLabel(index: number): string {
   return label;
 }
 
-export function readWorkbook(
+export interface RosterWorkbook {
+  readonly sheetNames: readonly string[];
+  readSheet(sheetName?: string): RosterSheet;
+}
+
+function workbookError(error: unknown): never {
+  if (error instanceof Error && error.message === 'invalid-roster-headers') throw error;
+  throw new Error('invalid-xlsx', { cause: error });
+}
+
+export function inspectWorkbook(
   bytes: Uint8Array,
   validateHeaders: (cells: readonly (string | undefined)[]) => string[],
   aliasGroups: string[][],
   normalize: (text: string) => string,
-): RosterSheet[] {
+): RosterWorkbook {
   try {
     let uncompressed = 0;
     const archive = unzipSync(bytes, { filter: (file) => {
@@ -90,13 +100,32 @@ export function readWorkbook(
 
     const sheets = xml('xl/workbook.xml').workbook?.sheets?.sheet;
     if (!sheets?.length) throw new Error('invalid-xlsx');
-    const links = xml('xl/_rels/workbook.xml.rels').Relationships?.Relationship ?? [];
-    const strings = (xml('xl/sharedStrings.xml').sst?.si ?? []).map(spreadsheetText);
-    const styles = xml('xl/styles.xml').styleSheet;
-    const formats = new Map(styles?.numFmts?.numFmt?.map((format) => [format['@_numFmtId'], format['@_formatCode']]));
-    const styleFormats = styles?.cellXfs?.xf?.map((style) => style['@_numFmtId']) ?? [];
+    const links = new Map(xml('xl/_rels/workbook.xml.rels').Relationships?.Relationship?.map((link) => [link['@_Id'], link]));
+    const visible = new Map<string, string>();
+    for (const sheet of sheets) {
+      if (sheet['@_state'] !== undefined && sheet['@_state'] !== 'visible') continue;
+      const link = links.get(sheet['@_id']);
+      if (!link) throw new Error('invalid-xlsx');
+      if (!link['@_Type'].endsWith('/worksheet')) continue;
+      const name = sheet['@_name'];
+      if (!name || visible.has(name) || link['@_TargetMode'] === 'External') throw new Error('invalid-xlsx');
+      visible.set(name, archivePath(link['@_Target']));
+    }
+    if (!visible.size) throw new Error('invalid-xlsx');
+    const sheetNames = Object.freeze([...visible.keys()]);
+    const decoded = new Map<string, RosterSheet>();
+    const loadResources = () => {
+      const styles = xml('xl/styles.xml').styleSheet;
+      return {
+        strings: (xml('xl/sharedStrings.xml').sst?.si ?? []).map(spreadsheetText),
+        formats: new Map(styles?.numFmts?.numFmt?.map((format) => [format['@_numFmtId'], format['@_formatCode']])),
+        styleFormats: styles?.cellXfs?.xf?.map((style) => style['@_numFmtId']) ?? [],
+      };
+    };
+    let resources: ReturnType<typeof loadResources> | undefined;
 
     const parseCell = (cell: XmlCell, header = ''): { value: string; warning?: RosterWarningCode } => {
+      const { strings, formats, styleFormats } = resources ??= loadResources();
       const type = cell['@_t'];
       const raw = cell.v ?? '';
       const styleId = styleFormats[Number(cell['@_s'] ?? '0')];
@@ -128,12 +157,8 @@ export function readWorkbook(
       return { value, warning };
     };
 
-    const result: RosterSheet[] = [];
-    for (const sheet of sheets) {
-      const link = links.find((relation) => relation['@_Id'] === sheet['@_id']);
-      if (!link || link['@_TargetMode'] === 'External') throw new Error('invalid-xlsx');
-      if (!link['@_Type'].endsWith('/worksheet')) continue;
-      const file = xml(archivePath(link['@_Target'])).worksheet;
+    const parseSheet = (name: string, path: string): RosterSheet => {
+      const file = xml(path).worksheet;
       if (!file) throw new Error('invalid-xlsx');
       let previousRow = 0;
       const data = (file.sheetData?.row ?? []).map((row) => {
@@ -149,12 +174,9 @@ export function readWorkbook(
         return { cells, sourceRow };
       }).filter(({ cells }) => cells.some((cell) => cell && (cell.v || cell.is || cell.f !== undefined)));
       const [headerRow, ...rows] = data;
-      if (!headerRow) {
-        result.push({ name: sheet['@_name'], headers: [], rows: [] });
-        continue;
-      }
+      if (!headerRow) return { name, headers: [], rows: [] };
       const headers = validateHeaders(headerRow.cells.map((cell) => cell ? parseCell(cell).value : undefined));
-      result.push({ name: sheet['@_name'], headers, rows: rows.map(({ cells, sourceRow }) => {
+      return { name, headers, rows: rows.map(({ cells, sourceRow }) => {
         if (cells.slice(headers.length).some((cell) => cell && (cell.v || cell.is || cell.f !== undefined))) throw new Error('invalid-xlsx');
         const warnings: RosterSheet['rows'][number]['warnings'] = [];
         const values = Object.fromEntries(headers.map((column, index) => {
@@ -171,12 +193,25 @@ export function readWorkbook(
           return [column, value];
         }));
         return { values, warnings };
-      }) });
-    }
-    if (!result.length) throw new Error('invalid-xlsx');
-    return result;
+      }) };
+    };
+    return {
+      sheetNames,
+      readSheet(name = sheetNames[0]!) {
+        const existing = decoded.get(name);
+        if (existing) return existing;
+        const path = visible.get(name);
+        if (!path) throw new Error('invalid-xlsx');
+        try {
+          const sheet = parseSheet(name, path);
+          decoded.set(name, sheet);
+          return sheet;
+        } catch (error) {
+          return workbookError(error);
+        }
+      },
+    };
   } catch (error) {
-    if (error instanceof Error && error.message === 'invalid-roster-headers') throw error;
-    throw new Error('invalid-xlsx', { cause: error });
+    return workbookError(error);
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { CustodyManifest, CustodySources } from '../core/audit/custody';
 import type { AlignOverride } from '../core/pdf/alignment';
+import type { Imposition } from '../core/pdf/exports';
 import type { QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
@@ -23,11 +24,13 @@ export type OutputSettings = {
   cover?: Omit<MergeCoverSheet, 'filenames'>;
   watermark?: WatermarkSettings;
   qrStamp?: Exclude<QrStampSettings, { placement: 'none' }>;
+  imposition?: Imposition;
 };
 
 export type BatchSettings = {
   template: Uint8Array;
   roster: Uint8Array;
+  sheetName?: string;
   rows: readonly RosterRow[];
   mapping: Record<string, string>;
   virtualMappings: Record<string, VirtualColumnMapping>;

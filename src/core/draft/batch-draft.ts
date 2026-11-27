@@ -1,6 +1,6 @@
 import { sha256 } from '../audit/custody';
 import type { HygieneOperation, HygieneSummary } from '../roster/hygiene';
-import { isRecord, validateMappingPreset, type MappingPresetV4, type MappingPresetV5, type MappingPresetV6, type MappingPresetV7 } from './mapping-preset';
+import { isRecord, validateMappingPreset, type MappingPreset } from './mapping-preset';
 
 export type BatchDraftSource = {
   templateSha256: string;
@@ -17,7 +17,7 @@ export type BatchDraft = {
   source: BatchDraftSource;
   edits: Record<number, Record<string, string>>;
   hygiene: HygieneSummary[];
-  settings: MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7;
+  settings: Exclude<MappingPreset, { version: 1 | 2 | 3 }>;
   customFontSha256: string | null;
 };
 
@@ -74,9 +74,9 @@ function validateBatchDraft(data: unknown): BatchDraft {
   const fieldNames = new Set(source.fields);
   const columns = new Set(source.columns);
   const settings = validateMappingPreset(data.settings);
-  if ((settings?.version !== 4 && settings?.version !== 5 && settings?.version !== 6 && settings?.version !== 7)
+  if (!settings || settings.version === 1 || settings.version === 2 || settings.version === 3
     || Object.entries(settings.mapping).some(([field, column]) => !fieldNames.has(field) || column !== '' && !columns.has(column))
-    || (settings.version === 6 || settings.version === 7) && Object.keys(settings.virtualMappings).some((field) => !fieldNames.has(field))) throw invalid();
+    || 'virtualMappings' in settings && Object.keys(settings.virtualMappings).some((field) => !fieldNames.has(field))) throw invalid();
 
   const edits: [number, Record<string, string>][] = [];
   for (const [index, values] of Object.entries(data.edits)) {

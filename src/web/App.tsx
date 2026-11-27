@@ -19,6 +19,8 @@ const QrStampOptions = lazy(() => import('./QrStampOptions'));
 const CoverOptions = lazy(() => import('./CoverOptions'));
 const ExportError = lazy(() => import('./ExportError'));
 const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
+const WorksheetPicker = lazy(() => import('./SourcePrintControls').then(({ WorksheetPicker }) => ({ default: WorksheetPicker })));
+const PrintLayout = lazy(() => import('./SourcePrintControls').then(({ PrintLayout }) => ({ default: PrintLayout })));
 
 type AppProps = {
   arabic: boolean;
@@ -194,14 +196,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     onChoose={desk.loadRoster}
                   />
                   {desk.errors.roster && <p className="alert" role="alert">{problem(desk.errors.roster) ?? labels.loadError}</p>}
-                  {desk.roster && desk.roster.data.sheets.length > 1 && (
-                    <label className="full-control">
-                      {labels.sheet}
-                      <select data-testid="worksheet" value={desk.sheetIndex} onChange={(event) => desk.changeSheet(Number(event.currentTarget.value))}>
-                        {desk.roster.data.sheets.map((sheet, index) => <option key={index} value={index}>{sheet.name}</option>)}
-                      </select>
-                    </label>
-                  )}
+                  {desk.roster?.workbook && <Suspense><WorksheetPicker desk={desk} language={language} /></Suspense>}
                   <div className="source-note" aria-live="polite">
                     {desk.loadedSample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
                     <p>{desk.loadedSample === 'workshop' ? labels.sampleNotice : desk.loadedSample ? labels.workflowNotice : labels.realNotice}</p>
@@ -271,6 +266,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
                     <span>{labels.flattenZip}</span>
                   </label>
+                  {desk.template && <Suspense><PrintLayout desk={desk} arabic={arabic} /></Suspense>}
                   <label className="output-mode">
                     <input type="checkbox" data-testid="include-cover-sheet" checked={desk.includeCoverSheet} disabled={desk.exporting}
                       onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
@@ -308,7 +304,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                   </div>
                   {desk.template && desk.sheet && (
                     <Suspense>
-                      <BatchDraftControls desk={desk} arabic={arabic} />
+                      <BatchDraftControls key={desk.sourceRevision} desk={desk} arabic={arabic} />
                     </Suspense>
                   )}
                 </div>

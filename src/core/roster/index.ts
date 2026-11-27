@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { readWorkbook } from './xlsx';
+import { inspectWorkbook, type RosterWorkbook } from './xlsx';
 
 export { hasVirtualFilenameToken, makeFilenames, planFilenames, type FilenamePlan } from './filenames';
 
@@ -65,10 +65,18 @@ export function rosterHeaders(cells: readonly (string | undefined)[]): string[] 
   return headers;
 }
 
-export async function readRoster(input: Uint8Array | ArrayBuffer, filename: string): Promise<Roster> {
-  const bytes = new Uint8Array(input);
-  if (/\.xlsx$/i.test(filename)) return { sheets: readWorkbook(bytes, rosterHeaders, aliasGroups, normalize) };
+export function inspectRosterWorkbook(input: Uint8Array | ArrayBuffer): RosterWorkbook {
+  return inspectWorkbook(input instanceof Uint8Array ? input : new Uint8Array(input), rosterHeaders, aliasGroups, normalize);
+}
+
+export async function readRoster(input: Uint8Array | ArrayBuffer, filename: string, options?: { sheetName?: string }): Promise<Roster> {
+  if (/\.xlsx$/i.test(filename)) {
+    const workbook = inspectRosterWorkbook(input);
+    return { sheets: options?.sheetName === undefined
+      ? workbook.sheetNames.map((name) => workbook.readSheet(name)) : [workbook.readSheet(options.sheetName)] };
+  }
   if (!/\.csv$/i.test(filename)) throw new Error('unsupported-roster');
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   const parsed = Papa.parse<string[]>(decodeCsv(bytes), { dynamicTyping: false, skipEmptyLines: true });
   // Papa reports delimiter uncertainty for legitimate single-column CSVs.
   if (parsed.errors.some((error) => error.code !== 'UndetectableDelimiter')) throw new Error('invalid-csv');

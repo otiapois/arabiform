@@ -1,8 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, type PDFPage } from 'pdf-lib';
+import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFStream, type PDFPage } from 'pdf-lib';
 import { beforeAll, expect, it } from 'vitest';
 import { createMergedPdf, type MergeCoverOptions } from '../../src/core/pdf';
+import { createCustodyManifest, sha256 } from '../../src/core/audit/custody';
+import { imposeRecordPages, impositionLayout } from '../../src/core/pdf/imposition';
+import { createBatchProcessor } from '../../src/core/worker/batch';
 
 const key = PDFName.of;
 const decoder = new TextDecoder();
@@ -49,6 +52,68 @@ function fullFontSize(page: PDFPage, resource: string) {
   if (!(file instanceof PDFRawStream)) throw new Error('Missing cover font');
   return decodePDFRawStream(file).decode().length;
 }
+
+it('packs selected rows in roster order, shares a physical sheet in the bilingual index and fingerprints the exact worksheet', async () => {
+  const template = sources[0]!;
+  const roster = await readFile('fixtures/m13/multi-sheet-roster.xlsx');
+  const batch = createBatchProcessor();
+  const rows = ['00123', '00007', '00042', '00009', '00025'].map((ID) => ({ ID }));
+  const checked = await batch({ phase: 'preflight', input: { template, roster, rows, sheetName: 'Roster_AR', options: preflight } }, () => {});
+  expect(checked && 'custody' in checked && JSON.parse(createCustodyManifest(checked.custody))).toEqual({
+    version: 1, templateSha256: await sha256(template), rosterSha256: await sha256(roster), sheetName: 'Roster_AR',
+  });
+  const filenames = rows.map(({ ID }) => `${ID}.pdf`);
+  const result = await batch({ phase: 'merged', imposition: '2-up', rowSelection: [5, 2, 4, 5],
+    coverSheet: { templateName, locale: 'en', coverLanguage: 'bilingual', filenames } }, () => {});
+  if (!result || !('bytes' in result)) throw new Error('Missing batch output');
+  const pdf = await PDFDocument.load(result.bytes);
+  expect(pdf.getPageCount()).toBe(3);
+  expect(readCover(pdf.getPage(0)).map(({ text }) => text).slice(-12)).toEqual([
+    '1', '2', '00007.pdf', '2', '2', '4', '00009.pdf', '2', '3', '5', '00025.pdf', '3',
+  ]);
+  expect(readCover(pdf.getPage(0)).map(({ text }) => text)).toEqual(expect.arrayContaining(['Sheets', 'الأوراق']));
+  expect(pdf.catalog.has(key('AcroForm'))).toBe(false);
+  for (const [index, page] of pdf.getPages().slice(1).entries()) {
+    expect(page.getRotation().angle).toBe(0);
+    expect(page.node.Annots()?.size() ?? 0).toBe(0);
+    const records = page.node.Resources()!.lookup(key('XObject'), PDFDict);
+    expect(records.keys()).toHaveLength(2 - index);
+    expect(records.keys().every((name) => records.lookup(name, PDFStream).dict.get(key('Subtype')) === key('Form'))).toBe(true);
+  }
+});
+
+it('checks the extreme aspect ratio candidates and only permits 2-up for printable single-page records', async () => {
+  expect(impositionLayout(1000, 250).layout).toEqual({ width: 841.89, height: 595.28, sideBySide: false });
+  expect(impositionLayout(250, 1000).layout).toEqual({ width: 595.28, height: 841.89, sideBySide: true });
+  const rows = [{ filename: 'record.pdf', pdfBytes: sources[1]! }];
+  expect((await PDFDocument.load(await createMergedPdf(rows))).getPageCount()).toBe(2);
+  await expect(createMergedPdf(rows, undefined, undefined, undefined, undefined, '2-up')).rejects.toThrow('imposition-requires-single-page');
+
+  const annotated = await PDFDocument.load(sources[0]!);
+  annotated.getPage(0).node.addAnnot(annotated.context.register(annotated.context.obj({
+    Type: 'Annot', Subtype: 'Text', Rect: [10, 10, 20, 20], F: 4,
+  })));
+  const annotatedRows = [{ filename: 'annotated.pdf', pdfBytes: await annotated.save() }];
+  expect((await PDFDocument.load(await createMergedPdf(annotatedRows))).getPage(0).node.Annots()?.size()).toBe(1);
+  await expect(createMergedPdf(annotatedRows, undefined, undefined, undefined, undefined, '2-up')).rejects.toThrow('imposition-unsupported-print-annotation');
+});
+
+it('rejects overflowing or collapsed record geometry even when it occupies the second slot', async () => {
+  for (const [width, height] of [[1e-320, 1e-320], [1e-16, 1e12], [1e12, 1e-16]] as const) {
+    expect(() => impositionLayout(width, height)).toThrow('imposition-invalid-page-geometry');
+  }
+  expect(Number.isFinite(impositionLayout(1e-150, 1e-150).slots[0].scale)).toBe(true);
+
+  for (const [width, height, userUnit] of [[1e-320, 1e-320, 1], [1e-16, 1e12, 1], [1e-308, 1e-308, 1e300]] as const) {
+    const sample = await PDFDocument.create();
+    const pages = ([[160, 120, 1], [width, height, userUnit]] as const).map(([width, height, userUnit]) => {
+      sample.addPage([width, height]);
+      return { width, height, userUnit, rotation: 0,
+        printBounds: [0, 0, width, height] as const, visibleBox: { x: 0, y: 0, width, height } };
+    });
+    await expect(imposeRecordPages(sample, pages)).rejects.toThrow('imposition-invalid-page-geometry');
+  }
+});
 
 it.each([1, 25, 80])('creates a complete printable index for %i mixed-page rows', async (count) => {
   const rows = Array.from({ length: count }, (_, index) => ({

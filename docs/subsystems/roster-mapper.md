@@ -3,6 +3,9 @@
 ## Responsibilities
 - Pure browser- and Node-compatible TypeScript module.
 - Accepts `.csv` via native `TextDecoder` and `papaparse`. Encodings include UTF-8 with or without a BOM, Windows-1252, UTF-16LE, and BOM-marked UTF-16BE. The `.xlsx` reader uses `fflate` and `fast-xml-parser` to read OOXML cells and workbook sheets, preserving source text and supported number formats.
+- **Visible Excel Worksheets**
+  - `inspectRosterWorkbook` inspects workbook metadata and exposes exact, case-sensitive worksheet names in workbook order. Hidden and `veryHidden` sheets and chart sheets are excluded. `readSheet()` defaults to the first visible worksheet. `readSheet(name)` uses the exact workbook name and validates that worksheet independently. A workbook with no visible worksheets or a request for an unavailable worksheet fails with `invalid-xlsx`.
+  - A blank worksheet has no roster rows. Invalid headers fail with `invalid-roster-headers` for the selected worksheet, and the workbook's other visible worksheets remain available to choose. Roster column, row, and source-cell coordinates refer to the selected sheet. [Workbench selection and draft matching](web-preview-seo.md)
 - **Strict Leading-Zero Protection**:
   - CSV: Parse all cells strictly as strings (`dynamicTyping: false`). Never coerce `"00123"` -> `123`.
   - XLSX: Read formatted string/raw text cells without stripping leading zeros; detect and surface an explicit warning (`excel-scientific-notation-warning`) if an Excel cell already contains corrupted scientific notation (`1.23457E+11`) or numeric cells in an ID/phone/zip column so users catch Excel damage before printing!

@@ -3,6 +3,7 @@ import type { ExportScope } from '../worker/row-selection';
 export interface CustodySources {
   templateSha256: string;
   rosterSha256: string;
+  sheetName?: string;
 }
 
 export interface CustodyEntry {
@@ -29,17 +30,18 @@ export async function sha256(bytes: Uint8Array | ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function hashCustodySources(template: Uint8Array | ArrayBuffer, roster: Uint8Array | ArrayBuffer): Promise<CustodySources> {
+export async function hashCustodySources(template: Uint8Array | ArrayBuffer, roster: Uint8Array | ArrayBuffer, sheetName?: string): Promise<CustodySources> {
   const [templateSha256, rosterSha256] = await Promise.all([sha256(template), sha256(roster)]);
-  return { templateSha256, rosterSha256 };
+  return { templateSha256, rosterSha256, ...(sheetName !== undefined && { sheetName }) };
 }
 
 export function createCustodyManifest(
-  { templateSha256, rosterSha256 }: CustodySources, { entries, mergedPdfSha256 }: CustodyOutputs = {},
+  { templateSha256, rosterSha256, sheetName }: CustodySources, { entries, mergedPdfSha256 }: CustodyOutputs = {},
   scope?: ExportScope,
 ): string {
   const manifest: CustodyManifest = {
     version: 1, templateSha256, rosterSha256,
+    ...(sheetName !== undefined && { sheetName }),
     ...(scope && { exportScope: scope.exportScope, selectedRowNumbers: scope.selectedRowNumbers }),
     ...(entries && { entries: entries.map(({ filename, sha256, bytes }) => ({ filename, sha256, bytes })) }),
     ...(mergedPdfSha256 && { mergedPdfSha256 }),

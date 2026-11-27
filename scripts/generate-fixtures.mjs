@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fontkit from '@pdf-lib/fontkit';
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import {
   PDFDocument, PDFHexString, PDFName, PDFOperator, PDFOperatorNames as Op, PDFString,
   StandardFonts, beginText, degrees, endMarkedContent, endText, popGraphicsState, pushGraphicsState, rgb,
@@ -208,9 +208,9 @@ function worksheet(rows) {
       if (typeof value === 'object') {
         if ('formula' in value) {
           const cached = value.cached === undefined ? '' : `<v>${value.cached}</v>`;
-          return `<c r="${reference}" t="b"><f>${value.formula}</f>${cached}</c>`;
+          return `<c r="${reference}" t="${value.type ?? 'b'}"><f>${value.formula}</f>${cached}</c>`;
         }
-        const style = value.scientific ? ' s="1"' : '';
+        const style = value.scientific ? ' s="1"' : value.padded ? ' s="2"' : '';
         return `<c r="${reference}"${style}><v>${value.number}</v></c>`;
       }
       const escaped = value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\n', '&#10;');
@@ -261,6 +261,42 @@ function workbook(rows) {
 
   const files = Object.fromEntries(Object.entries(archive).map(([name, contents]) => [name, strToU8(`<?xml version="1.0" encoding="UTF-8"?>\n${contents}`)]));
   // fflate uses local date fields for DOS timestamps.
+  return zipSync(files, { mtime: new Date(2020, 0, 1, 0, 0, 0), level: 6 });
+}
+
+function multiSheetRoster() {
+  const files = unzipSync(workbook([['Topic', 'Value'], ['Synthetic Sample', 'Open Roster_AR for the print rows']]));
+  const change = (path, edit) => { files[path] = strToU8(edit(strFromU8(files[path]))); };
+  const sheets = [
+    { name: 'Internal', type: 'worksheet', directory: 'worksheets', state: 'hidden' },
+    { name: 'Summary', type: 'worksheet', directory: 'worksheets', state: 'visible' },
+    { name: 'Results chart', type: 'chartsheet', directory: 'chartsheets' },
+    { name: 'Roster_AR', type: 'worksheet', directory: 'worksheets' },
+    { name: 'Private notes', type: 'worksheet', directory: 'worksheets', state: 'veryHidden' },
+  ].map((sheet, index) => ({ ...sheet, id: index + 1, path: `${sheet.directory}/sheet${index + 1}.xml` }));
+  change('xl/workbook.xml', (xml) => xml.replace(/<sheets>[\s\S]*<\/sheets>/, `<sheets>${sheets.map(({ id, name, state }) =>
+    `<sheet name="${name}" sheetId="${id}" r:id="rId${id}"${state ? ` state="${state}"` : ''}/>`).join('')}</sheets>`));
+  change('xl/_rels/workbook.xml.rels', () => `<Relationships xmlns="${packageNs}">${sheets.map(({ id, type, path }) =>
+    `<Relationship Id="rId${id}" Type="${relationshipsNs}/${type}" Target="${path}"/>`).join('')}
+    <Relationship Id="rId6" Type="${relationshipsNs}/styles" Target="styles.xml"/>
+  </Relationships>`);
+  change('[Content_Types].xml', (xml) => xml.replace(/\s*<Override PartName="\/xl\/worksheets\/sheet[12]\.xml"[^>]*\/>/g, '')
+    .replace('</Types>', `${sheets.map(({ type, path }) =>
+      `<Override PartName="/xl/${path}" ContentType="${contentTypePrefix}.${type}+xml"/>`).join('')}</Types>`));
+  change('xl/styles.xml', (xml) => xml.replace('<numFmts count="1">', '<numFmts count="2">')
+    .replace('</numFmts>', '<numFmt numFmtId="165" formatCode="00000"/></numFmts>')
+    .replace('<cellXfs count="2">', '<cellXfs count="3">')
+    .replace('</cellXfs>', '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'));
+  files['xl/worksheets/sheet2.xml'] = files['xl/worksheets/sheet1.xml'];
+  files['xl/worksheets/sheet1.xml'] = strToU8(worksheet([['ID'], ['00001']]));
+  files['xl/chartsheets/sheet3.xml'] = strToU8(`<chartsheet xmlns="${spreadsheetNs}"><sheetViews><sheetView workbookViewId="0"/></sheetViews></chartsheet>`);
+  files['xl/worksheets/sheet4.xml'] = strToU8(worksheet([
+    headings,
+    ['ليلى حسن', '00123', 'Visitor badge', 'Synthetic Sample'],
+    ['أحمد سالم', { number: '7', padded: true }, 'Visitor badge', 'Synthetic Sample'],
+    ['بَنِي يَمَن', '00042', 'Visitor badge', { formula: '"Approved"', cached: 'Approved', type: 'str' }],
+  ]));
+  files['xl/worksheets/sheet5.xml'] = strToU8(worksheet([['ID'], ['00002']]));
   return zipSync(files, { mtime: new Date(2020, 0, 1, 0, 0, 0), level: 6 });
 }
 
@@ -522,9 +558,10 @@ const fixtures = {
   'm4/multi-page-hr-choices.pdf': await multiPageChoices(),
   'm4/multi-page-hr-choices.csv': csv(choiceRows),
   'm4/multi-page-hr-choices.xlsx': workbook(choiceRows),
+  'm13/multi-sheet-roster.xlsx': multiSheetRoster(),
 };
 
-if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {

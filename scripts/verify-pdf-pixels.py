@@ -443,6 +443,130 @@ def check_qr_stamp(spec, directory):
     return {"pdf": spec["pdf"], "zip": spec["zip"], "coverPagesUnchanged": cover, "pages": pages}
 
 
+def record_boxes(width, height):
+    # Recalculate placement from the reference page's displayed dimensions.
+    candidates = []
+    for paper_width, paper_height, across in ((841.89, 595.28, True), (595.28, 841.89, False),
+                                              (595.28, 841.89, True), (841.89, 595.28, False)):
+        columns, rows = (2, 1) if across else (1, 2)
+        column_width = (paper_width - 36 - (columns - 1) * 18) / columns
+        row_height = (paper_height - 36 - (rows - 1) * 18) / rows
+        scale = min(column_width / width, row_height / height)
+        x = 18 + (column_width - width * scale) / 2
+        y = 18 + (row_height - height * scale) / 2
+        dx, dy = (column_width + 18, 0) if across else (0, row_height + 18)
+        candidates.append((scale, paper_width, paper_height, [(x, y), (x + dx, y + dy)]))
+    return max(candidates, key=lambda candidate: candidate[0])
+
+
+def pixel_box(x0, y0, x1, y1):
+    return math.floor(x0 * 4), math.floor(y0 * 4), math.ceil(x1 * 4), math.ceil(y1 * 4)
+
+
+def cut_mark_boxes(x, y, right, bottom):
+    for xx, dx in ((x, -1), (right, 1)):
+        for yy, dy in ((y, -1), (bottom, 1)):
+            start, end = sorted((xx + dx * 2, xx + dx * 7))
+            yield pixel_box(start - 0.5, yy - 0.5, end + 0.5, yy + 0.5)
+            start, end = sorted((yy + dy * 2, yy + dy * 7))
+            yield pixel_box(xx - 0.5, start - 0.5, xx + 0.5, end + 0.5)
+
+
+def check_imposed_record(image, source, scale, box, spec, index):
+    width, _, pixels = image
+    x, y, right, bottom = box
+    source_pixmap = source.get_pixmap(matrix=fitz.Matrix(scale * 4, 0, 0, scale * 4, x * 4, y * 4), alpha=False)
+    left_px, top_px, right_px, bottom_px = pixel_box(x, y, right, bottom)
+    assert abs(source_pixmap.x - left_px) <= 1 and abs(source_pixmap.y - top_px) <= 1
+    assert abs(source_pixmap.x + source_pixmap.width - right_px) <= 1 and abs(source_pixmap.y + source_pixmap.height - bottom_px) <= 1
+    reference = source_pixmap.samples
+    ink = 0
+    changed = 0
+    for line in range(source_pixmap.height):
+        offset = line * source_pixmap.width * CHANNELS
+        baseline = reference[offset:offset + source_pixmap.width * CHANNELS]
+        offset = ((source_pixmap.y + line) * width + source_pixmap.x) * CHANNELS
+        actual = pixels[offset:offset + source_pixmap.width * CHANNELS]
+        baseline_red, actual_red = baseline[::CHANNELS], actual[::CHANNELS]
+        ink += sum(baseline_red.translate(DARK_PIXELS))
+        if actual != baseline:
+            changed += sum(abs(old - new) > 48 for old, new in zip(baseline_red, actual_red, strict=True))
+    assert ink > 500 and changed < ink * 0.10, (spec["pdf"], index, "imposed source ink differs", ink, changed)
+    modules = spec["modules"][index]
+    size = len(modules)
+    stamp = spec["sizePt"] * scale
+    cell = stamp / (size + 8)
+    inset = 9 * scale
+    stamp_x = right - inset - stamp if spec["corner"].endswith("right") else x + inset
+    stamp_y = bottom - inset - stamp if spec["corner"].startswith("bottom") else y + inset
+    assert cell * 4 > 2
+    for row in range(-4, size + 4):
+        for col in range(-4, size + 4):
+            px = math.floor((stamp_x + (col + 4.5) * cell) * 4)
+            py = math.floor((stamp_y + (row + 4.5) * cell) * 4)
+            offset = (py * width + px) * CHANNELS
+            dark = 0 <= row < size and 0 <= col < size and modules[row][col]
+            assert pixels[offset:offset + CHANNELS] == (b"\x00" if dark else b"\xff") * CHANNELS, (
+                spec["pdf"], index, "QR module or quiet zone differs", col, row)
+    return {"sourceRotation": source.rotation, "boundsAt4x": [left_px, top_px, right_px, bottom_px],
+            "referenceInkPixels": ink, "strongInkDiffAt4x": changed, "exactQrModules": size * size,
+            "exactQrPayload": spec["payloads"][index]}
+
+
+def check_imposition(spec, directory):
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    with fitz.open(directory / spec["pdf"]) as doc, fitz.open(directory / spec["referencePdf"]) as reference:
+        cover_count = spec["coverPages"]
+        records = spec["filenames"]
+        assert len(doc) == cover_count + math.ceil(len(records) / 2)
+        assert len(reference) == cover_count + len(records)
+        index_cells = []
+        for page in list(doc)[:cover_count]:
+            headings = [bytes.fromhex(value.decode("ascii")).decode("utf-16")
+                        for value, _ in COVER_SPAN.findall(page.read_contents())]
+            assert "Sheets" in headings and "الأوراق" in headings
+            index_cells += headings[headings.index("الأوراق") + 1:]
+            assert not list(page.widgets()) and not page.get_images() and not page.get_xobjects()
+            assert not any(span["opacity"] < 1 for span in page.get_texttrace()), "cover was watermarked"
+            check_cover_ink(page, None)
+            check_bilingual_panel_ink(page)
+        assert index_cells == [cell for index, (number, name) in enumerate(zip(spec["rowNumbers"], records, strict=True))
+                               for cell in (str(index + 1), str(number), name, str(cover_count + 1 + index // 2))]
+        sheets = []
+        for sheet_index, page in enumerate(list(doc)[cover_count:]):
+            first = sheet_index * 2
+            sources = [reference[cover_count + index] for index in range(first, min(first + 2, len(records)))]
+            source_page = sources[0]
+            scale, paper_width, paper_height, positions = record_boxes(source_page.rect.width, source_page.rect.height)
+            assert abs(page.rect.width - paper_width) < 0.01 and abs(page.rect.height - paper_height) < 0.01
+            assert not list(page.widgets()) and not page.get_images()
+            assert len([entry for entry in page.get_xobjects() if entry[2] == 0]) == len(sources)
+            image = render(page)
+            w, h, rgb = image
+            allowed = []
+            slot_proofs = []
+            for slot, (source, (x, y)) in enumerate(zip(sources, positions)):
+                right, bottom = x + source.rect.width * scale, y + source.rect.height * scale
+                if allowed:
+                    _, _, last_right, last_bottom = allowed[0]
+                    assert last_right < x * 4 or last_bottom < y * 4, (spec["pdf"], "record boxes overlap")
+                allowed.append(pixel_box(x, y, right, bottom))
+                slot_proofs.append(check_imposed_record(image, source, scale, (x, y, right, bottom), spec, first + slot))
+                for left, top, r, b in cut_mark_boxes(x, y, right, bottom):
+                    assert sum(value < 200 for line in range(top, b)
+                               for value in rgb[(line * w + left) * CHANNELS:(line * w + r) * CHANNELS:CHANNELS]) >= 12
+                    allowed.append((left, top, r, b))
+                assert any(0.20 < span["opacity"] < 0.24 and
+                           fitz.Rect(x, y, right, bottom).contains(fitz.Rect(span["bbox"]))
+                           for span in page.get_texttrace()), (spec["pdf"], first + slot, "vector watermark missing from slot")
+            assert_same_outside((w, h, b"\xff" * (w * h * CHANNELS)), image, allowed, spec["pdf"])
+            sheets.append({"sheet": cover_count + sheet_index + 1, "records": slot_proofs,
+                           "cutLines": 8 * len(sources), "blankSlots": 2 - len(sources), "pixelsOutsideRecordsAndCutLines": 0})
+    warnings = fitz.TOOLS.mupdf_warnings(reset=True)
+    assert not warnings, f"{spec['pdf']}: MuPDF emitted warnings: {warnings}"
+    return {"pdf": spec["pdf"], "coverPages": cover_count, "exactCoverIndexRows": len(records), "sheets": sheets}
+
+
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
     arguments.add_argument("manifest", nargs="?", type=Path, default=Path("test-results/pdf-pixels/manifest.json"))
@@ -460,11 +584,12 @@ def main():
     zipped = check_zip(manifest["choiceZip"], path.parent) if manifest.get("choiceZip") else 0
     watermarks = [check_watermark(spec, path.parent) for spec in manifest.get("watermarkProofs", [])]
     qr_proofs = [check_qr_stamp(spec, path.parent) for spec in manifest.get("qrProofs", [])]
+    imposition_proofs = [check_imposition(spec, path.parent) for spec in manifest.get("impositionProofs", [])]
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "flattenedZipPagesPixelIdentical": zipped,
-        "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs,
+        "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs, "impositionProofs": imposition_proofs,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -486,6 +611,10 @@ def main():
         stamped = [page for proof in qr_proofs for page in proof["pages"]]
         checked_modules = sum(page["verifiedModules"] for page in stamped)
         print(f"QR: {len(stamped)} identical merged/ZIP stamped pages, {checked_modules} exact modules, 4-module quiet zones, 0 clipped or outside-change pixels.")
+    if imposition_proofs:
+        sheets = [sheet for proof in imposition_proofs for sheet in proof["sheets"]]
+        print(f"2-up: {len(sheets)} A4 sheets, {sum(len(sheet['records']) for sheet in sheets)} vector stamped records "
+              f"with exact QR rasters, {sum(sheet['cutLines'] for sheet in sheets)} cut lines, 0 outside ink.")
 
 
 if __name__ == "__main__":

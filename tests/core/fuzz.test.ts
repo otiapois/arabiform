@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { posix, resolve, win32 } from 'node:path';
 import fontkit, { type Font } from '@pdf-lib/fontkit';
 import fc, { type IAsyncProperty } from 'fast-check';
-import { unzipSync } from 'fflate';
+import { unzipSync, zipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -14,6 +14,7 @@ import { createAudit, createFlattenedZip, createZip, getWidgetOverlays, inspectC
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { createGeneratedZip } from '../../src/core/pdf/exports';
+import { impositionLayout } from '../../src/core/pdf/imposition';
 import { inspectPrintMargins } from '../../src/core/pdf/margin-preflight';
 import { coverTableLayout, paginateCoverRows } from '../../src/core/pdf/merge-cover';
 import { encodeQr, resolveQrPayload } from '../../src/core/pdf/qr-encoder';
@@ -23,7 +24,7 @@ import { createShaper, fitText } from '../../src/core/pdf/shaping';
 import { watermarkLayout } from '../../src/core/pdf/watermark';
 import { createBatchProcessor } from '../../src/core/worker/batch';
 import { resolveRowSelection } from '../../src/core/worker/row-selection';
-import { makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
+import { inspectRosterWorkbook, makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
 
@@ -60,7 +61,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(15_000);
+  expect(acceptedCases).toBeGreaterThanOrEqual(20_000);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1233,4 +1234,128 @@ describe('seeded QR codewords, rotated print stamps and bilingual covers', () =>
         expect(index).toBe(rows.length);
       }), 800);
   }, 30_000);
+});
+
+describe('seeded independent Excel tabs, two-up geometry and v8 presets', () => {
+  it('checks 1,700 workbooks with shuffled visible and suppressed worksheets using exact stored values', async () => {
+    const inputs = fc.record({
+      order: fc.shuffledSubarray([0, 1, 2, 3, 4], { minLength: 5, maxLength: 5 }),
+      name: fc.constantFrom('Roster_AR', 'الموظفون', 'العربية & English', 'Roster “A”', "O'Reilly staff", '  Roster  '),
+      id: fc.integer({ min: 0, max: 9_999 }),
+      physicalRow: fc.integer({ min: 2, max: 1_048_576 }),
+      idType: fc.constantFrom('text', 'padded', 'number', 'scientific', 'uncached'),
+      summary: fc.constantFrom('valid', 'duplicates', 'blank', 'missing'),
+    });
+    await verify(fc.asyncProperty(inputs, async ({ order, name, id, physicalRow, idType, summary }) => {
+      const inline = (text: string, ref: string) => `<c t="inlineStr" r="${ref}"><is><t>${text}</t></is></c>`;
+      const worksheet = (name: string, contents: string) => `<worksheet><sheetData><row r="1">${inline(name, 'A1')}${contents}</sheetData></worksheet>`;
+      const idText = String(id).padStart(5, '0');
+      const scientific = `${id}E+11`;
+      const reference = `A${physicalRow}`;
+      const cell = idType === 'text' ? inline(idText, reference) : idType === 'padded' ? `<c r="${reference}" s="1"><v>${id}</v></c>`
+        : idType === 'number' ? `<c r="${reference}"><v>${id}</v></c>`
+          : `<c r="${reference}"><f>1+2</f>${idType === 'scientific' ? `<v>${scientific}</v>` : ''}</c>`;
+      const names = ['Summary', name, 'Internal', 'Confidential', 'Dashboard chart'];
+      const parts = {
+        'xl/workbook.xml': `<workbook><sheets>${order.map((index) =>
+          `<sheet name="${names[index]!.replaceAll('&', '&amp;')}" id="${index}"${[' state="visible"', '', ' state="hidden"', ' state="veryHidden"', ''][index]}/>`).join('')}</sheets></workbook>`,
+        'xl/_rels/workbook.xml.rels': `<Relationships>${[0, 1, 2, 3, 4].map((index) =>
+          `<Relationship Id="${index}" Target="sheet${index}.xml" Type="urn:/${index === 4 ? 'chartsheet' : 'worksheet'}"/>`).join('')}</Relationships>`,
+        'xl/styles.xml': '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="00000"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>',
+        'xl/sheet1.xml': worksheet('ID', `</row><row r="${physicalRow}">${cell}</row>`),
+        'xl/sheet2.xml': '<broken/>', 'xl/sheet3.xml': '<broken/>', 'xl/sheet4.xml': '<chartsheet/>',
+        ...(summary !== 'missing' && { 'xl/sheet0.xml': summary === 'blank' ? '<worksheet><sheetData/></worksheet>'
+          : worksheet('Topic', summary === 'duplicates' ? `${inline('ＴＯＰＩＣ', 'B1')}</row>` : '</row>') }),
+      };
+      const bytes = zipSync(Object.fromEntries(Object.entries(parts).map(([path, xml]) => [path, encoder.encode(xml)])), { level: 0 });
+      const workbook = inspectRosterWorkbook(bytes);
+      expect(workbook.sheetNames).toEqual(order.filter((index) => index < 2).map((index) => names[index]));
+      const switchTo = workbook.readSheet(name);
+      const error = summary === 'duplicates' ? 'invalid-roster-headers' : summary === 'missing' ? 'invalid-xlsx' : undefined;
+      if (error) expect(() => workbook.readSheet('Summary')).toThrow(error);
+      else expect(workbook.readSheet('Summary').headers).toEqual(summary === 'blank' ? [] : ['Topic']);
+      if (workbook.sheetNames[0] === name) expect(workbook.readSheet()).toEqual(switchTo);
+      else if (error) expect(() => workbook.readSheet()).toThrow(error);
+      else expect(workbook.readSheet().name).toBe('Summary');
+      expect(await readRoster(bytes, 'x.XLSX', { sheetName: name })).toEqual({ sheets: [switchTo] });
+      expect(() => workbook.readSheet('Internal')).toThrow('invalid-xlsx');
+      expect(() => workbook.readSheet('Confidential')).toThrow('invalid-xlsx');
+      expect(() => workbook.readSheet('Dashboard chart')).toThrow('invalid-xlsx');
+      expect(switchTo.name).toBe(name);
+      expect(switchTo.rows[0]?.values.ID).toBe(idType === 'scientific' ? scientific : idType === 'uncached' ? '' : idType === 'number' ? String(id) : idText);
+      const source = { row: physicalRow, column: 'A' };
+      const expectedWarnings = [
+        ...(idType === 'number' ? [{ column: 'ID', source, code: 'excel-numeric-identifier-warning' }] : []),
+        ...(idType === 'scientific' ? [{ column: 'ID', source, code: 'excel-scientific-notation-warning' }] : []),
+        ...(idType === 'scientific' || idType === 'uncached'
+          ? [{ column: 'ID', source, code: 'excel-formula-warning', formulaHasCachedValue: idType === 'scientific' }] : []),
+      ];
+      expect(switchTo.rows[0]?.warnings).toEqual(expectedWarnings);
+    }), 1_700);
+  }, 40_000);
+
+  it('checks 1,800 optimized pairs with margins, fixed order, odd slots and cover sheet offsets', async () => {
+    await verify(fc.asyncProperty(
+      fc.constantFrom(1, 2, 3, 25, 81), fc.integer({ min: 20, max: 1900 }), fc.integer({ min: 20, max: 1900 }),
+      fc.constantFrom(0, 90, 180, 270), fc.constantFrom(0.5, 1, 1.25, 2, 4),
+      fc.integer({ min: 18, max: 45 }), fc.integer({ min: 90, max: 670 }), fc.integer({ min: 20, max: 200 }),
+      async (count, w, h, rotation, unit, height, capacity, continuation) => {
+        const [width, pageHeight] = rotation % 180 ? [h * unit, w * unit] : [w * unit, h * unit];
+        const { layout, slots } = impositionLayout(width, pageHeight);
+        const possibleScales = [
+          [393.945, 559.28], [559.28, 393.945], [270.64, 805.89], [805.89, 270.64],
+        ].map(([w, h]) => Math.min(w! / width, h! / pageHeight));
+        const scale = Math.max(...possibleScales);
+        for (const slot of slots) {
+          expect(slot.scale).toBeCloseTo(scale, 10);
+          expect(slot.width / slot.height).toBeCloseTo(width / pageHeight, 10);
+          expect(slot.x).toBeGreaterThanOrEqual(18 - 1e-9);
+          expect(slot.y).toBeGreaterThanOrEqual(18 - 1e-9);
+          expect(slot.x + slot.width).toBeLessThanOrEqual(layout.width - 18 + 1e-9);
+          expect(slot.y + slot.height).toBeLessThanOrEqual(layout.height - 18 + 1e-9);
+        }
+        if (layout.sideBySide) {
+          expect(slots[1].x - (slots[0].x + slots[0].width)).toBeGreaterThanOrEqual(18 - 1e-9);
+          expect(slots[0].y).toBe(slots[1].y);
+        } else {
+          expect(slots[0].y - (slots[1].y + slots[1].height)).toBeGreaterThanOrEqual(18 - 1e-9);
+          expect(slots[0].x).toBe(slots[1].x);
+        }
+        const rows = Array.from({ length: count }, (_, index) => ({ height: height + index % 3, pageCount: 1 }));
+        const covers = paginateCoverRows(rows, capacity, capacity + continuation, 20, '2-up');
+        const index = covers.flat();
+        expect(index).toHaveLength(count);
+        index.forEach((entry, index) => {
+          const expectedSheet = covers.length + Math.trunc(index / 2) + 1;
+          expect(entry).toMatchObject({ index, startPage: expectedSheet, endPage: expectedSheet });
+        });
+        const final = index.at(-1)!;
+        expect(final.endPage - covers.length).toBe(Math.ceil(count / 2));
+        expect(index.filter(({ endPage }) => endPage === final.endPage)).toHaveLength(count % 2 ? 1 : 2);
+      }), 1_800);
+  }, 40_000);
+
+  it('checks 1,600 exact v1–v8 preset roundtrips and rejects mismatched print settings', async () => {
+    const modes = fc.constantFrom('1-up', '2-up');
+    const typography = fc.constantFrom('auto', 'latin', 'arabic');
+    const languages = fc.constantFrom('auto', 'en', 'ar', 'bilingual');
+    const invalidLayout = fc.constantFrom('duplex', 'two-up', 2, null, true, undefined, ['2-up'], { value: '2-up' });
+    await verify(fc.asyncProperty(modes, typography, languages, invalidLayout, fc.integer({ min: 600, max: 1000 }),
+      fc.boolean(), fc.boolean(), fc.string({ minLength: 1, maxLength: 20 }), async (imposition, font, coverLanguage, invalid, minimum, flattenZip, includeCoverSheet, name) => {
+        const v1 = { version: 1, filenamePattern: `${name}-{{ID}}`, mapping: { Record: 'ID' }, font, minFontSize: minimum / 100 };
+        const v2 = { ...v1, version: 2, flattenZip };
+        const v3 = { ...v2, version: 3, includeCoverSheet };
+        const v4 = { ...v3, version: 4, alignOverrides: { Record: 'center' } };
+        const v5 = { ...v4, version: 5, watermark: { kind: 'draft-ar', opacity: 0.22, angle: -45 } };
+        const v6 = { ...v5, version: 6, virtualMappings: { Serial: { column: 'PADDED_ROW_001', template: 'AR-{{PADDED_ROW_001}}' } } };
+        const v7 = { ...v6, version: 7, coverLanguage, qrStamp: { placement: 'top-right', sizePt: 54, pattern: '{{ID}}' } };
+        const v8 = { ...v7, version: 8, imposition };
+        for (const preset of [v1, v2, v3, v4, v5, v6, v7, v8]) {
+          expect(validateMappingPreset(JSON.parse(JSON.stringify(preset)))).toEqual(preset);
+        }
+        expect(validateMappingPreset({ ...v8, imposition: invalid })).toBeUndefined();
+        expect(validateMappingPreset({ ...v7, imposition })).toBeUndefined();
+        expect(validateMappingPreset({ ...v7, version: 8 })).toBeUndefined();
+      }), 1_600);
+  }, 40_000);
 });

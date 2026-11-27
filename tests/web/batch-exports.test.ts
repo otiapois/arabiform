@@ -32,10 +32,11 @@ describe('preparing browser-local print downloads', () => {
       payloads: [null, 'CERT-00007-physical-0002-2026-05-02', 'CERT-00123-0003-0003-2026-05-02'],
     };
     const filenames = ['1.pdf', '2.pdf', '3.pdf'];
-    await buildDownload('zip', client, onProgress, source, [], output, subset, isCurrent);
-    await buildDownload('merged', client, onProgress, source, [], output, subset, isCurrent);
+    const imposed = { ...output, imposition: '2-up' } as const;
+    await buildDownload('zip', client, onProgress, source, [], imposed, subset, isCurrent);
+    await buildDownload('merged', client, onProgress, source, [], imposed, subset, isCurrent);
     expect(client.zip).toHaveBeenCalledWith(filenames, onProgress, true, undefined, [2, 3], request);
-    expect(client.merged).toHaveBeenCalledWith(onProgress, { ...output.cover, filenames }, undefined, [2, 3], request);
+    expect(client.merged).toHaveBeenCalledWith(onProgress, { ...output.cover, filenames }, undefined, [2, 3], request, '2-up');
   });
 
   it('blocks an invalid print row before invoking the worker and leaves editable ZIP usable', async () => {

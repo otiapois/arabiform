@@ -19,6 +19,6 @@ export async function loadSampleWorkflow(workflow: SampleWorkflow, openedAt: Dat
   const [info, data] = await Promise.all([engine.inspectTemplate(bytes), parser.readRoster(rosterBytes, sample.roster)]);
   return {
     template: { name: sample.pdf, bytes, info, overlays: engine.getWidgetOverlays(info) },
-    roster: { name: sample.roster, bytes: rosterBytes, data, engine: parser, virtual, localDate: virtual.localVirtualDate(openedAt) },
+    roster: { name: sample.roster, bytes: rosterBytes, sheet: data.sheets[0], engine: parser, virtual, localDate: virtual.localVirtualDate(openedAt) },
   };
 }

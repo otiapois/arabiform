@@ -13,7 +13,7 @@ export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './e
 export { matchChoice } from './choice-match';
 export type { FieldChoice } from './choice-match';
 export { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } from './custom-font';
-export type { AuditRow, PdfExportRow, PrintWatermarkOptions } from './exports';
+export type { AuditRow, Imposition, PdfExportRow, PrintWatermarkOptions } from './exports';
 export type { MergeCoverOptions } from './merge-cover';
 export { PdfIntakeError } from './template';
 export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } from './template';

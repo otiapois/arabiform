@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { decodePDFRawStream, degrees, rgb, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
-import { makeFilenames, readRoster } from '../src/core/roster';
+import { inspectRosterWorkbook, makeFilenames, readRoster } from '../src/core/roster';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, virtualFilenameToken } from '../src/core/roster/virtual-columns';
 import { createBatchProcessor } from '../src/core/worker/batch';
 import { encodeQr, resolveQrPayload } from '../src/core/pdf/qr-encoder';
@@ -612,6 +612,59 @@ for (const [corner, sizePt, payload] of [
   qrProofs.push({ pdf, plainPdf, zip, member: row.filename, coverPages: 1, corner, sizePt, modules: symbol.modules });
 }
 
+const impositionWorkbook = inspectRosterWorkbook(await readFile(asset('fixtures/m13/multi-sheet-roster.xlsx')));
+assert.deepEqual(impositionWorkbook.sheetNames, ['Summary', 'Roster_AR']);
+assert.equal(impositionWorkbook.readSheet().name, 'Summary');
+const impositionRoster = impositionWorkbook.readSheet('Roster_AR').rows.map(({ values }) => values);
+assert.deepEqual(impositionRoster.map(({ ID }) => ID), ['00123', '00007', '00042']);
+const impositionProofs = [];
+for (const [kind, rotation] of [['portrait', 0], ['rotated-landscape', 90]] as const) {
+  const template = await PDFDocument.create();
+  const source = template.addPage([305, 410]);
+  source.setRotation(degrees(rotation));
+  source.setMediaBox(-18, -8, 305, 410);
+  if (rotation) {
+    source.setCropBox(-27, 14, 260, 354);
+    source.node.set(key('UserUnit'), template.context.register(template.context.obj(1.5)));
+  } else {
+    source.setCropBox(12, 10, 270, 355);
+  }
+  source.drawRectangle({ x: 5, y: 27, width: 30, height: 15, color: rgb(0.72, 0.21, 0.18) });
+  source.drawRectangle({ x: 47, y: 287, width: 103, height: 6, color: rgb(0.03, 0.25, 0.39) });
+  const form = template.getForm();
+  form.createTextField('Name').addToPage(source, { x: 48, y: 185, width: 133, height: 24 });
+  form.createTextField('ID').addToPage(source, { x: 48, y: 142, width: 80, height: 21 });
+  const sourceBytes = Buffer.from(await template.save());
+  const rows = [];
+  for (const [index, values] of impositionRoster.entries()) {
+    rows.push(await passingCase(sourceBytes, { Name: values.Name!, ID: values.ID! }, `m13-${kind}-source-${index + 1}.pdf`,
+      `M13 ${kind}, record ${index + 1}`));
+  }
+  const payloads = impositionRoster.map(({ ID, Name }) => `BADGE-${ID} ${Name}`);
+  const modules = payloads.map((payload) => {
+    const symbol = encodeQr(payload);
+    proveQrMatrix(symbol, payload);
+    return symbol.modules;
+  });
+  const corner = 'bottom-right';
+  const sizePt = 54;
+  const watermark = { settings: { kind: 'draft-ar', opacity: 0.22, angle: -45 } as const, fonts: settings.fonts };
+  const qrStamp: QrPrintRequest = { placement: corner, sizePt, payloads };
+  const cover = { locale: 'bilingual', templateName: `Visitor badge ${kind}.pdf`, exportedAt: new Date(2026, 10, 27),
+    preflight: settings, rowNumbers: [1, 2, 3], flagged: 0, skipped: 0 } as const;
+  const spec = { pdf: `m13-${kind}-imposed.pdf`, referencePdf: `m13-${kind}-record-reference.pdf`,
+    coverPages: 1, filenames: rows.map(({ filename }) => filename), rowNumbers: cover.rowNumbers, corner, sizePt, modules, payloads };
+  const imposed = await createMergedPdf(rows, undefined, cover, watermark, qrStamp, '2-up');
+  const reference = await createMergedPdf(rows, undefined, cover, watermark, qrStamp);
+  const imposedDoc = await PDFDocument.load(imposed);
+  assert.equal(imposedDoc.getPageCount(), 3);
+  assert.equal((await PDFDocument.load(reference)).getPageCount(), 4);
+  assert(!imposedDoc.catalog.has(key('AcroForm')));
+  await writeFile(resolve(root, spec.pdf), imposed);
+  await writeFile(resolve(root, spec.referencePdf), reference);
+  impositionProofs.push(spec);
+}
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -651,5 +704,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);
