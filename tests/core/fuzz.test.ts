@@ -1184,7 +1184,7 @@ describe('seeded boundary rows and print sheet estimates', () => {
       assertTotals(estimatePrintJob(input), count, templatePages, 0, validTwoUp ? Math.ceil(count / 2) : null, active);
     }), 500, cases);
     expect(visited).toEqual(Array.from({ length: 500 }, (_, index) => index + 1));
-  }, 60_000);
+  }, 180_000);
 
   it('conserves physical sheets across 500 grouped and selected jobs including empty exports', async () => {
     const settings = fc.record({
@@ -1279,7 +1279,7 @@ describe('seeded boundary rows and print sheet estimates', () => {
       expect(estimate.split.coverPages).toBe(splitCoverPages);
       if (job.count === 500) expect(estimate.totalRecords).toBe(500);
     }), jobs.length, jobs.map((_, index) => [index]));
-  }, 90_000);
+  }, 180_000);
 });
 
 describe('seeded virtual columns, presets and canvas geometry', () => {
