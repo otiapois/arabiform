@@ -9,7 +9,7 @@ const source = {
 };
 const output: OutputSettings = {
   filenamePlans: source.rows.map((_, index) => ({ filename: `${index + 1}.pdf`, filenameAdjusted: false })),
-  rowSelection: [2, 3], flattenZip: true,
+  rowSelection: [2, 3], flattenZip: true, groupingBlocked: false,
   cover: { locale: 'ar', templateName: 'source.pdf', coverLanguage: 'bilingual' },
   qrStamp: { placement: 'bottom-right', sizePt: 48, pattern: 'CERT-{{ID}}-{{PADDED_ROW_001}}-[[@PADDED_ROW_001]]-[[@TODAY_ISO]]' },
 };
@@ -20,6 +20,7 @@ function worker() {
   return {
     zip: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), entries: [] }),
     merged: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), mergedPdfSha256: 'digest' }),
+    split: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), groupByColumn: 'Clinic', groups: [] }),
   };
 }
 
