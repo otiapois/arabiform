@@ -18,6 +18,7 @@ const copy = {
     failed: 'Extraction could not finish. Choose the files again to retry.',
     processing: 'Extracting PDF forms',
     results: 'Extraction results',
+    tableRegion: 'Extracted PDF fields',
     source: 'Source file',
     state: 'Status',
     digest: 'SHA-256',
@@ -64,6 +65,7 @@ const copy = {
     failed: 'تعذّر إكمال الاستخراج. اختر الملفات مجدداً لإعادة المحاولة.',
     processing: 'جارٍ استخراج بيانات النماذج',
     results: 'نتائج الاستخراج',
+    tableRegion: 'حقول ملفات PDF المستخرجة',
     source: 'الملف الأصلي',
     state: 'الحالة',
     digest: 'SHA-256',
@@ -152,7 +154,7 @@ function ExtractionResults({ result, labels }: { result: ExtractBatchResult; lab
         {([[labels.total, rows.length], [labels.extracted, extracted], [labels.warnings, warnings], [labels.blocked, rows.length - extracted - warnings]] as const)
           .map(([label, count]) => <div key={label}><dt>{label}</dt><dd><bdi dir="ltr">{count}</bdi></dd></div>)}
       </dl>
-      <div className="table-scroll" role="region" aria-labelledby="extract-results-heading" tabIndex={0}>
+      <div className="table-scroll" role="region" aria-label={labels.tableRegion} tabIndex={0}>
         <table aria-labelledby="extract-results-heading" data-testid="extract-results">
           <thead><tr>
             <th scope="col">{labels.source}</th>
