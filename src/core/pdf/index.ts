@@ -17,6 +17,7 @@ export type { AuditRow, PdfExportRow, PrintWatermarkOptions } from './exports';
 export type { MergeCoverOptions } from './merge-cover';
 export { PdfIntakeError } from './template';
 export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } from './template';
+export { getWidgetOverlays, type WidgetOverlay } from './widget-overlays';
 
 export type DiagnosticCode = 'too-narrow' | 'too-low' | 'exceeds-maxlen' | 'unsupported-glyph' | 'widget-rotated-unsupported'
   | 'missing-required' | 'unknown-field' | 'no-widget' | 'readonly-field' | 'unsupported-field-mode' | 'unsupported-line-break'

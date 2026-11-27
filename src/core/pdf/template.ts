@@ -19,6 +19,7 @@ export interface WidgetMetadata {
   innerWidth: number | null;
   innerHeight: number | null;
   usable: boolean;
+  visibleInPreview: boolean;
   printBounds?: RectangleBounds;
 }
 
@@ -204,10 +205,11 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         const da = widget.dict.lookup(key('DA'));
         const widgetAppearance = da instanceof PDFString || da instanceof PDFHexString ? da.decodeText() : appearance;
         const linked = widget.dict === canonical || widget.dict.lookupMaybe(key('Parent'), PDFDict) === canonical;
+        const visibleInPreview = pageIndex >= 0 && linked && !(flags & (1 | 2 | 32));
         const usable = Boolean(crop && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
           && rect.x >= crop.x - 0.01 && rect.y >= crop.y - 0.01
           && rect.x + rect.width <= crop.x + crop.width + 0.01 && rect.y + rect.height <= crop.y + crop.height + 0.01
-          && linked && !(flags & (1 | 2 | 32)) && !(pageRotation && flags & 16) && pageRotation % 90 === 0);
+          && visibleInPreview && !(pageRotation && flags & 16) && pageRotation % 90 === 0);
         const legacyBorder = widget.dict.lookupMaybe(key('Border'), PDFArray);
         const border = Math.max(0, widget.getBorderStyle()?.getWidth()
           ?? (legacyBorder && legacyBorder.size() >= 3 ? Number(legacyBorder.get(2).toString()) : 0));
@@ -215,7 +217,7 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         const quarterTurn = rotation === 90 || rotation === 270;
         const supportedGeometry = rotation % 90 === 0 && [rect.width, rect.height, padding].every(Number.isFinite);
         const meta: WidgetMetadata = {
-          ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance), usable,
+          ...rect, pageIndex, rotation, defaultFontSize: fontSize(widgetAppearance), usable, visibleInPreview,
           printBounds: rawRect && readBounds(rawRect),
           innerWidth: supportedGeometry ? Math.max(0, (quarterTurn ? rect.height : rect.width) - 2 * padding) : null,
           innerHeight: supportedGeometry ? Math.max(0, (quarterTurn ? rect.width : rect.height) - 2 * padding) : null,

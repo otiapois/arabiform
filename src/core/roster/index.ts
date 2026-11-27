@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 import { readWorkbook } from './xlsx';
 
-export { makeFilenames, planFilenames, type FilenamePlan } from './filenames';
+export { hasVirtualFilenameToken, makeFilenames, planFilenames, type FilenamePlan } from './filenames';
 
 export type RosterWarningCode = 'excel-scientific-notation-warning' | 'excel-numeric-identifier-warning' | 'excel-formula-warning' | 'excel-cell-error-warning' | 'excel-number-format-warning';
 

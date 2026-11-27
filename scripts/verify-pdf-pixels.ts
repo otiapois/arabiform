@@ -6,6 +6,7 @@ import { decodePDFRawStream, degrees, PDFArray, PDFCheckBox, PDFDict, PDFDocumen
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import { makeFilenames, readRoster } from '../src/core/roster';
+import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, virtualFilenameToken } from '../src/core/roster/virtual-columns';
 import { createBatchProcessor } from '../src/core/worker/batch';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
@@ -238,6 +239,22 @@ for (const { name, label, values } of m2Cases) {
   m2TemplateResults.push(result);
 }
 assert.equal(new Set(m2TemplateResults.map(({ sha256 }) => sha256)).size, 8);
+
+const virtualSource = await readFile(asset('fixtures/m2/hr-onboarding.pdf'));
+const virtualDate = localVirtualDate(new Date(2026, 10, 27, 0, 1));
+const virtualFilenames = makeFilenames([{}, {}], `m11-${virtualFilenameToken('PADDED_ROW_001')}.pdf`, { localDate: virtualDate });
+assert.deepEqual(virtualFilenames, ['m11-0001.pdf', 'm11-0002.pdf']);
+for (const [index, serial] of ['0001', '0002'].entries()) {
+  const rowNumber = index + 1;
+  const inputs = {
+    Name: resolveVirtualMapping({ column: 'PADDED_ROW_001', template: 'CERT-{{PADDED_ROW_001}}' }, rowNumber, virtualDate),
+    'Employee ID': resolveVirtualColumn('PADDED_ROW_001', rowNumber, virtualDate),
+    'Start Date': resolveVirtualColumn('TODAY_AR', rowNumber, virtualDate),
+  };
+  await passingCase(virtualSource, inputs, virtualFilenames[index]!, `M11 virtual serial ${serial} and Arabic-Indic date`, settings.minFontSize, {
+    expected: { Name: `CERT-${serial}`, 'Employee ID': serial, 'Start Date': '٢٠٢٦-١١-٢٧' },
+  });
+}
 
 const consent = await readFile(asset('fixtures/m3/clinic-consent-mixed.pdf'));
 const roster3 = await readRoster(await readFile(asset('fixtures/m3/clinic-consent-roster.csv')), 'roster.csv');

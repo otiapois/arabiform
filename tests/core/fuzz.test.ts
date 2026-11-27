@@ -9,7 +9,8 @@ import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexStri
 import { afterAll, describe, expect, it } from 'vitest';
 import { createCustodyManifest, hashCustodySources, sha256 } from '../../src/core/audit/custody';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
-import { createAudit, createFlattenedZip, createZip, inspectCustomFont, inspectTemplate, matchChoice, preflightRow, type AlignOverride } from '../../src/core/pdf';
+import { validateMappingPreset } from '../../src/core/draft/mapping-preset';
+import { createAudit, createFlattenedZip, createZip, getWidgetOverlays, inspectCustomFont, inspectTemplate, matchChoice, preflightRow, prepareRowPreflight, type AlignOverride } from '../../src/core/pdf';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { createGeneratedZip } from '../../src/core/pdf/exports';
@@ -21,6 +22,7 @@ import { createBatchProcessor } from '../../src/core/worker/batch';
 import { resolveRowSelection } from '../../src/core/worker/row-selection';
 import { makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
+import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
 
 const seed = 0x4a216d32;
 const encoder = new TextEncoder();
@@ -53,6 +55,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
+  expect(acceptedCases).toBeGreaterThanOrEqual(12_000);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -740,7 +743,7 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
     });
     await verify(fc.asyncProperty(geometry, async ({ innerWidth, innerHeight, maxLength, multiline, min }) => {
       const widget = { x: 0, y: 0, width: innerWidth + 3.2, height: innerHeight + 3.2,
-        rotation: 0, defaultFontSize: 12, usable: true, innerWidth, innerHeight, pageIndex: 0 };
+        rotation: 0, defaultFontSize: 12, usable: true, visibleInPreview: true, innerWidth, innerHeight, pageIndex: 0 };
       const report = await inspectTemplateCapacities({
         pages: [{ width: 300, height: 100, rotation: 0, visibleBox: { x: 0, y: 0, width: 300, height: 100 },
           printBounds: [0, 0, 300, 100], userUnit: 1 }],
@@ -810,7 +813,7 @@ describe('seeded custody receipts and physical print margins', () => {
           expect(changed).not.toBe(sources.templateSha256);
         }
       }), 800);
-  });
+  }, 15_000);
 
   it('checks 300 ZIP receipts against extracted PDF bytes and rejects device names and traversal before generation', async () => {
     const templates = await Promise.all([120, 160, 200].map(async (width) => {
@@ -1005,4 +1008,118 @@ describe('seeded subset exports', () => {
           mergedPdfSha256: digest(merged.bytes) });
     }), 60);
   }, 30_000);
+});
+
+describe('seeded virtual columns, presets and canvas geometry', () => {
+  it('checks 650 computed row/date values, exact padding and nonrecursive filename tokens', async () => {
+    const originalRow = fc.oneof(fc.constantFrom(1, 9, 10, 500, 9999, 10_000), fc.integer({ min: 1, max: 10_000 }));
+    const calendar = fc.record({ year: fc.integer({ min: 1990, max: 2100 }), month: fc.integer({ min: 1, max: 12 }), day: fc.integer({ min: 1, max: 28 }) });
+    await verify(fc.asyncProperty(originalRow, calendar, fc.constantFrom(...VIRTUAL_COLUMNS), fc.boolean(), async (row, { year, month, day }, id, nearMidnight) => {
+      const pad2 = (part: number) => part < 10 ? `0${part}` : String(part);
+      const date = `${year}-${pad2(month)}-${pad2(day)}`;
+      const snapshot = localVirtualDate(new Date(year, month - 1, day, nearMidnight ? 0 : 23, nearMidnight ? 1 : 59));
+      expect(snapshot).toBe(date);
+      const expected = (row: number) => ({ ROW_INDEX: String(row), PADDED_ROW_001: row < 10_000 ? String(10_000 + row).slice(1) : String(row),
+        TODAY_ISO: date, TODAY_AR: Array.from(date, (part) => part === '-' ? part : String.fromCharCode(part.charCodeAt(0) - 48 + 0x0660)).join('') });
+      expect(Object.fromEntries(VIRTUAL_COLUMNS.map((column) => [column, resolveVirtualColumn(column, row, snapshot)])))
+        .toEqual(expected(row));
+      const value = expected(row)[id];
+      const pattern = `CERT-{{${id}}}-v1`;
+      expect(resolveVirtualMapping({ column: id, template: pattern }, row, snapshot)).toBe(`CERT-${value}-v1`);
+      const token = virtualFilenameToken(id);
+      const rows = [{ [id]: 'real', [token]: 'raw', Literal: token }, { [id]: 'real', [token]: 'raw', Literal: token }];
+      const filenames = planFilenames(rows, `{{${id}}}-{{${token}}}-{{Literal}}-${token}.pdf`, { localDate: snapshot });
+      const wanted = [1, 2].map((position) => `real-raw-${token}-${expected(position)[id]}.pdf`);
+      // Dates repeat within the snapshot, preserving the original collision order.
+      if (id === 'TODAY_ISO' || id === 'TODAY_AR') wanted[1] = wanted[1]!.replace(/\.pdf$/, '-2.pdf');
+      expect(filenames.map(({ filename }) => filename)).toEqual(wanted);
+    }), 650);
+  });
+
+  it('checks 400 real PDF widget projections across rotated, shifted visible boxes', async () => {
+    const geometry = fc.record({ x: fc.integer({ min: -400, max: 400 }), y: fc.integer({ min: -400, max: 400 }),
+      quarterTurns: fc.integer({ min: 0, max: 3 }), shiftX: fc.integer({ min: -130, max: 190 }), shiftY: fc.integer({ min: -110, max: 160 }),
+      crop: fc.constantFrom('inside', 'partial', 'disjoint'), flags: fc.constantFrom(0, 0, 0, 1, 2, 16, 32) });
+    await verify(fc.asyncProperty(geometry, async ({ x, y, quarterTurns, shiftX, shiftY, crop, flags }) => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([160, 140]);
+      page.setMediaBox(x, y, 160, 140);
+      page.setRotation(degrees(quarterTurns * 90));
+      const visible: [number, number, number, number] = crop === 'inside' ? [x + 10, y + 20, x + 145, y + 125]
+        : crop === 'partial' ? [x + 10, y, x + 160, y + 100] : [x, y, x + 160, y + 140];
+      if (crop === 'inside') page.setCropBox(x + 10, y + 20, 135, 105);
+      else if (crop === 'partial') page.setCropBox(x + 10, y - 15, 230, 115);
+      else page.setCropBox(x + 180, y + 160, 100, 100);
+      const field = doc.getForm().createTextField('Text');
+      field.addToPage(page, { x: x + shiftX, y: y + shiftY, width: 30, height: 20, borderWidth: 0 });
+      field.acroField.getWidgets()[0]!.dict.set(key('F'), PDFNumber.of(flags));
+      const metadata = await inspectTemplate(await doc.save());
+      const overlays = getWidgetOverlays(metadata);
+      const [left, bottom, right, top] = visible;
+      const [wx, wy] = [x + shiftX, y + shiftY];
+      const clipped = [Math.max(left, wx), Math.max(bottom, wy), Math.min(right, wx + 30), Math.min(top, wy + 20)] as const;
+      if (flags & 35 || clipped[2] <= clipped[0] || clipped[3] <= clipped[1]) {
+        expect(overlays).toEqual([]);
+        return;
+      }
+      const screenPoint = (px: number, py: number) => {
+        let [sx, sy] = [(px - left) / (right - left), (top - py) / (top - bottom)];
+        for (let turn = 0; turn < quarterTurns; turn++) [sx, sy] = [1 - sy, sx];
+        return [sx, sy] as const;
+      };
+      const [sx1, sy1] = screenPoint(clipped[0], clipped[1]);
+      const [sx2, sy2] = screenPoint(clipped[2], clipped[3]);
+      const expected = [Math.min(sx1, sx2), Math.min(sy1, sy2), Math.abs(sx2 - sx1), Math.abs(sy2 - sy1)];
+      expect(overlays).toEqual([{ pageNumber: 1, fieldName: 'Text', widgetIndex: 1, rect: expect.any(Array) }]);
+      expect(overlays[0]!.rect.every((component) => component >= 0 && component <= 1)).toBe(true);
+      for (const [index, component] of overlays[0]!.rect.entries()) expect(component).toBeCloseTo(expected[index]!, 12);
+    }), 400);
+  }, 30_000);
+
+  it('checks 260 v1–v6 preset roundtrips and corrupted virtual or physical bindings', async () => {
+    const corruption = fc.constantFrom('unknown-id', 'bad-template', 'extra-key', 'physical-conflict', 'orphan-alignment');
+    await verify(fc.asyncProperty(fc.constantFrom(...VIRTUAL_COLUMNS), fc.string({ maxLength: 28 }), corruption, async (id, literal, corrupt) => {
+      const affix = literal.replace(/[{}]/g, '');
+      const token = virtualFilenameToken(id);
+      const basic = { version: 1, mapping: { Physical: id, Other: token }, filenamePattern: `{{${token}}}.pdf`, minFontSize: 8, font: 'auto' };
+      const v2 = { ...basic, version: 2, flattenZip: true };
+      const v3 = { ...v2, version: 3, includeCoverSheet: true };
+      const v4 = { ...v3, version: 4, alignOverrides: { Physical: 'ltr' } };
+      const v5 = { ...v4, version: 5, watermark: { kind: 'none' } };
+      const v6 = { ...v5, version: 6, filenamePattern: `{{${token}}}-${token}.pdf`, alignOverrides: { ...v4.alignOverrides, Computed: 'rtl' },
+        virtualMappings: { Computed: { column: id, template: `${affix}{{${id}}}${affix}` } } };
+      for (const preset of [basic, v2, v3, v4, v5, v6]) expect(validateMappingPreset(JSON.parse(JSON.stringify(preset)))).toEqual(preset);
+      const bad = {
+        'unknown-id': { virtualMappings: { Computed: { column: token } } },
+        'bad-template': { virtualMappings: { Computed: { column: id, template: `{{${id}}}{{${id}}}` } } },
+        'extra-key': { virtualMappings: { Computed: { column: id, name: 'extra' } } },
+        'physical-conflict': { mapping: { ...v6.mapping, Computed: id } },
+        'orphan-alignment': { virtualMappings: {} },
+      };
+      expect(validateMappingPreset({ ...v6, ...bad[corrupt] })).toBeUndefined();
+    }), 260);
+  });
+
+  it('checks 160 actual preflights that distinguish virtual prefix /MaxLen and ink overflow', async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([180, 155]);
+    const form = doc.getForm();
+    const serial = form.createTextField('Limited');
+    serial.setMaxLength(4);
+    serial.addToPage(page, { x: 20, y: 85, width: 100, height: 20 });
+    form.createTextField('Narrow').addToPage(page, { x: 20, y: 55, width: 30, height: 20 });
+    const fonts = { arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'), latin: await readFile('public/fonts/NotoSans-Regular.ttf') };
+    const check = await prepareRowPreflight(await doc.save(), { fonts });
+    await verify(fc.asyncProperty(fc.integer({ min: 1, max: 9999 }), fc.integer({ min: 10, max: 60 }), async (rowNumber, length) => {
+      const localDate = '2026-11-27';
+      const column = 'PADDED_ROW_001';
+      const value = resolveVirtualMapping({ column }, rowNumber, localDate);
+      const prefixed = resolveVirtualMapping({ column, template: `${'W'.repeat(length)}{{PADDED_ROW_001}}` }, rowNumber, localDate);
+      expect((await check({ Limited: value, Narrow: value })).status).toBe('pass');
+      expect(await check({ Limited: prefixed, Narrow: prefixed })).toMatchObject({ status: 'flagged', diagnostics: [
+        { field: 'Limited', code: 'exceeds-maxlen', maxLengthExcess: length },
+        { field: 'Narrow', code: 'too-narrow', widgetIndex: 0, pageNumbers: [1] },
+      ] });
+    }), 160);
+  }, 15_000);
 });

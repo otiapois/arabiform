@@ -1,5 +1,6 @@
 import { isAlignOverride, type AlignOverride } from '../pdf/alignment';
 import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
+import { isVirtualColumnId, validateVirtualTemplate, type VirtualColumnMapping } from '../roster/virtual-columns';
 
 export type FontMode = 'auto' | 'arabic' | 'latin';
 
@@ -18,12 +19,13 @@ export type MappingPresetV4 = PresetSettings & {
 };
 
 export type MappingPresetV5 = Omit<MappingPresetV4, 'version'> & { version: 5; watermark: WatermarkSettings };
+export type MappingPresetV6 = Omit<MappingPresetV5, 'version'> & { version: 6; virtualMappings: Record<string, VirtualColumnMapping> };
 
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -33,8 +35,26 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+function validateVirtualMappings(value: unknown, mapping: PresetSettings['mapping']): MappingPresetV6['virtualMappings'] | undefined {
+  if (!isRecord(value)) return undefined;
+  const bindings: [string, VirtualColumnMapping][] = [];
+  for (const [field, binding] of Object.entries(value)) {
+    if (!field.trim() || Object.hasOwn(mapping, field) && mapping[field] || !isRecord(binding)
+      || !Object.hasOwn(binding, 'column') || !isVirtualColumnId(binding.column)) return undefined;
+    const { column, template } = binding;
+    if (Object.hasOwn(binding, 'template')) {
+      if (Object.keys(binding).length !== 2 || typeof template !== 'string' || !validateVirtualTemplate(column, template)) return undefined;
+      bindings.push([field, { column, template }]);
+    } else {
+      if (Object.keys(binding).length !== 1) return undefined;
+      bindings.push([field, { column }]);
+    }
+  }
+  return Object.fromEntries(bindings);
+}
+
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5)
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6)
     || Object.keys(data).length !== presetKeys.length + data.version - 1
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
@@ -60,13 +80,19 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (!Object.hasOwn(data, 'includeCoverSheet') || typeof includeCoverSheet !== 'boolean') return undefined;
   if (data.version === 3) return { version: 3, ...settings, flattenZip, includeCoverSheet };
   if (!Object.hasOwn(data, 'alignOverrides') || !isRecord(data.alignOverrides)) return undefined;
+  if (data.version === 6 && !Object.hasOwn(data, 'virtualMappings')) return undefined;
+  const virtualMappings = data.version === 6 ? validateVirtualMappings(data.virtualMappings, settings.mapping) : undefined;
   const alignOverrides: [string, AlignOverride][] = [];
   for (const [field, mode] of Object.entries(data.alignOverrides)) {
-    if (!isAlignOverride(mode) || !Object.hasOwn(settings.mapping, field) || !settings.mapping[field]) return undefined;
+    const mapped = Object.hasOwn(settings.mapping, field) && settings.mapping[field]
+      || virtualMappings && Object.hasOwn(virtualMappings, field);
+    if (!isAlignOverride(mode) || !mapped) return undefined;
     alignOverrides.push([field, mode]);
   }
   const printSettings = { ...settings, flattenZip, includeCoverSheet, alignOverrides: Object.fromEntries(alignOverrides) };
   if (data.version === 4) return { version: 4, ...printSettings };
   const watermark = Object.hasOwn(data, 'watermark') && validateWatermarkSettings(data.watermark);
-  if (watermark) return { version: 5, ...printSettings, watermark };
+  if (!watermark) return undefined;
+  if (data.version === 5) return { version: 5, ...printSettings, watermark };
+  if (virtualMappings) return { version: 6, ...printSettings, watermark, virtualMappings };
 }
