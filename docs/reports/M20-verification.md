@@ -1,6 +1,6 @@
 # ArabiForm v2.0.0 本机独立验收
 
-M20 通过本机独立验收。用户可以让同一行的 Notes 输出 `٠٠١٢٣`、ID 输出 `00123`，保存行距与内边距设置，并在预览、压平和打印时使用双语审批章。章与控件或 QR 相撞时，界面和 CLI 均阻止带章导出。冻结主线的单元测试 202/202、真实 Edge 150/150，固定种子测试接受 37,904 条。下文记录了PyMuPDF 1.26.7 对特定压平页抽取全文的限制。[正式门禁与命令](../../test-results/m20-evidence/qa-formal.json)
+M20 通过本机独立验收。用户可以让同一行的 Notes 输出 `٠٠١٢٣`、ID 输出 `00123`，保存行距与内边距设置，并在预览、压平和打印时使用双语审批章。章与控件或 QR 相撞时，界面和 CLI 均阻止带章导出。冻结主线的单元测试 202/202、真实 Edge 150/150，固定种子测试接受 37,904 条。PyMuPDF 1.26.7 对特定压平页的全文抽取限制在 M19 中也可复现。[正式门禁与命令](../../test-results/m20-evidence/qa-formal.json)
 
 ## 英文与阿语工作台
 
@@ -35,3 +35,9 @@ M20 通过本机独立验收。用户可以让同一行的 Notes 输出 `٠٠١�
 - Windows 沙箱的 tsx 获取用户信息时返回 `uv_os_get_passwd ENOMEM`。像素与 CLI 原日志均保留了启动退出码 1。在获准的本机环境以同一冻结 SHA 和 D 盘输入重跑，整个像素命令退出 0，CLI 成功与两种碰撞场景的退出码分别为 0、2、2。[首次像素日志](../../test-results/m20-evidence/qa-pixels.log) · [本机像素运行](../../test-results/m20-evidence/qa-pixels-native.json) · [首次 CLI 日志](../../test-results/m20-evidence/qa-cli-frozen-ready.log) · [本机 CLI](../../test-results/m20-evidence/cli-native-summary.json)
 
 三条新增经验各有一次独立发生记录。Windows tsx 的既有经验累计 15 个周期，沿用已发布的恢复标准。[经验及证据](../../LESSONS.md) · [代码标准](../code-standards.md)
+
+## 主线收尾
+
+61 个核心源文件的 DOM、网络和文件系统 API 扫描命中数均为 0。锁文件只调整版本号。冻结后的提交范围为验收报告与经验记录。[核心源码与依赖核查](../../test-results/m20-evidence/lead-core-invariants.json) · [主执行端独立 Edge 复算](../../test-results/m20-evidence/lead-edge-recount.json)
+
+四个工作树及其临时分支全部清理，D 盘 `.arabiform-wt` 已移除。Git 仅登记 `main`，本机预览端口 42882 和 42926 均已关闭。夹具属性再次核对为原 Git 对象 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[清理回执](../../test-results/m20-evidence/lead-worktree-cleanup.json)
