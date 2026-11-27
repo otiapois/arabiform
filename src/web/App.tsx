@@ -10,13 +10,15 @@ const MappingRows = lazy(() => import('./MappingRows'));
 const VirtualFilenameTokens = lazy(() => import('./MappingRows').then(({ VirtualFilenameTokens }) => ({ default: VirtualFilenameTokens })));
 const PresetWarnings = lazy(() => import('./MappingRows').then(({ PresetWarnings }) => ({ default: PresetWarnings })));
 const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
-const Diagnostics = lazy(() => import('./Diagnostics').then(({ Diagnostics }) => ({ default: Diagnostics })));
-const PdfPreview = lazy(() => import('./PdfPreview'));
+const WorkbenchPreview = lazy(() => import('./PdfPreview').then(({ WorkbenchPreview }) => ({ default: WorkbenchPreview })));
 const Hygiene = lazy(() => import('./Hygiene'));
 const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
 const CustodyPanel = lazy(() => import('./CustodyPanel'));
-const PrintMarginAdvisory = lazy(() => import('./PrintMarginAdvisory'));
 const ShortcutsDialog = lazy(() => import('./ShortcutsDialog'));
+const QrStampOptions = lazy(() => import('./QrStampOptions'));
+const CoverOptions = lazy(() => import('./CoverOptions'));
+const ExportError = lazy(() => import('./ExportError'));
+const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
 
 type AppProps = {
   arabic: boolean;
@@ -103,14 +105,6 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const { ready, flagged, customFont } = desk;
   const subset = desk.exportScope.exportScope === 'selected-subset';
   const emptySubset = subset && desk.exportCount === 0;
-  const selectedResult = desk.results?.[desk.selected];
-  const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
-  const textMapped = Object.keys(desk.virtualMappings).length > 0
-    || desk.fields.some(({ kind, name }) => (kind === 'text' || kind === 'dropdown') && desk.mapping[name]);
-  const missingCustomGlyphs = customFont?.status === 'ready'
-    && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
-  const fontCheck = !desk.results || !textMapped ? labels.customFontCoverage
-    : missingCustomGlyphs ? labels.customFontMissing : labels.customFontChecked;
   const custodyLabel = arabic
     ? <>نزّل بيان سلسلة الحيازة <bdi dir="ltr">(.json)</bdi></>
     : 'Download Custody Manifest (.json)';
@@ -261,14 +255,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       <small>{labels.customFontLocal}</small>
                       {customFont && <button type="button" className="text-button" data-testid="custom-font-clear" onClick={desk.clearCustomFont}>{labels.clearFont}</button>}
                     </div>
-                    {customFont?.status === 'ready' && (
-                      <small role="status" data-testid="custom-font-status">{fontCheck}</small>
-                    )}
-                    {customFont?.status === 'invalid' && (
-                      <p className="alert" role="alert" data-testid="custom-font-error">
-                        {customFont.maxMiB === undefined ? problem('invalid-custom-font')
-                          : fillLabel(labels.customFontTooLarge, { limit: customFont.maxMiB })}
-                      </p>
+                    {customFont && customFont.status !== 'loading' && (
+                      <Suspense><CustomFontFeedback customFont={customFont} desk={desk} arabic={arabic} /></Suspense>
                     )}
                   </div>
                   <label className="full-control">
@@ -289,14 +277,20 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     <span>{labels.includeCoverSheet}</span>
                   </label>
                   {desk.includeCoverSheet && (
-                    <label className="output-mode custody-cover-option">
-                      <input type="checkbox" data-testid="custody-cover-footer" checked={desk.includeCustody} disabled={desk.exporting}
-                        onChange={(event) => desk.changeIncludeCustody(event.currentTarget.checked)} />
-                      <span>{arabic ? 'أدرج بصمات الملفات المصدرية على صفحة الغلاف' : 'Include source fingerprints on cover sheet'}</span>
-                    </label>
+                    <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
+                      <CoverOptions desk={desk} arabic={arabic} />
+                    </Suspense>
                   )}
                   <WatermarkControls settings={desk.watermark} change={desk.changeWatermark} disabled={desk.exporting}
                     invalid={desk.watermarkBlocked} arabic={arabic} />
+                  <details className="qr-stamp" open={desk.qrOpen} onToggle={(event) => desk.setQrOpen(event.currentTarget.open)}>
+                    <summary data-testid="qr-stamp-toggle">{arabic ? 'رمز QR للطباعة (اختياري)' : 'Print QR stamp (optional)'}</summary>
+                    {desk.qrOpen && (
+                      <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
+                        <QrStampOptions desk={desk} arabic={arabic} />
+                      </Suspense>
+                    )}
+                  </details>
                   <div className="preset-controls">
                     <h3>{labels.preset}</h3>
                     <p className="quiet">{labels.presetHelp}</p>
@@ -306,11 +300,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                         <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
                           onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
                       </label>
-                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.watermarkBlocked || desk.virtualTemplateBlocked}
+                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.printSettingsBlocked || desk.virtualTemplateBlocked}
                         onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                     </div>
                     {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
-                    {desk.presetWarnings && <Suspense><PresetWarnings warnings={desk.presetWarnings} labels={labels} /></Suspense>}
+                    {desk.presetWarnings && <Suspense><PresetWarnings warnings={desk.presetWarnings} arabic={arabic} /></Suspense>}
                   </div>
                   {desk.template && desk.sheet && (
                     <Suspense>
@@ -322,35 +316,20 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             </div>
 
             <section id="preview" tabIndex={-1} className="panel preview" aria-labelledby="preview-heading">
-              <header className="preview-heading wide-heading">
-                <div>
-                  <h2 id="preview-heading">{labels.preview}</h2>
-                  <p>{selectedResult?.status === 'pass' ? labels.previewReady : selectedResult?.status === 'flagged' ? labels.previewFlagged : desk.template ? labels.previewTemplate : labels.previewHelp}</p>
-                </div>
-                {selectedResult && <span className={`tag tag-${selectedResult.status}`}>{fillLabel(labels.selected, { row: desk.selected + 1 })}</span>}
-              </header>
-              {desk.template && desk.hasMapping && (
-                <Suspense>
-                  <PrintMarginAdvisory template={desk.template.info} mapping={desk.mapping} virtualMappings={desk.virtualMappings} arabic={arabic} />
-                </Suspense>
-              )}
-              {!!selectedResult?.diagnostics.length && (
-                <div className="preview-diagnostics">
-                  <Suspense>
-                    <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
-                  </Suspense>
-                </div>
-              )}
               {desk.template
                 ? (
-                  <Suspense fallback={<div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>}>
-                    <PdfPreview bytes={bytes} fields={desk.template.info.fields} overlays={desk.template.overlays} diagnostics={selectedResult?.diagnostics}
-                      minSize={desk.minFontSize} unavailable={desk.previewError} language={language}
-                      fieldSelection={desk.fieldSelection} onWidgetSelect={desk.selectWidget}
-                      requestedPage={desk.previewPage} onPageChange={desk.setPreviewPage} />
+                  <Suspense fallback={<>
+                    <h2 className="preview-heading" id="preview-heading">{labels.preview}</h2>
+                    <div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>
+                  </>}>
+                    <WorkbenchPreview template={desk.template} desk={desk} language={language} />
                   </Suspense>
                 )
                 : (
+                  <>
+                  <header className="preview-heading wide-heading">
+                    <div><h2 id="preview-heading">{labels.preview}</h2><p>{labels.previewHelp}</p></div>
+                  </header>
                   <div className="preview-bed empty-preview" data-testid="empty-preview">
                     <div className="document-placeholder" aria-hidden="true">
                       <span className="document-title" />
@@ -362,6 +341,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     </div>
                     <p className="preview-message">{labels.previewEmpty}</p>
                   </div>
+                  </>
                 )}
             </section>
           </div>
@@ -385,9 +365,9 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               </p>
               {emptySubset && desk.results && <p className="alert warning" data-testid="export-subset-empty">{labels.exportSubsetEmpty}</p>}
               <div className="actions">
-                <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.watermarkBlocked)}
+                <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.printSettingsBlocked)}
                   onClick={() => desk.download('zip')}>{labels.zip}</button>
-                <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.watermarkBlocked}
+                <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
                   onClick={() => desk.download('merged')}>{labels.merged}</button>
               </div>
               <div className="actions audit-actions" role="group" aria-label={labels.audit}>
@@ -403,7 +383,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 ) : custodyPending}
               </div>
               {desk.exporting && <p role="status">{labels.exporting}</p>}
-              {desk.exportError && <p className="alert" role="alert">{problem(desk.exportError) ?? labels.exportError}</p>}
+              {desk.exportError && <Suspense><ExportError error={desk.exportError} language={language} /></Suspense>}
             </div>
           </section>
         </div>

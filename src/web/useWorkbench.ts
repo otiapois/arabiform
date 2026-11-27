@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { BatchDraft } from '../core/draft/batch-draft';
 import type { AlignOverride } from '../core/pdf/alignment';
+import { DEFAULT_QR_STAMP, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../core/pdf/qr-settings';
 import { DEFAULT_WATERMARK, validateWatermarkSettings, type WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
@@ -9,7 +10,7 @@ import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
 import type { FontMode, MappingPreset } from './presets';
-import { decodeBase64, errorCode, saveDownload } from './resources';
+import { errorCode, saveDownload } from './resources';
 import { useBatch } from './useBatch';
 
 type PdfEngine = typeof import('../core/pdf');
@@ -23,22 +24,14 @@ export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
 
 const emptyRows: SourceRow[] = [];
 const emptyFields: TemplateInfo['fields'] = [];
-const samples = {
-  workshop: {
-    load: () => import('virtual:arabiform/sample'), pdf: 'synthetic-acroform.pdf', roster: 'synthetic-roster.csv', pattern: '{{ID}}-{{Name}}.pdf',
-  },
-  clinic: {
-    load: () => import('virtual:arabiform/sample-clinic'), pdf: 'clinic-consent-mixed.pdf', roster: 'clinic-consent-roster.csv', pattern: '{{ID}}-{{Name}}.pdf',
-  },
-  hr: {
-    load: () => import('virtual:arabiform/sample-hr'), pdf: 'multi-page-hr-choices.pdf', roster: 'multi-page-hr-choices.csv', pattern: '{{Employee}}.pdf',
-  },
-  badge: {
-    load: () => import('virtual:arabiform/sample-badge'), pdf: 'landscape-badge.pdf', roster: 'badge-roster.csv', pattern: '{{Badge ID}}-{{Name}}.pdf',
-  },
+const samplePatterns = {
+  workshop: '{{ID}}-{{Name}}.pdf',
+  clinic: '{{ID}}-{{Name}}.pdf',
+  hr: '{{Employee}}.pdf',
+  badge: '{{Badge ID}}-{{Name}}.pdf',
 };
-type SampleWorkflow = keyof typeof samples;
-export const sampleWorkflows = Object.keys(samples) as SampleWorkflow[];
+export type SampleWorkflow = keyof typeof samplePatterns;
+export const sampleWorkflows = Object.keys(samplePatterns) as SampleWorkflow[];
 
 type CustomFont = { status: 'loading' } | { status: 'invalid'; maxMiB?: number } | {
   status: 'ready'; family: string; bytes: Uint8Array;
@@ -84,8 +77,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [pattern, setPattern] = useState('{{ID}}-{{Name}}.pdf');
   const [flattenZip, setFlattenZip] = useState(false);
   const [includeCoverSheet, setIncludeCoverSheet] = useState(false);
+  const [coverLanguage, setCoverLanguage] = useState<CoverLanguage>('auto');
   const [includeCustody, setIncludeCustody] = useState(false);
   const [watermark, setWatermark] = useState<WatermarkSettings>(DEFAULT_WATERMARK);
+  const [qrStamp, setQrStamp] = useState<QrStampSettings>(DEFAULT_QR_STAMP);
+  const [qrOpen, setQrOpen] = useState(false);
   const [presetError, setPresetError] = useState(false);
   const [presetCodec, setPresetCodec] = useState<typeof import('./presets')>();
 
@@ -130,6 +126,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined)
     : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template]);
   const watermarkBlocked = useMemo(() => !validateWatermarkSettings(watermark), [watermark]);
+  const qrSettingsBlocked = useMemo(() => !validateQrStampSettings(qrStamp), [qrStamp]);
+  const printSettingsBlocked = watermarkBlocked || qrSettingsBlocked;
 
   const virtualTemplateBlocked = Boolean(roster && Object.values(virtualMappings).some(({ column, template }) =>
     template && !roster.virtual.validateVirtualTemplate(column, template)));
@@ -142,11 +140,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked]);
   const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern, { localDate: roster.localDate }) ?? [], [roster, rows, pattern]);
   const templateName = template?.name;
+  const activeCoverLanguage = includeCoverSheet ? coverLanguage : 'auto';
   const output = useMemo(() => ({
     filenamePlans, flattenZip, rowSelection,
-    cover: includeCoverSheet && templateName ? { locale, templateName, includeCustody } : undefined,
+    cover: includeCoverSheet && templateName ? { locale, templateName, includeCustody, coverLanguage: activeCoverLanguage } : undefined,
     watermark: watermark.kind !== 'none' ? watermark : undefined,
-  }), [filenamePlans, flattenZip, rowSelection, includeCoverSheet, templateName, locale, includeCustody, watermark]);
+    qrStamp: qrStamp.placement !== 'none' ? qrStamp : undefined,
+  }), [filenamePlans, flattenZip, rowSelection, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, activeCoverLanguage]);
   const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output);
   const results = useMemo(() => job.results?.map((result, index): RowResult => ({
     ...result, ...filenamePlans[index]!,
@@ -236,7 +236,6 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   async function loadSample(workflow?: SampleWorkflow) {
     const selectedSample = workflow ?? 'workshop';
-    const sample = samples[selectedSample];
     const pdfId = ++request.current.pdf;
     const rosterId = ++request.current.roster;
     const openedAt = new Date();
@@ -249,11 +248,14 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setCustomFont(undefined);
       setMinFontSize(8);
       setFont('auto');
-      setPattern(sample.pattern);
+      setPattern(samplePatterns[selectedSample]);
       setFlattenZip(false);
       setIncludeCoverSheet(false);
+      setCoverLanguage('auto');
       setIncludeCustody(false);
       setWatermark(DEFAULT_WATERMARK);
+      setQrStamp(DEFAULT_QR_STAMP);
+      setQrOpen(false);
     }
     setPresetError(false);
     setTemplate(undefined);
@@ -263,20 +265,10 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setErrors({});
     setBusy({ pdf: true, roster: true });
     try {
-      const [assets, engine, parser, virtual] = await Promise.all([
-        sample.load(),
-        import('../core/pdf'),
-        import('../core/roster'),
-        import('../core/roster/virtual-columns'),
-      ]);
-      const bytes = decodeBase64(assets.template);
-      const rosterBytes = decodeBase64(assets.roster);
-      const [info, data] = await Promise.all([
-        engine.inspectTemplate(bytes),
-        parser.readRoster(rosterBytes, sample.roster),
-      ]);
-      if (request.current.pdf === pdfId) setTemplate({ name: sample.pdf, bytes, info, overlays: engine.getWidgetOverlays(info) });
-      if (request.current.roster === rosterId) setRoster({ name: sample.roster, bytes: rosterBytes, data, engine: parser, virtual, localDate: virtual.localVirtualDate(openedAt) });
+      const { loadSampleWorkflow } = await import('./sample-workflows');
+      const { template, roster } = await loadSampleWorkflow(selectedSample, openedAt);
+      if (request.current.pdf === pdfId) setTemplate(template);
+      if (request.current.roster === rosterId) setRoster(roster);
       if (request.current.pdf === pdfId && request.current.roster === rosterId) setLoadedSample(selectedSample);
     } catch (error) {
       if (request.current.pdf === pdfId) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
@@ -439,6 +431,20 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setWatermark(value);
   }
 
+  function changeQrStamp(value: QrStampSettings) {
+    if (exportLocked()) return;
+    clearExportError();
+    request.current.draft++;
+    setQrStamp(value);
+  }
+
+  function changeCoverLanguage(value: CoverLanguage) {
+    if (exportLocked()) return;
+    clearExportError();
+    request.current.draft++;
+    setCoverLanguage(value);
+  }
+
   async function importPreset(file: File) {
     if (exportLocked()) return;
     request.current.draft++;
@@ -460,7 +466,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   function restoreSettings(preset: MappingPreset) {
     setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
-      virtual: preset.version === 6 ? preset.virtualMappings : undefined });
+      virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined });
     setPattern(preset.filenamePattern);
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
@@ -468,16 +474,20 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
     setIncludeCustody(false);
     setWatermark('watermark' in preset ? preset.watermark : DEFAULT_WATERMARK);
+    const stamp = 'qrStamp' in preset ? preset.qrStamp : DEFAULT_QR_STAMP;
+    setQrStamp(stamp);
+    setQrOpen(stamp.placement !== 'none');
+    setCoverLanguage('coverLanguage' in preset ? preset.coverLanguage : 'auto');
   }
 
   function presetInputs() {
     const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
       !Object.hasOwn(virtualMappings, name) && (kind === 'text' || kind === 'checkbox' || mapping[name]) ? [[name, mapping[name]!]] : []));
-    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings] as const;
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage] as const;
   }
 
   async function exportPreset() {
-    if (watermarkBlocked || virtualTemplateBlocked) return;
+    if (printSettingsBlocked || virtualTemplateBlocked) return;
     const inputs = presetInputs();
     const { makeMappingPreset } = await import('./presets');
     const preset = makeMappingPreset(...inputs);
@@ -508,8 +518,9 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
     rowSelection, changeRowSelection,
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
-    includeCustody, changeIncludeCustody,
+    includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage,
     watermark, watermarkBlocked, changeWatermark,
+    qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked, changeQrStamp,
     ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
     rowEdit: edits[selected], restoreRowEdit,
@@ -517,7 +528,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     cancel: () => { retainPreviewPage(); cancel(); },
     download: (kind: Parameters<typeof download>[0]) => {
       const print = kind === 'merged' || (kind === 'zip' && flattenZip);
-      if (print && watermarkBlocked) return;
+      if (print && printSettingsBlocked) return;
       return download(kind);
     },
   };

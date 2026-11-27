@@ -383,7 +383,7 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
   cursor: pointer;
 }
 .output-mode input { flex: none; inline-size: 1rem; block-size: 1rem; margin-block-start: .2rem; accent-color: var(--forest); }
-.custody-cover-option { margin-inline-start: 1.65rem; }
+.cover-options { display: grid; gap: .5rem; margin-inline-start: 1.65rem; min-inline-size: 0; }
 .output-mode:has(input:disabled), .preset-picker:has(input:disabled) { cursor: default; color: var(--muted); }
 .watermark-options {
   min-inline-size: 0;
@@ -394,6 +394,18 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
   border-radius: .42rem;
 }
 .watermark-required { color: var(--amber); }
+.qr-stamp {
+  min-inline-size: 0;
+  border: 1px solid var(--control-line);
+  border-radius: .42rem;
+  padding: .45rem .65rem;
+}
+.qr-stamp > summary { font-size: .86rem; font-weight: 650; color: var(--forest); cursor: pointer; }
+.qr-options { display: grid; gap: .55rem; margin-block-start: .55rem; padding: 0; border: 0; min-inline-size: 0; }
+.qr-options small { overflow-wrap: anywhere; }
+.qr-miniature { display: flex; align-items: center; gap: .65rem; margin: 0; }
+.qr-miniature svg { display: block; inline-size: 5.5rem; block-size: 5.5rem; flex: none; border: 1px solid var(--line); }
+.qr-miniature figcaption, .qr-scope { color: var(--muted); font-size: .76rem; }
 
 .button {
   border: 1px solid transparent;

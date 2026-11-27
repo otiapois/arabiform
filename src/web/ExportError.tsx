@@ -1,0 +1,34 @@
+import type { translator } from './labels';
+
+const problems: Record<string, readonly [string, string]> = {
+  'unflattenable-widget': ['A field has no saved appearance for printing. Use an editable ZIP or choose a template with saved field appearances.', 'لا يحتوي أحد الحقول على مظهر محفوظ للطباعة. نزّل ملف ZIP دون تسطيح أو اختر قالبًا يحتوي على مظاهر محفوظة لحقوله.'],
+  'cover-sheet-invalid-metadata': ['The cover sheet could not match the current batch. Run preflight again or turn off the cover sheet.', 'تعذّرت مطابقة صفحة الغلاف مع الدفعة الحالية. أعد فحص الدفعة أو ألغِ إدراج صفحة الغلاف.'],
+  'cover-sheet-unsupported-text': ['A filename contains characters the cover sheet cannot print. Use an Arabic or Latin filename for the template or affected row, or turn off the cover sheet.', 'يتضمن اسم أحد الملفات أحرفًا يتعذّر طباعتها في صفحة الغلاف. استخدم اسمًا بأحرف عربية أو لاتينية للقالب أو للصف المعني، أو ألغِ إدراج صفحة الغلاف.'],
+  'cover-sheet-layout-overflow': ['A filename will not fit on the cover sheet. Shorten the filename or turn off the cover sheet.', 'اسم أحد الملفات أطول من المساحة المتاحة في صفحة الغلاف. اختصر الاسم أو ألغِ إدراج صفحة الغلاف.'],
+  'cover-sheet-export-failed': ['The cover sheet could not be prepared. Try again or turn off the cover sheet.', 'تعذّر تجهيز صفحة الغلاف. حاول مجددًا أو ألغِ إدراج صفحة الغلاف.'],
+  'invalid-watermark': ['Check the print watermark settings and try again.', 'راجع إعدادات العلامة المائية للطباعة وحاول مجددًا.'],
+  'watermark-missing-glyph': ['The print fonts cannot render this watermark. Choose a preset or enter different text.', 'يتعذّر على خطوط الطباعة عرض هذه العلامة المائية. اختر علامة جاهزة أو أدخل نصًا آخر.'],
+  'watermark-does-not-fit': ['The watermark does not fit on a record page. Use shorter text or a different angle.', 'لا تتسع إحدى صفحات السجلات للعلامة المائية. استخدم نصًا أقصر أو زاوية أخرى.'],
+  'qr-stamp-invalid-settings': ['Enter a QR pattern to print or save these settings.', 'أدخل نمط رمز QR للطباعة أو لحفظ الإعدادات.'],
+  'qr-stamp-invalid-payload': ['Check the QR pattern and the characters in the row.', 'تحقّق من نمط رمز QR ومن الأحرف في الصف.'],
+  'qr-stamp-unknown-token': ['The QR pattern references an unknown column or computed token.', 'يتضمن نمط رمز QR عمودًا أو قيمة محسوبة غير معروفة.'],
+  'qr-stamp-empty-payload': ['This row gives an empty QR code. Check its values or change the pattern.', 'يعطي هذا الصف رمز QR فارغًا. تحقّق من القيم أو غيّر النمط.'],
+  'qr-stamp-payload-too-long': ['This row exceeds the QR byte limit. Use a shorter value or pattern.', 'تجاوز هذا الصف الحد الأقصى لبايتات رمز QR. استخدم قيمة أو نمطًا أقصر.'],
+  'qr-stamp-does-not-fit': ['The QR stamp will not fit inside a record page’s print margin. Use a smaller size or turn off the stamp.', 'لا يتسع هامش الطباعة في إحدى صفحات السجلات لرمز QR. قلّل الحجم أو أوقف طباعة الرمز.'],
+  'qr-stamp-widget-overlap': ['The QR stamp overlaps a form field. Choose another corner or use a smaller size.', 'يتداخل رمز QR مع حقل في النموذج. اختر زاوية أخرى أو قلّل الحجم.'],
+};
+
+export function printProblem(code: string, arabic: boolean) {
+  return problems[code]?.[arabic ? 1 : 0];
+}
+
+export default function ExportError({ error, language }: {
+  error: { code: string; rowNumber?: number };
+  language: ReturnType<typeof translator>;
+}) {
+  const { arabic, labels, problem } = language;
+  return <p className="alert" role="alert" data-testid="export-error">
+    {error.rowNumber !== undefined && <>{arabic ? 'الصف' : 'Row'} {error.rowNumber}.{' '}</>}
+    {printProblem(error.code, arabic) ?? problem(error.code) ?? labels.exportError}
+  </p>;
+}

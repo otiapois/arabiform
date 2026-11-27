@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { PRINT_MARGIN_THRESHOLD_PT } from '../core/pdf/margin-preflight';
 import type { getWidgetOverlays } from '../core/pdf/widget-overlays';
-import { diagnosticText } from './Diagnostics';
+import { Diagnostics, diagnosticText } from './Diagnostics';
 import { fillLabel, type translator } from './labels';
-import type { RowResult, TemplateInfo } from './useWorkbench';
+import type { RowResult, TemplateInfo, useWorkbench } from './useWorkbench';
+
+const PrintMarginAdvisory = lazy(() => import('./PrintMarginAdvisory'));
 
 const en = {
+  previewReady: 'Generated row',
+  previewFlagged: 'Original template · failed fields outlined',
+  previewTemplate: 'Original template',
   previewError: 'This PDF could not be previewed.',
   previewCanvas: 'Rendered PDF page',
   zoom: 'Preview zoom',
@@ -24,6 +29,9 @@ const en = {
 };
 
 const ar: typeof en = {
+  previewReady: 'الصف بعد التعبئة',
+  previewFlagged: 'القالب الأصلي · الحقول التي تحتاج مراجعة محاطة بإطار',
+  previewTemplate: 'القالب الأصلي',
   previewError: 'تعذّرت معاينة ملف PDF.',
   previewCanvas: 'صفحة PDF المعروضة',
   zoom: 'تكبير المعاينة',
@@ -40,6 +48,45 @@ const ar: typeof en = {
 };
 
 GlobalWorkerOptions.workerSrc = workerUrl;
+
+type Desk = ReturnType<typeof useWorkbench>;
+
+export function WorkbenchPreview({ template, desk, language }: {
+  template: NonNullable<Desk['template']>;
+  desk: Desk;
+  language: ReturnType<typeof translator>;
+}) {
+  const { arabic, labels } = language;
+  const copy = arabic ? ar : en;
+  const selectedResult = desk.results?.[desk.selected];
+  const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : template.bytes;
+  const status = selectedResult?.status;
+  return (
+    <>
+      <header className="preview-heading wide-heading">
+        <div>
+          <h2 id="preview-heading">{labels.preview}</h2>
+          <p>{status === 'pass' ? copy.previewReady : status === 'flagged' ? copy.previewFlagged : copy.previewTemplate}</p>
+        </div>
+        {status && <span className={`tag tag-${status}`}>{fillLabel(labels.selected, { row: desk.selected + 1 })}</span>}
+      </header>
+      {desk.hasMapping && (
+        <Suspense>
+          <PrintMarginAdvisory template={template.info} mapping={desk.mapping} virtualMappings={desk.virtualMappings} arabic={arabic} />
+        </Suspense>
+      )}
+      {!!selectedResult?.diagnostics.length && (
+        <div className="preview-diagnostics">
+          <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
+        </div>
+      )}
+      <PdfPreview bytes={bytes} fields={template.info.fields} overlays={template.overlays} diagnostics={selectedResult?.diagnostics}
+        minSize={desk.minFontSize} unavailable={desk.previewError} language={language}
+        fieldSelection={desk.fieldSelection} onWidgetSelect={desk.selectWidget}
+        requestedPage={desk.previewPage} onPageChange={desk.setPreviewPage} />
+    </>
+  );
+}
 
 type PreviewProps = {
   bytes?: Uint8Array;
@@ -65,7 +112,7 @@ type Position = {
   height: string;
 };
 
-export default function PdfPreview({
+function PdfPreview({
   bytes, fields, overlays, diagnostics, minSize, unavailable, language, requestedPage, onPageChange, fieldSelection, onWidgetSelect,
 }: PreviewProps) {
   const { arabic, labels } = language;
