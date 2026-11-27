@@ -6,7 +6,7 @@ import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
 import type { ExportScope } from '../worker/row-selection';
 import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
-import { key, number, openTemplate, widgetFlags } from './template';
+import { key, number, openTemplate, widgetFlags, type TemplateMetadata } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 import type { FontBytes } from './shaping';
 import { validateQrPrintRequest, type QrPrintRequest } from './qr-settings';
@@ -16,6 +16,7 @@ import { validateWatermarkSettings, type WatermarkSettings } from './watermark-s
 export interface PdfExportRow { filename: string; pdfBytes: Uint8Array }
 export interface GeneratedPdfExportRow { filename: string; getPdfBytes: () => Promise<Uint8Array> }
 export interface PrintWatermarkOptions { settings: WatermarkSettings; fonts: FontBytes }
+export type Imposition = '1-up' | '2-up';
 type ExportRow = PdfExportRow | GeneratedPdfExportRow;
 type PrintStamp = (doc: PDFDocument) => Promise<void>;
 type QrStamp = ReturnType<typeof prepareQrStamp>;
@@ -194,31 +195,50 @@ function flattenWidgets(doc: PDFDocument) {
 
 export async function createMergedPdf(
   rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
+  imposition: Imposition = '1-up',
 ): Promise<Uint8Array> {
   if (!rows.length) throw new Error('empty-export');
-  return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark), await getQrStamp(qrStamp, rows.length));
+  if (imposition !== '1-up' && imposition !== '2-up') throw new Error('invalid-imposition');
+  return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark), await getQrStamp(qrStamp, rows.length), imposition);
 }
 
 async function buildMergedPdf(
   rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, stamp?: PrintStamp, qr?: QrStamp,
+  imposition: Imposition = '1-up',
 ): Promise<Uint8Array> {
-  const merged = await PDFDocument.create();
+  let merged = await PDFDocument.create();
+  const twoUp = imposition === '2-up';
+  const recordGeometry: TemplateMetadata['pages'] = [];
   const coverEntries: { filename: string; pageCount: number }[] = [];
   const stampQr: (() => void)[] = [];
   onProgress?.(0, rows.length);
   for (const [index, row] of rows.entries()) {
-    const { doc: source } = await openTemplate('pdfBytes' in row ? row.pdfBytes : await row.getPdfBytes());
-    const paintQr = qr?.(source.getPages(), index);
+    const { doc: source, pages: geometry } = await openTemplate('pdfBytes' in row ? row.pdfBytes : await row.getPdfBytes());
+    const sourcePages = source.getPages();
+    if (twoUp && sourcePages.length !== 1) throw new Error('imposition-requires-single-page');
+    const paintQr = qr?.(sourcePages, index);
     flattenWidgets(source);
+    if (twoUp) {
+      const annots = sourcePages[0]!.node.Annots();
+      for (let ordinal = 0; annots && ordinal < annots.size(); ordinal++) {
+        const flags = widgetFlags(annots.lookup(ordinal, PDFDict));
+        if (flags & 4 && !(flags & (1 | 2))) throw new Error('imposition-unsupported-print-annotation');
+      }
+      recordGeometry.push(geometry[0]!);
+    }
     const pages = await merged.copyPages(source, source.getPageIndices());
     for (const page of pages) merged.addPage(page);
     if (paintQr) stampQr.push(() => paintQr(pages));
-    if (cover) coverEntries.push({ filename: row.filename, pageCount: pages.length });
+    if (cover) coverEntries.push({ filename: row.filename, pageCount: sourcePages.length });
     onProgress?.(index + 1, rows.length);
   }
   await stamp?.(merged);
   stampQr.forEach((paint) => paint());
-  if (cover) await prependMergeCover(merged, coverEntries, cover);
+  if (twoUp) {
+    const { imposeRecordPages } = await import('./imposition');
+    merged = await imposeRecordPages(merged, recordGeometry);
+  }
+  if (cover) await prependMergeCover(merged, coverEntries, cover, imposition);
   return merged.save({ updateFieldAppearances: false });
 }
 

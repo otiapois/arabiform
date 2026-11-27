@@ -1,8 +1,53 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { strToU8, zipSync } from 'fflate';
-import { autoMap, makeFilenames, planFilenames, readRoster } from '../../src/core/roster';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { autoMap, inspectRosterWorkbook, makeFilenames, planFilenames, readRoster } from '../../src/core/roster';
 
 describe('roster ingest', () => {
+  it('selects the first visible worksheet, preserves exact names and cached values, and skips hidden sheets and charts', async () => {
+    const bytes = await readFile('fixtures/m13/multi-sheet-roster.xlsx');
+    const workbook = inspectRosterWorkbook(bytes);
+    expect(workbook.sheetNames).toEqual(['Summary', 'Roster_AR']);
+    expect(workbook.readSheet()).toEqual({
+      name: 'Summary', headers: ['Topic', 'Value'], rows: [
+        { values: { Topic: 'Synthetic Sample', Value: 'Open Roster_AR for the print rows' }, warnings: [] },
+      ],
+    });
+    const roster = workbook.readSheet('Roster_AR');
+    expect(roster.rows.map(({ values }) => [values.Name, values.ID, values.Notes])).toEqual([
+      ['ليلى حسن', '00123', 'Synthetic Sample'], ['أحمد سالم', '00007', 'Synthetic Sample'], ['بَنِي يَمَن', '00042', 'Approved'],
+    ]);
+    expect(roster.rows.map(({ warnings }) => warnings)).toEqual([[], [], [
+      { column: 'Notes', source: { row: 4, column: 'D' }, code: 'excel-formula-warning', formulaHasCachedValue: true },
+    ]]);
+    for (const hidden of ['Internal', 'Private notes', 'Results chart', 'roster_ar']) {
+      expect(() => workbook.readSheet(hidden)).toThrow('invalid-xlsx');
+    }
+    expect((await readRoster(bytes, 'input.XLSX')).sheets.map(({ name }) => name)).toEqual(workbook.sheetNames);
+    expect(await readRoster(bytes, 'input.xlsx', { sheetName: 'Roster_AR' })).toEqual({ sheets: [roster] });
+  });
+
+  it('lets a valid worksheet be recovered after invalid headers or XML in a sibling tab', async () => {
+    const bytes = await readFile('fixtures/m13/multi-sheet-roster.xlsx');
+    const files = unzipSync(bytes);
+    const summary = 'xl/worksheets/sheet2.xml';
+    const duplicate = strFromU8(files[summary]!).replace('>Value<', '>Topic<');
+    files[summary] = strToU8(duplicate);
+    const invalidHeaders = inspectRosterWorkbook(zipSync(files));
+    expect(invalidHeaders.sheetNames).toEqual(['Summary', 'Roster_AR']);
+    expect(() => invalidHeaders.readSheet()).toThrow('invalid-roster-headers');
+    expect(invalidHeaders.readSheet('Roster_AR').rows).toHaveLength(3);
+    files[summary] = new Uint8Array([0xff, 0xff, 0xff]);
+    const invalidXml = inspectRosterWorkbook(zipSync(files));
+    expect(() => invalidXml.readSheet()).toThrow('invalid-xlsx');
+    expect(invalidXml.readSheet('Roster_AR').rows[1]?.values.ID).toBe('00007');
+    files[summary] = strToU8('<worksheet><sheetData/></worksheet>');
+    expect(inspectRosterWorkbook(zipSync(files)).readSheet()).toEqual({ name: 'Summary', headers: [], rows: [] });
+    const path = 'xl/workbook.xml';
+    files[path] = strToU8(strFromU8(files[path]!).replace('state="visible"', 'state="hidden"').replace('name="Roster_AR"', 'name="Roster_AR" state="veryHidden"'));
+    expect(() => inspectRosterWorkbook(zipSync(files))).toThrow('invalid-xlsx');
+  });
+
   it('keeps every cell as text, including Arabic marks, leading zeros and line breaks', async () => {
     const csv = '\uFEFFName,ID,Notes\r\nبَنِي يَمَن,00123,"first\r\nsecond"\r\nيُسْرَى مُؤْمِن,00007,\r\n';
     const { sheets: [sheet] } = await readRoster(strToU8(csv), 'roster.CSV');

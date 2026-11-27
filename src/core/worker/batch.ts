@@ -8,7 +8,7 @@ import { resolveRowSelection } from './row-selection';
 export const BATCH_CHUNK_SIZE = 25;
 type ProgressListener = (progress: BatchProgress) => void;
 
-type RowInputs = Omit<BatchInput, 'roster'>;
+type RowInputs = Omit<BatchInput, 'roster' | 'sheetName'>;
 
 async function preflightBatch(input: RowInputs, progress: (completed: number, total: number) => void) {
   const { rows, template, options } = input;
@@ -37,9 +37,9 @@ export function createBatchProcessor() {
     if (phase === 'preflight') {
       if (preflightStarted) throw new Error('batch-already-started');
       preflightStarted = true;
-      const { roster, ...input } = command.input;
+      const { roster, sheetName, ...input } = command.input;
       const rows = await preflightBatch(input, progress);
-      const custody = await hashCustodySources(input.template, roster);
+      const custody = await hashCustodySources(input.template, roster, sheetName);
       const checked = { rows, custody };
       retained = { input, checked };
       return checked;
@@ -85,7 +85,7 @@ export function createBatchProcessor() {
       flagged: results.filter(({ status }) => status === 'flagged').length,
       skipped: results.length - ready.length,
       custody: coverSheet.includeCustody ? custody : undefined,
-    }, watermark, qrStamp);
+    }, watermark, qrStamp, command.imposition);
     return { bytes, mergedPdfSha256: await sha256(bytes) };
   }
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { hashBatchDraftInput, parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
-import { validateMappingPreset, type MappingPresetV7 } from '../../src/core/draft/mapping-preset';
+import { validateMappingPreset, type MappingPresetV7, type MappingPresetV8 } from '../../src/core/draft/mapping-preset';
 
 const draft: BatchDraft = {
   kind: 'arabiform-batch-draft', version: 1,
@@ -63,6 +63,19 @@ describe('portable batch draft boundary', () => {
     ]) {
       expect(() => parseBatchDraft(serializeBatchDraft(draft), { ...draft.source, ...change })).toThrow('batch-draft-source-mismatch');
     }
+  });
+
+  it.each(['1-up', '2-up'] as const)('roundtrips v8 %s in an outer v1 draft bound to an exact Excel tab', (imposition) => {
+    const settings: MappingPresetV8 = {
+      ...draft.settings, version: 8, watermark: { kind: 'none' }, virtualMappings: {},
+      qrStamp: { placement: 'none' }, coverLanguage: 'bilingual', imposition,
+    };
+    const saved = { ...draft, source: { ...draft.source, sheetName: 'Roster_AR' }, settings };
+    const text = serializeBatchDraft(saved);
+    expect(parseBatchDraft(text, saved.source)).toEqual(saved);
+    expect(() => parseBatchDraft(text, { ...saved.source, sheetName: 'Summary' })).toThrow('batch-draft-source-mismatch');
+    expect(validateMappingPreset({ ...settings, imposition: 'duplex' })).toBeUndefined();
+    expect(validateMappingPreset({ ...settings, version: 7 })).toBeUndefined();
   });
 
   it('requires active custom font content to match without carrying binary bytes', () => {
