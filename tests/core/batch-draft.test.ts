@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { hashBatchDraftInput, parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
+import { validateMappingPreset, type MappingPresetV7 } from '../../src/core/draft/mapping-preset';
 
 const draft: BatchDraft = {
   kind: 'arabiform-batch-draft', version: 1,
@@ -32,6 +33,27 @@ describe('portable batch draft boundary', () => {
     expect(parseBatchDraft(serializeBatchDraft(saved), draft.source)).toEqual(saved);
     const invalid = { ...saved, settings: { ...saved.settings, watermark: { kind: 'confidential', opacity: 1, angle: 0 } } };
     expect(() => parseBatchDraft(JSON.stringify(invalid), draft.source)).toThrow('invalid-batch-draft');
+  });
+
+  it('roundtrips v7 QR and cover options in an outer v1 draft and rejects extra or invalid fields', () => {
+    const settings: MappingPresetV7 = {
+      ...draft.settings, version: 7, watermark: { kind: 'none' }, virtualMappings: {},
+      qrStamp: { placement: 'top-left', sizePt: 37.5, pattern: '  {{Badge}}-[[@PADDED_ROW_001]]' }, coverLanguage: 'bilingual',
+    };
+    const updated = { ...draft, settings };
+    expect(parseBatchDraft(serializeBatchDraft(updated), draft.source)).toEqual(updated);
+    expect(validateMappingPreset({ ...settings, qrStamp: { placement: 'none' }, coverLanguage: 'auto' }))
+      .toMatchObject({ version: 7, qrStamp: { placement: 'none' }, coverLanguage: 'auto' });
+    for (const invalid of [
+      { ...settings, coverLanguage: 'rtl' }, { ...settings, coverLanguage: null },
+      { ...settings, qrStamp: { placement: 'none', pattern: 'stale', sizePt: 48 } },
+      { ...settings, qrStamp: { placement: 'top-left', sizePt: 73, pattern: 'A' } },
+      { ...settings, qrStamp: undefined }, { ...settings, coverLanguage: undefined },
+      { ...settings, unexpected: true }, { ...settings, version: 6 },
+    ]) {
+      expect(validateMappingPreset(invalid)).toBeUndefined();
+      expect(() => parseBatchDraft(JSON.stringify({ ...updated, settings: invalid }), draft.source)).toThrow('invalid-batch-draft');
+    }
   });
 
   it('requires exact source bytes, field and column order, selected sheet and row count', () => {

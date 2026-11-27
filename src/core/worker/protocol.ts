@@ -1,5 +1,6 @@
 import type { CustodyEntry, CustodySources } from '../audit/custody';
 import type { PreflightOptions, RowPreflightResult } from '../pdf';
+import type { CoverLanguage, QrPrintRequest } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { RowSelection } from './row-selection';
 
@@ -17,13 +18,14 @@ export interface BatchProgress {
   total: number;
 }
 
-export type MergeCoverSheet = { locale: 'en' | 'ar'; templateName: string; filenames: readonly string[]; includeCustody?: boolean };
+export type { CoverLanguage } from '../pdf/qr-settings';
+export type MergeCoverSheet = { coverLanguage?: CoverLanguage; locale: 'en' | 'ar'; templateName: string; filenames: readonly string[]; includeCustody?: boolean };
 
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }
   | { phase: 'preview'; rowIndex: number }
-  | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection }
-  | { phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection };
+  | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection; qrStamp?: QrPrintRequest }
+  | { phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; qrStamp?: QrPrintRequest };
 
 export type BatchRequest = BatchCommand & { id: number };
 export interface BatchPreflightResult { rows: BatchRowResult[]; custody: CustodySources }

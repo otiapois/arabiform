@@ -9,6 +9,8 @@ import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
 import { key, number, openTemplate, widgetFlags } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 import type { FontBytes } from './shaping';
+import { validateQrPrintRequest, type QrPrintRequest } from './qr-settings';
+import type { prepareQrStamp } from './qr-stamp';
 import { validateWatermarkSettings, type WatermarkSettings } from './watermark-settings';
 
 export interface PdfExportRow { filename: string; pdfBytes: Uint8Array }
@@ -16,6 +18,7 @@ export interface GeneratedPdfExportRow { filename: string; getPdfBytes: () => Pr
 export interface PrintWatermarkOptions { settings: WatermarkSettings; fonts: FontBytes }
 type ExportRow = PdfExportRow | GeneratedPdfExportRow;
 type PrintStamp = (doc: PDFDocument) => Promise<void>;
+type QrStamp = ReturnType<typeof prepareQrStamp>;
 export interface AuditRow {
   rowNumber: number;
   filename: string;
@@ -97,23 +100,36 @@ async function getPrintStamp(watermark: PrintWatermarkOptions | undefined): Prom
   return preparePrintStamp(settings, watermark.fonts);
 }
 
+async function getQrStamp(request: QrPrintRequest | undefined, rowCount: number): Promise<QrStamp | undefined> {
+  if (request === undefined) return undefined;
+  const safeRequest = validateQrPrintRequest(request, rowCount);
+  const { prepareQrStamp } = await import('./qr-stamp');
+  return prepareQrStamp(safeRequest);
+}
+
 export async function createFlattenedZip(
-  rows: readonly PdfExportRow[], onProgress?: ExportProgress, watermark?: PrintWatermarkOptions,
+  rows: readonly PdfExportRow[], onProgress?: ExportProgress, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
 ): Promise<Uint8Array> {
   const zip = openZip(rows, onProgress);
   const stamp = await getPrintStamp(watermark);
-  for (const row of rows) zip.add(row.filename, await buildMergedPdf([row], undefined, undefined, stamp));
+  const qr = await getQrStamp(qrStamp, rows.length);
+  for (const [index, row] of rows.entries()) {
+    zip.add(row.filename, await buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index))));
+  }
   return zip.finish();
 }
 
 export async function createGeneratedZip(
-  rows: readonly GeneratedPdfExportRow[], onProgress?: ExportProgress, flatten = false, watermark?: PrintWatermarkOptions,
+  rows: readonly GeneratedPdfExportRow[], onProgress?: ExportProgress, flatten = false, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
 ) {
   const zip = openZip(rows, onProgress, true);
   const stamp = flatten ? await getPrintStamp(watermark) : undefined;
+  const qr = flatten ? await getQrStamp(qrStamp, rows.length) : undefined;
   const entries: CustodyEntry[] = [];
-  for (const row of rows) {
-    const bytes = await (flatten ? buildMergedPdf([row], undefined, undefined, stamp) : row.getPdfBytes());
+  for (const [index, row] of rows.entries()) {
+    const bytes = await (flatten
+      ? buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index)))
+      : row.getPdfBytes());
     entries.push({ filename: row.filename, sha256: await sha256(bytes), bytes: bytes.byteLength });
     zip.add(row.filename, bytes);
   }
@@ -177,27 +193,31 @@ function flattenWidgets(doc: PDFDocument) {
 }
 
 export async function createMergedPdf(
-  rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, watermark?: PrintWatermarkOptions,
+  rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
 ): Promise<Uint8Array> {
   if (!rows.length) throw new Error('empty-export');
-  return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark));
+  return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark), await getQrStamp(qrStamp, rows.length));
 }
 
 async function buildMergedPdf(
-  rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, stamp?: PrintStamp,
+  rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, stamp?: PrintStamp, qr?: QrStamp,
 ): Promise<Uint8Array> {
   const merged = await PDFDocument.create();
   const coverEntries: { filename: string; pageCount: number }[] = [];
+  const stampQr: (() => void)[] = [];
   onProgress?.(0, rows.length);
   for (const [index, row] of rows.entries()) {
     const { doc: source } = await openTemplate('pdfBytes' in row ? row.pdfBytes : await row.getPdfBytes());
+    const paintQr = qr?.(source.getPages(), index);
     flattenWidgets(source);
     const pages = await merged.copyPages(source, source.getPageIndices());
     for (const page of pages) merged.addPage(page);
+    if (paintQr) stampQr.push(() => paintQr(pages));
     if (cover) coverEntries.push({ filename: row.filename, pageCount: pages.length });
     onProgress?.(index + 1, rows.length);
   }
   await stamp?.(merged);
+  stampQr.forEach((paint) => paint());
   if (cover) await prependMergeCover(merged, coverEntries, cover);
   return merged.save({ updateFieldAppearances: false });
 }

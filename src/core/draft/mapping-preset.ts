@@ -1,4 +1,5 @@
 import { isAlignOverride, type AlignOverride } from '../pdf/alignment';
+import { isCoverLanguage, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../pdf/qr-settings';
 import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
 import { isVirtualColumnId, validateVirtualTemplate, type VirtualColumnMapping } from '../roster/virtual-columns';
 
@@ -21,11 +22,13 @@ export type MappingPresetV4 = PresetSettings & {
 export type MappingPresetV5 = Omit<MappingPresetV4, 'version'> & { version: 5; watermark: WatermarkSettings };
 export type MappingPresetV6 = Omit<MappingPresetV5, 'version'> & { version: 6; virtualMappings: Record<string, VirtualColumnMapping> };
 
+export type MappingPresetV7 = Omit<MappingPresetV6, 'version'> & { version: 7; qrStamp: QrStampSettings; coverLanguage: CoverLanguage };
+
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -54,8 +57,8 @@ function validateVirtualMappings(value: unknown, mapping: PresetSettings['mappin
 }
 
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6)
-    || Object.keys(data).length !== presetKeys.length + data.version - 1
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6 && data.version !== 7)
+    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version === 7 ? 1 : 0)
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
@@ -80,8 +83,8 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (!Object.hasOwn(data, 'includeCoverSheet') || typeof includeCoverSheet !== 'boolean') return undefined;
   if (data.version === 3) return { version: 3, ...settings, flattenZip, includeCoverSheet };
   if (!Object.hasOwn(data, 'alignOverrides') || !isRecord(data.alignOverrides)) return undefined;
-  if (data.version === 6 && !Object.hasOwn(data, 'virtualMappings')) return undefined;
-  const virtualMappings = data.version === 6 ? validateVirtualMappings(data.virtualMappings, settings.mapping) : undefined;
+  if (data.version >= 6 && !Object.hasOwn(data, 'virtualMappings')) return undefined;
+  const virtualMappings = data.version >= 6 ? validateVirtualMappings(data.virtualMappings, settings.mapping) : undefined;
   const alignOverrides: [string, AlignOverride][] = [];
   for (const [field, mode] of Object.entries(data.alignOverrides)) {
     const mapped = Object.hasOwn(settings.mapping, field) && settings.mapping[field]
@@ -94,5 +97,9 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   const watermark = Object.hasOwn(data, 'watermark') && validateWatermarkSettings(data.watermark);
   if (!watermark) return undefined;
   if (data.version === 5) return { version: 5, ...printSettings, watermark };
-  if (virtualMappings) return { version: 6, ...printSettings, watermark, virtualMappings };
+  if (!virtualMappings) return undefined;
+  if (data.version === 6) return { version: 6, ...printSettings, watermark, virtualMappings };
+  const qrStamp = Object.hasOwn(data, 'qrStamp') && validateQrStampSettings(data.qrStamp);
+  if (!qrStamp || !Object.hasOwn(data, 'coverLanguage') || !isCoverLanguage(data.coverLanguage)) return undefined;
+  return { version: 7, ...printSettings, watermark, virtualMappings, qrStamp, coverLanguage: data.coverLanguage };
 }
