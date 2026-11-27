@@ -1,14 +1,17 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 const project = fileURLToPath(new URL('../../', import.meta.url));
 
 function withBundle(site: string | undefined, check: (dist: string, verify: (args?: string[], origin?: string) => SpawnSyncReturns<string>) => void) {
-  const cache = process.platform === 'win32' ? 'D:\\cache\\arabiform\\tmp' : tmpdir();
+  const configuredTemp = tmpdir();
+  const cache = process.platform === 'win32' && parse(configuredTemp).root.toUpperCase() !== 'D:\\'
+    ? 'D:\\cache\\arabiform\\tmp' : configuredTemp;
   mkdirSync(cache, { recursive: true });
   const parent = realpathSync(cache);
   const temporary = mkdtempSync(join(parent, 'release-bundle-'));
@@ -48,12 +51,6 @@ it('accepts the default local build and rejects an extra HTML page', () => {
     const local = verify();
     expect(local.status, local.stderr).toBe(0);
     expect(local.stdout).toContain('https://arabiform.example');
-    const entry = join(dist, 'assets/index-test.js');
-    writeFileSync(entry, ' '.repeat(300_000));
-    const oversized = verify();
-    expect(oversized.status).toBe(1);
-    expect(oversized.stderr).toContain('entry JS exceeds its budget');
-    writeFileSync(entry, '// synthetic entry');
 
     const headersPath = join(dist, '_headers');
     const headers = readFileSync(headersPath, 'utf8');
@@ -67,6 +64,25 @@ it('accepts the default local build and rejects an extra HTML page', () => {
     const extra = verify();
     expect(extra.status).toBe(1);
     expect(extra.stderr).toContain('exactly the five');
+  });
+}, 15_000);
+
+it('enforces the raw and gzip entry limits independently', () => {
+  withBundle(undefined, (dist, verify) => {
+    const entry = join(dist, 'assets/index-test.js');
+    writeFileSync(entry, ' '.repeat(284_999));
+    const belowRawLimit = verify();
+    expect(belowRawLimit.status, belowRawLimit.stderr).toBe(0);
+    writeFileSync(entry, ' '.repeat(285_000));
+    const atRawLimit = verify();
+    expect(atRawLimit.status).toBe(1);
+    expect(atRawLimit.stderr).toContain('entry JS exceeds its budget: 285000 raw');
+
+    const lowCompressibility = createHash('shake256', { outputLength: 89_000 }).update('release budget fixture').digest();
+    writeFileSync(entry, lowCompressibility);
+    const aboveGzipLimit = verify();
+    expect(aboveGzipLimit.status).toBe(1);
+    expect(aboveGzipLimit.stderr).toContain('entry JS exceeds its budget: 89000 raw');
   });
 }, 15_000);
 
