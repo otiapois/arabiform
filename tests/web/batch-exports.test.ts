@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { planGroupedOutput } from '../../src/core/export/grouping';
 import { buildDownload } from '../../src/web/batch-exports';
 import type { OutputSettings } from '../../src/web/useBatch';
 
@@ -68,5 +69,41 @@ describe('preparing browser-local print downloads', () => {
     expect(client.zip).toHaveBeenCalledWith(['1.pdf', '2.pdf', '3.pdf'], onProgress, true, undefined, 'all-ready',
       { placement: 'top-right', sizePt: 48, custodyRecord: true });
     expect(download?.digests).toMatchObject({ qrRecords });
+  });
+
+  it('appends approval seal options only to printed downloads', async () => {
+    const client = worker();
+    const scope = { exportScope: 'selected-subset' as const, selectedRowNumbers: [2, 3] };
+    const approvalSeal = { placement: 'top-left', labelEn: 'Synthetic Sample', labelAr: 'عينة اصطناعية', issueDate: '2026-05-02' } as const;
+    const grouping = planGroupedOutput(source.rows, 'ID', '{{ID}}.pdf');
+    const settings = { ...output, qrStamp: undefined, approvalSeal, grouping };
+    const filenames = ['1.pdf', '2.pdf', '3.pdf'];
+    const printArgs = [onProgress, { ...output.cover, filenames }, undefined, [2, 3], undefined, undefined] as const;
+
+    await buildDownload('zip', client, onProgress, source, [], { ...settings, grouping: undefined }, scope, isCurrent);
+    await buildDownload('zip', client, onProgress, source, [], settings, scope, isCurrent);
+    await buildDownload('zip', client, onProgress, source, [], { ...settings, flattenZip: false }, scope, isCurrent);
+    await buildDownload('merged', client, onProgress, source, [], settings, scope, isCurrent);
+    await buildDownload('split', client, onProgress, source, [], settings, scope, isCurrent);
+    await buildDownload('split', client, onProgress, source, [], { ...settings, approvalSeal: undefined }, scope, isCurrent);
+
+    expect(client.zip).toHaveBeenNthCalledWith(1, filenames, onProgress, true, undefined, [2, 3], undefined, undefined, approvalSeal);
+    expect(client.zip).toHaveBeenNthCalledWith(2, filenames, onProgress, true, undefined, [2, 3], undefined, grouping, approvalSeal);
+    expect(client.zip).toHaveBeenNthCalledWith(3, filenames, onProgress, false, undefined, [2, 3], undefined, grouping);
+    expect(client.merged).toHaveBeenCalledWith(...printArgs, approvalSeal);
+    expect(client.split).toHaveBeenNthCalledWith(1, grouping, ...printArgs, approvalSeal);
+    expect(client.split).toHaveBeenNthCalledWith(2, grouping, ...printArgs);
+  });
+
+  it('skips payload resolution when the QR import finishes after cancellation', async () => {
+    const client = worker();
+    const scope = { exportScope: 'all-ready' as const, selectedRowNumbers: [1, 2, 3] };
+    const settings: OutputSettings = { ...output, rowSelection: 'all-ready', qrStamp: { placement: 'top-right', sizePt: 48, pattern: '{{ID}}' } };
+    let current = true;
+    const download = buildDownload('merged', client, onProgress, source, [], settings, scope, () => current);
+    current = false;
+
+    await expect(download).resolves.toBeUndefined();
+    expect(client.merged).not.toHaveBeenCalled();
   });
 });

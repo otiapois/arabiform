@@ -9,11 +9,13 @@ export async function makeQrPrintRequest(
   { rows, localDate }: Pick<BatchSettings, 'rows' | 'localDate'>,
   qrStamp: Exclude<QrStampSettings, { placement: 'none' }> | undefined,
   rowNumbers: readonly number[],
+  isCurrent?: () => boolean,
 ): Promise<BatchQrPrintRequest | undefined> {
   if (!qrStamp) return;
   const { placement, sizePt, pattern } = qrStamp;
   if (qrStamp.custodyRecord) return { placement, sizePt, custodyRecord: true };
   const { resolveQrPayload } = await import('../core/pdf/qr-encoder');
+  if (isCurrent && !isCurrent()) return;
   const payloads = Array<string | null>(rows.length).fill(null);
   for (const rowNumber of rowNumbers) {
     try {
@@ -50,17 +52,19 @@ export async function buildDownload(
 
   const isZip = kind === 'zip';
   const prints = !isZip || flattenZip;
-  const qrRequest = prints && qrStamp ? await makeQrPrintRequest(roster, qrStamp, scope.selectedRowNumbers) : undefined;
+  const qrRequest = prints && qrStamp ? await makeQrPrintRequest(roster, qrStamp, scope.selectedRowNumbers, isCurrent) : undefined;
   if (!isCurrent()) return;
   const filenames = isZip ? filenamePlans.map(({ filename }) => filename) : [];
   const coverSheet = !isZip ? mergeCoverRequest(cover, filenamePlans) : undefined;
+  const printArgs = [onProgress, coverSheet, watermark, rowSelection, qrRequest, imposition] as const;
   if (kind === 'split') {
-    const { bytes, ...digests } = await client.split(grouping!, onProgress, coverSheet, watermark, rowSelection, qrRequest, imposition, approvalSeal);
+    const { bytes, ...digests } = await (approvalSeal ? client.split(grouping!, ...printArgs, approvalSeal) : client.split(grouping!, ...printArgs));
     return { data: bytes, filename: 'arabiform-split-merged.zip', mime: 'application/zip', digests };
   }
   const zipArgs = [filenames, onProgress, flattenZip, flattenZip ? watermark : undefined, rowSelection, qrRequest] as const;
   const { bytes, ...digests } = await (isZip
-    ? client.zip(...zipArgs, grouping, prints ? approvalSeal : undefined)
-    : client.merged(onProgress, coverSheet, watermark, rowSelection, qrRequest, imposition, approvalSeal));
+    ? flattenZip && approvalSeal ? client.zip(...zipArgs, grouping, approvalSeal)
+      : grouping ? client.zip(...zipArgs, grouping) : client.zip(...zipArgs)
+    : approvalSeal ? client.merged(...printArgs, approvalSeal) : client.merged(...printArgs));
   return { data: bytes, filename: isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', mime: isZip ? 'application/zip' : 'application/pdf', digests };
 }
