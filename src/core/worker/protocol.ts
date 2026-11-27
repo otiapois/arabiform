@@ -3,6 +3,7 @@ import type { CustodyQrRecord } from '../custody/records';
 import type { GroupingPlan } from '../export/grouping';
 import type { PrintEstimateRequest, PrintJobEstimate } from '../export/print-estimator';
 import type { Imposition, PreflightOptions, RowPreflightResult } from '../pdf';
+import type { ApprovalSealProblem, ApprovalSealSettings } from '../pdf/approval-seal-settings';
 import type { BatchQrPrintRequest, CoverLanguage } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { RowSelection } from './row-selection';
@@ -28,14 +29,15 @@ export type MergeCoverSheet = {
   coverLanguage?: CoverLanguage; locale: 'en' | 'ar'; templateName: string; filenames: readonly string[];
   includeCustody?: boolean; exportedAt?: string;
 };
+export type PreviewPrintOptions = { approvalSeal?: ApprovalSealSettings; qrStamp?: BatchQrPrintRequest };
 
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }
-  | { phase: 'preview'; rowIndex: number }
+  | ({ phase: 'preview'; rowIndex: number } & PreviewPrintOptions)
   | ({ phase: 'estimate' } & PrintEstimateRequest)
-  | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection; qrStamp?: BatchQrPrintRequest; grouping?: GroupingPlan }
-  | { phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; qrStamp?: BatchQrPrintRequest; imposition?: Imposition }
-  | { phase: 'split'; grouping: GroupingPlan; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; qrStamp?: BatchQrPrintRequest; imposition?: Imposition };
+  | ({ phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection; grouping?: GroupingPlan } & PreviewPrintOptions)
+  | ({ phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition } & PreviewPrintOptions)
+  | ({ phase: 'split'; grouping: GroupingPlan; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition } & PreviewPrintOptions);
 
 export type BatchRequest = BatchCommand & { id: number };
 export interface BatchPreflightResult { rows: BatchRowResult[]; custody: CustodySources; spotlight: BoundaryRowSpotlight }
@@ -46,5 +48,5 @@ export type BatchResult = BatchPreflightResult | BatchZipResult | BatchMergedRes
 export type BatchResponse = { id: number } & (
   | { kind: 'progress'; progress: BatchProgress }
   | { kind: 'result'; result: BatchResult }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; approvalSealProblem?: ApprovalSealProblem }
 );

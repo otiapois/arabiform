@@ -1,6 +1,7 @@
 import fontkit, { type Font, type GlyphRun } from '@pdf-lib/fontkit';
 import createBidi from 'bidi-js';
 import { explicitQuadding, type AlignOverride } from './alignment';
+import type { FieldTypography } from './field-typography';
 export { textInputDiagnostic } from './text-input';
 
 type BundledFontKey = 'arabic' | 'latin';
@@ -139,8 +140,9 @@ interface FitFailure { code: FitError; requiredFontSizePt?: number }
 
 export function fitText(shaper: Shaper, value: string, multiline: boolean, options: {
   innerWidth: number; innerHeight: number; padding: number; min: number; max: number; alignment?: number; alignOverride?: AlignOverride;
+  lineHeightScale?: FieldTypography['lineHeightScale'];
 }): Placement | FitFailure {
-  const { innerWidth, innerHeight, padding, min, max, alignment, alignOverride = 'auto' } = options;
+  const { innerWidth, innerHeight, padding, min, max, alignment, alignOverride = 'auto', lineHeightScale = 1 } = options;
   if (innerWidth <= 0) return { code: 'too-narrow' };
   if (innerHeight <= 0 || max < MIN_FONT_SIZE) return { code: 'too-low' };
   if (!multiline && paragraphBreak.test(value)) return { code: 'unsupported-line-break' };
@@ -187,7 +189,7 @@ export function fitText(shaper: Shaper, value: string, multiline: boolean, optio
     for (let index = 1; index < wrapped.length; index++) {
       const previous = wrapped[index - 1]!;
       const next = wrapped[index]!;
-      baselines.push(baselines[index - 1]! - Math.max(1, next.bounds.maxY - previous.bounds.minY + 0.18));
+      baselines.push(baselines[index - 1]! - Math.max(1, next.bounds.maxY - previous.bounds.minY + 0.18) * lineHeightScale);
     }
     let top = -Infinity;
     let bottom = Infinity;

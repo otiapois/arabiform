@@ -71,15 +71,21 @@ function validateFieldTypography(value: unknown, mapping: PresetSettings['mappin
     const mapped = Object.hasOwn(mapping, field) && mapping[field] || Object.hasOwn(virtualMappings, field);
     if (!mapped || !isRecord(typography)) return undefined;
     const { numeralPolicy, lineHeightScale, paddingPt } = typography;
-    if (Object.keys(typography).some((key) => key !== 'numeralPolicy' && key !== 'lineHeightScale' && key !== 'paddingPt')
-      || Object.hasOwn(typography, 'numeralPolicy') && numeralPolicy !== 'preserve' && numeralPolicy !== 'eastern-arabic' && numeralPolicy !== 'western-ascii'
-      || Object.hasOwn(typography, 'lineHeightScale') && lineHeightScale !== 1 && lineHeightScale !== 1.15 && lineHeightScale !== 1.3
-      || Object.hasOwn(typography, 'paddingPt') && paddingPt !== 2 && paddingPt !== 4 && paddingPt !== 6) return undefined;
-    entries.push([field, {
-      ...(numeralPolicy !== undefined && { numeralPolicy: numeralPolicy as NonNullable<FieldTypographyMap[string]['numeralPolicy']> }),
-      ...(lineHeightScale !== undefined && { lineHeightScale: lineHeightScale as NonNullable<FieldTypographyMap[string]['lineHeightScale']> }),
-      ...(paddingPt !== undefined && { paddingPt: paddingPt as NonNullable<FieldTypographyMap[string]['paddingPt']> }),
-    }]);
+    const validated: FieldTypographyMap[string] = {};
+    if (Object.hasOwn(typography, 'numeralPolicy')) {
+      if (numeralPolicy !== 'preserve' && numeralPolicy !== 'eastern-arabic' && numeralPolicy !== 'western-ascii') return undefined;
+      validated.numeralPolicy = numeralPolicy;
+    }
+    if (Object.hasOwn(typography, 'lineHeightScale')) {
+      if (lineHeightScale !== 1 && lineHeightScale !== 1.15 && lineHeightScale !== 1.3) return undefined;
+      validated.lineHeightScale = lineHeightScale;
+    }
+    if (Object.hasOwn(typography, 'paddingPt')) {
+      if (paddingPt !== 2 && paddingPt !== 4 && paddingPt !== 6) return undefined;
+      validated.paddingPt = paddingPt;
+    }
+    if (Object.keys(validated).length !== Object.keys(typography).length) return undefined;
+    entries.push([field, validated]);
   }
   return Object.fromEntries(entries);
 }
@@ -136,7 +142,7 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (data.version === 8) return { version: 8, ...settingsWithStamps, imposition };
   const { groupByColumn } = data;
   if (!Object.hasOwn(data, 'groupByColumn') || (groupByColumn !== null && (typeof groupByColumn !== 'string' || !groupByColumn.trim()))) return undefined;
-  const groupedSettings = { ...settingsWithStamps, imposition, groupByColumn };
+  const groupedSettings = { ...settingsWithStamps, imposition, groupByColumn } as const;
   if (data.version === 9) return { version: 9, ...groupedSettings };
   const fieldTypography = Object.hasOwn(data, 'fieldTypography') && validateFieldTypography(data.fieldTypography, settings.mapping, virtualMappings);
   const approvalSeal = Object.hasOwn(data, 'approvalSeal') ? validateApprovalSealSettings(data.approvalSeal) : undefined;

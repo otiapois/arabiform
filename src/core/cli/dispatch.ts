@@ -5,6 +5,7 @@ import { validateMappingPreset } from '../draft/mapping-preset';
 import { planGroupedOutput } from '../export/grouping';
 import { extractBatch, type ExtractInput } from '../extractor/extract';
 import { createAudit, inspectTemplate } from '../pdf';
+import { ApprovalSealError, type ApprovalSealProblem } from '../pdf/approval-seal-settings';
 import { resolveQrPayload } from '../pdf/qr-encoder';
 import { DEFAULT_QR_SIZE_PT, type BatchQrPrintRequest } from '../pdf/qr-settings';
 import type { FontBytes } from '../pdf/shaping';
@@ -44,8 +45,8 @@ const idle = () => {};
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-function blockedBatch(mode: BatchCommandLine['mode'], code: string, message: string): CliResult {
-  const report = { status: 'blocked', ready: 0, flagged: 0, issues: [{ code, message }] };
+function blockedBatch(mode: BatchCommandLine['mode'], code: string, message: string, detail?: Omit<ApprovalSealProblem, 'code'>): CliResult {
+  const report = { status: 'blocked', ready: 0, flagged: 0, issues: [{ code, message, ...detail }] };
   return { exitCode: 2, report, diagnostic: mode === 'fill', artifacts: mode === 'preflight' ? [
     { name: 'arabiform-preflight.csv', data: Papa.unparse([['status', 'code', 'message'], ['blocked', code, message]], { escapeFormulae: true }) + '\r\n' },
     { name: 'arabiform-preflight.json', data: json(report) },
@@ -61,7 +62,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     } catch {
       // Fall through to the same usage error for invalid JSON and invalid preset structure.
     }
-    if (!preset) return { exitCode: 1, report: { status: 'usage-error', message: 'Invalid mapping preset. Export a mapping preset (v1–v9) from ArabiForm.' }, artifacts: [], diagnostic: true };
+    if (!preset) return { exitCode: 1, report: { status: 'usage-error', message: 'Invalid mapping preset. Export a mapping preset (v1–v10) from ArabiForm.' }, artifacts: [], diagnostic: true };
   }
 
   let template: Awaited<ReturnType<typeof inspectTemplate>>;
@@ -95,10 +96,12 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   const actualMappings = Object.entries(preset?.mapping ?? autoMap(automaticFields, headers)).filter(([, column]) => column);
   const virtualMappings = Object.entries(preset && 'virtualMappings' in preset ? preset.virtualMappings : {});
   const alignOverrides = preset && 'alignOverrides' in preset ? preset.alignOverrides : undefined;
+  const fieldTypography = preset?.version === 10 ? preset.fieldTypography : undefined;
   const mismatches = [
     ...actualMappings.filter(([field, column]) => !fields.has(field) || !headers.includes(column)).map(([field, column]) => JSON.stringify([field, column])),
     ...virtualMappings.filter(([field]) => fields.get(field)?.kind !== 'text').map(([field]) => JSON.stringify(field)),
     ...Object.keys(alignOverrides ?? {}).filter((field) => fields.get(field)?.kind !== 'text').map((field) => JSON.stringify(field)),
+    ...Object.keys(fieldTypography ?? {}).filter((field) => fields.get(field)?.kind !== 'text').map((field) => JSON.stringify(field)),
   ];
   if (mismatches.length) return blockedBatch(mode, 'preset-source-mismatch', 'Update the preset mappings or choose matching files: ' + mismatches.join(', '));
   if (!actualMappings.length && !virtualMappings.length) return blockedBatch(mode, 'no-mapping', 'Supply a preset or use matching template field names and roster headers.');
@@ -117,7 +120,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
       ...actualMappings.map(([field, column]) => [field, values[column]!]),
       ...virtualMappings.map(([field, binding]) => [field, resolveVirtualMapping(binding, index + 1, localDate)]),
     ])),
-    options: { fonts: sources.fonts, minFontSize: preset?.minFontSize, preferredFont: preset?.font, alignOverrides },
+    options: { fonts: sources.fonts, minFontSize: preset?.minFontSize, preferredFont: preset?.font, alignOverrides, fieldTypography },
   } }, idle) as BatchPreflightResult;
   const scope = resolveRowSelection(checked.rows);
   const ready = scope.selectedRowNumbers.length;
@@ -148,6 +151,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     return blockedBatch(mode, 'imposition-requires-single-page', '2-up requires one template page per record. Choose --imposition 1-up.');
   }
   const watermark = command.watermark === undefined ? (preset && 'watermark' in preset ? preset.watermark : undefined) : cliWatermark(command.watermark);
+  const approvalSeal = preset?.version === 10 ? preset.approvalSeal ?? undefined : undefined;
   const qr = preset && 'qrStamp' in preset ? preset.qrStamp : undefined;
   const activeQr = qr?.placement === 'none' ? undefined : qr;
   let qrStamp: BatchQrPrintRequest | undefined;
@@ -171,8 +175,8 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   } : undefined;
   try {
     const editable = await run({ phase: 'zip', filenames, grouping }, idle) as BatchZipResult;
-    const flattened = await run({ phase: 'zip', filenames, grouping, flattenZip: true, watermark, qrStamp }, idle) as BatchZipResult;
-    const merged = await run({ phase: 'merged', coverSheet, imposition, watermark, qrStamp }, idle) as BatchMergedResult;
+    const flattened = await run({ phase: 'zip', filenames, grouping, flattenZip: true, watermark, qrStamp, approvalSeal }, idle) as BatchZipResult;
+    const merged = await run({ phase: 'merged', coverSheet, imposition, watermark, qrStamp, approvalSeal }, idle) as BatchMergedResult;
     const manifest = createCustodyManifest(checked.custody, {
       entries: editable.entries, flattenedEntries: flattened.entries, mergedPdfSha256: merged.mergedPdfSha256,
       groupByColumn: grouping?.groupByColumn, qrRecords: merged.qrRecords,
@@ -185,6 +189,8 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     ] };
   } catch (error) {
     const code = errorMessage(error);
+    if (error instanceof ApprovalSealError) return blockedBatch(mode, error.code,
+      'Review the approval seal placement or labels and run fill again.', { pageNumber: error.pageNumber, fieldName: error.fieldName });
     if (!/^(?:watermark-[\w-]+|qr-stamp-[\w-]+|imposition-[\w-]+|unflattenable-widget|cover-sheet-[\w-]+)$/.test(code)) throw error;
     return blockedBatch(mode, code, 'Review the reported PDF export restriction and adjust the template or selected print options.');
   }
