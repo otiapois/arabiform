@@ -16,6 +16,7 @@
   - Letter changes and diacritic removal are individually opt-in. `normalizeAlef` maps `أ`, `إ`, and `آ` to `ا`. `normalizeTaaMarbuta` maps `ة` to `ه`. `normalizeAlefMaqsura` maps `ى` to `ي`. `stripHarakat` removes U+064B–U+065F and U+0670.
   - Find and replace runs after cleanup and takes literal strings. Case matching is on by default. An empty replacement deletes matches. Cell values stay strings across preview, apply, and Undo. Undo restores the full pre-apply snapshot, including earlier inline edits and IDs such as `00123`.
 - **Smart Auto-Mapper**:
+  - When an authored template enters Fill, use its canonical field names and types through the usual mapping and worksheet flow. Field Layout JSON belongs to the designer and stores the flat source fingerprint and field specs. [Field authoring contract](pdf-engine.md#flat-pdf-field-authoring)
   - Automatically propose column -> PDF field mappings using normalized exact match + bilingual Arabic/English alias table (`Name / Full Name / الاسم / الاسم الكامل`, `ID / Number / Badge / Employee ID / الرقم / رقم الهوية`, `Date / التاريخ`, `Title / Course / الدورة`, etc.).
   - Never silently overwrite user-adjusted mappings; allow 1-click clear/remap.
   - Keep dropdown and radio cell values as supplied by the roster. Header matching uses its own normalization. The PDF engine matches choice values against the template's Unicode labels and exports, and reports invalid or ambiguous cells. [Choice matching contract](pdf-engine.md)

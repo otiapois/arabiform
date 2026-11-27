@@ -57,12 +57,12 @@ export function readBounds(rect: PDFArray): RectangleBounds {
   return [Math.min(firstX, secondX), Math.min(firstY, secondY), Math.max(firstX, secondX), Math.max(firstY, secondY)];
 }
 
-function visiblePageBounds(media: RectangleBounds, crop: RectangleBounds): RectangleBounds {
+export function intersectPageBounds(media: RectangleBounds, crop: RectangleBounds): RectangleBounds | undefined {
   const left = Math.max(media[0], crop[0]);
   const bottom = Math.max(media[1], crop[1]);
   const right = Math.min(media[2], crop[2]);
   const top = Math.min(media[3], crop[3]);
-  return right > left && top > bottom ? [left, bottom, right, top] : media;
+  return right > left && top > bottom ? [left, bottom, right, top] : undefined;
 }
 
 export type PdfIntakeCode = 'invalid-pdf' | 'encrypted-pdf' | 'xfa-unsupported' | 'signed-pdf-warning' | 'flat-scanned-no-fields';
@@ -143,7 +143,7 @@ export function collectPageWidgets(pdfPages: readonly PDFPage[]): Map<PDFDict, n
   return widgetPages;
 }
 
-export function requireUnsignedAcroForm(doc: PDFDocument, rawForm: PDFDict | undefined, widgets: Iterable<PDFDict>) {
+export function assertUnsignedAcroForm(doc: PDFDocument, rawForm: PDFDict | undefined, widgets: Iterable<PDFDict>) {
   // Inspect the raw field tree and signature dictionaries before pdf-lib's getForm can mutate XFA.
   const stack = [...widgets];
   const roots = rawForm?.lookupMaybe(key('Fields'), PDFArray);
@@ -162,6 +162,11 @@ export function requireUnsignedAcroForm(doc: PDFDocument, rawForm: PDFDict | und
   if (doc.context.enumerateIndirectObjects().some(([, object]) => object instanceof PDFDict && object.get(key('Type')) === key('Sig'))) {
     throw new PdfIntakeError('signed-pdf-warning');
   }
+  return roots;
+}
+
+export function requireUnsignedAcroForm(doc: PDFDocument, rawForm: PDFDict | undefined, widgets: Iterable<PDFDict>) {
+  const roots = assertUnsignedAcroForm(doc, rawForm, widgets);
   if (!rawForm || !roots?.size()) throw new PdfIntakeError('flat-scanned-no-fields');
   return { rawForm, roots };
 }
@@ -178,7 +183,7 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
       const unit = userUnit instanceof PDFNumber ? userUnit.asNumber() : 1;
       const media = readBounds(page.node.MediaBox());
       const crop = page.node.CropBox();
-      const printBounds = crop ? visiblePageBounds(media, readBounds(crop)) : media;
+      const printBounds = (crop && intersectPageBounds(media, readBounds(crop))) ?? media;
       const [x, y, right, top] = printBounds;
       return {
         ...page.getSize(), rotation: rotationOf(page.getRotation().angle),

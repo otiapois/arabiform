@@ -16,7 +16,7 @@ const routes = [
     ],
     faq: [
       ['Can I try the tool without my own files?', 'Use the Synthetic Arabic Sample to load a fictional roster and a demo PDF. One row is deliberately too long so you can try editing it.'],
-      ['What type of PDF template can I use?', 'Use an ordinary AcroForm PDF with editable text fields, checkboxes, dropdowns, or radio buttons. Leave a field unmapped to preserve its original value in editable PDFs. XFA forms, flat PDFs, signed PDFs, and encrypted PDFs are outside the supported scope.'],
+      ['What type of PDF template can I use?', 'Fill PDFs uses an ordinary AcroForm PDF with editable text fields, checkboxes, dropdowns, or radio buttons. For a flat PDF, use Design fields to place text fields and checkboxes manually and create a reusable AcroForm template. XFA, signed, and encrypted PDFs are unsupported.'],
     ],
     links: [
       ['/arabic-pdf-form-filler', 'Fill an Arabic PDF form'],
@@ -61,7 +61,7 @@ const routes = [
     ],
     faq: [
       ['هل تُرفع ملفاتي إلى خادم؟', 'تُقرأ ملفات النموذج والجدول وتُعالج داخل متصفحك. تُنزَّل النتائج من المتصفح بعد التصدير.'],
-      ['هل تقبل الأداة نموذجًا ممسوحًا ضوئيًا؟', 'تحتاج الأداة إلى نموذج AcroForm يحتوي على حقول تفاعلية قابلة للتعبئة. الصور الممسوحة ضوئيًا بلا حقول ونماذج XFA والملفات الموقّعة أو المشفّرة خارج نطاق الدعم.'],
+      ['هل تقبل الأداة نموذجًا ممسوحًا ضوئيًا؟', 'إذا كان المسح محفوظًا في ملف PDF خالٍ من الحقول التفاعلية، افتح «تصميم الحقول» وضع حقول النص وخانات الاختيار يدويًا فوق صفحات المسح. احفظ قالب AcroForm الناتج أو افتحه في وضع التعبئة. نماذج XFA والملفات الموقّعة أو المشفّرة خارج نطاق الدعم.'],
     ],
     links: [
       ['/', 'واجهة العمل بالإنجليزية'],
@@ -98,7 +98,7 @@ const routes = [
     paragraphs: [
       'Load the Synthetic Arabic Sample. Select a ready row to see Arabic text and a leading-zero ID in a filled PDF. Select the deliberately overlong row to see the warning. Shorten its name and compare the preview after the row passes preflight.',
       'To check network behavior, open the Network panel in browser developer tools before loading the sample. Page assets and the PDF worker come from the site itself. The production response header contains the Content Security Policy directive connect-src \'none\', which blocks connections such as fetch and XMLHttpRequest.',
-      'ArabiForm fills mapped text fields, checkboxes, dropdowns and radio buttons in ordinary AcroForm PDFs. Unmapped fields keep their original values and appearances in editable copies. The flattened ZIP option writes the field appearances into the pages for printing. XFA, encrypted, signed, and flat PDFs are outside the supported scope.',
+      'ArabiForm fills mapped text fields, checkboxes, dropdowns and radio buttons in ordinary AcroForm PDFs. Unmapped fields keep their original values and appearances in editable copies. The flattened ZIP option writes the field appearances into the pages for printing. For a flat PDF, including a scan saved as PDF, Design fields can place editable text fields and checkboxes over the original pages. Field placement is manual. XFA, encrypted, and signed PDFs are unsupported.',
     ],
     faq: [
       ['Does choosing a file upload it to the site?', 'The file picker passes the contents to your browser for local processing. The workbench creates the preview and export files on the same device.'],

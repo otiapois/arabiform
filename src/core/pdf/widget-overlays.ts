@@ -1,4 +1,5 @@
 import type { RectangleBounds, TemplateMetadata } from './template';
+import { sourceToDisplay } from './page-geometry';
 
 export interface WidgetOverlay {
   pageNumber: number;
@@ -18,15 +19,7 @@ function projectWidget(widget: RectangleBounds, page: TemplateMetadata['pages'][
   const height = pageTop - pageBottom;
   if (!(x2 > x1 && y2 > y1) || ![x1, x2, y1, y2, width, height].every(Number.isFinite)) return undefined;
 
-  // PDF.js flips the PDF y-axis before rendering. UserUnit and zoom cancel in these ratios.
-  const widgetWidth = (x2 - x1) / width;
-  const widgetHeight = (y2 - y1) / height;
-  switch (page.rotation) {
-    case 90: return [(y1 - pageBottom) / height, (x1 - pageLeft) / width, widgetHeight, widgetWidth];
-    case 180: return [(pageRight - x2) / width, (y1 - pageBottom) / height, widgetWidth, widgetHeight];
-    case 270: return [(pageTop - y2) / height, (pageRight - x2) / width, widgetHeight, widgetWidth];
-    default: return [(x1 - pageLeft) / width, (pageTop - y2) / height, widgetWidth, widgetHeight];
-  }
+  return sourceToDisplay([x1, y1, x2 - x1, y2 - y1], page);
 }
 
 export function getWidgetOverlays(template: TemplateMetadata): WidgetOverlay[] {

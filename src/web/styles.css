@@ -300,6 +300,7 @@ input:is([type="checkbox"], [type="radio"]) { accent-color: var(--forest); }
   font-size: .87rem;
 }
 .warning { border-color: #ecd4aa; color: var(--amber); background: var(--amber-soft); }
+.flat-designer-cta { margin-block-start: .45rem; }
 
 .full-control, .filter-control { display: grid; gap: .24rem; align-self: start; }
 select, input[type="text"], textarea {

@@ -10,6 +10,7 @@ import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
+import type { FillTemplate, FlatSource } from './fill-template-source';
 import type { FontMode, MappingPreset } from './presets';
 import { errorCode, saveDownload } from './resources';
 import type { RosterSource } from './roster-source';
@@ -49,11 +50,10 @@ type Cells = Pick<BatchDraft, 'edits' | 'hygiene'>;
 type CellState = Cells & { undo?: Cells; undoExpired?: boolean; revision: number };
 
 export function useWorkbench(locale: MergeCoverSheet['locale']) {
-  const [template, setTemplate] = useState<{
-    name: string; bytes: Uint8Array; info: TemplateInfo; overlays: ReturnType<PdfEngine['getWidgetOverlays']>;
-  }>();
+  const [template, setTemplate] = useState<FillTemplate>();
+  const [flatSource, setFlatSource] = useState<FlatSource>();
   const [roster, setRoster] = useState<RosterSource>();
-  const [loadedSample, setLoadedSample] = useState<SampleWorkflow>();
+  const [sample, setSample] = useState<{ workflow: SampleWorkflow; notice: string }>();
   const [busy, setBusy] = useState({ pdf: false, roster: false });
   const [errors, setErrors] = useState<{ pdf?: string; roster?: string }>({});
   const request = useRef({ pdf: 0, roster: 0, preset: 0, customFont: 0, draft: 0 });
@@ -91,35 +91,15 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const bindings = mappingSettings.virtual;
     return kind === 'text' && bindings && Object.hasOwn(bindings, name) ? [[name, bindings[name]!] as const] : [];
   })), [fields, mappingSettings.virtual]);
-  const mapping = useMemo(() => {
-    const headers = sheet?.headers ?? [];
-    const autoNames = fields.filter(({ kind }) => kind === 'text' || kind === 'checkbox').map(({ name }) => name);
-    const auto = !mappingSettings.fromPreset || roster?.remapMissing ? roster?.engine.autoMap(autoNames, headers) : undefined;
-    const entries = fields.map(({ name: field }) => {
-      const configured = Object.hasOwn(mappingSettings.values, field) ? mappingSettings.values[field] : undefined;
-      const column = configured === undefined || (roster?.remapMissing && configured && !headers.includes(configured))
-        ? auto?.[field] : configured;
-      return [field, column && !Object.hasOwn(virtualMappings, field) && headers.includes(column) ? column : ''] as const;
-    });
-    return Object.fromEntries(entries);
-  }, [fields, sheet, roster, mappingSettings.values, mappingSettings.fromPreset, virtualMappings]);
+  const mapping = useMemo(() => roster?.views.fieldMapping(fields, sheet?.headers ?? [], mappingSettings.values, virtualMappings,
+    mappingSettings.fromPreset, roster.remapMissing) ?? Object.fromEntries(fields.map(({ name }) => [name, ''])),
+  [fields, sheet, roster, mappingSettings.values, mappingSettings.fromPreset, virtualMappings]);
   const alignOverrides = useMemo(() => Object.fromEntries(fields.flatMap(({ kind, name }) => {
     const alignment = mappingSettings.alignment;
     const value = alignment && Object.hasOwn(alignment, name) ? alignment[name] : undefined;
     return kind === 'text' && (mapping[name] || Object.hasOwn(virtualMappings, name)) && value && value !== 'auto' ? [[name, value]] : [];
   })), [fields, mapping, virtualMappings, mappingSettings.alignment]);
-  const rows = useMemo(() => {
-    if (!sheet) return emptyRows;
-    const mappedColumns = new Set(Object.values(mapping));
-    return sheet.rows.map((row, index) => {
-      const warnings = row.warnings.filter(({ code, column }) =>
-        code !== 'excel-formula-warning' || mappedColumns.has(column));
-      const edit = edits[index];
-      return edit || warnings.length !== row.warnings.length
-        ? { ...row, values: edit ? { ...row.values, ...edit } : row.values, warnings }
-        : row;
-    });
-  }, [sheet, mapping, edits]);
+  const rows = useMemo(() => sheet && roster ? roster.views.effectiveRows(sheet.rows, mapping, edits) : emptyRows, [sheet, roster, mapping, edits]);
   const presetWarnings = useMemo(() => mappingSettings.fromPreset
     ? presetCodec?.presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined,
       sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined)
@@ -199,16 +179,22 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     invalidate(true);
     setRowSelection('all-ready');
     setTemplate(undefined);
+    setFlatSource(undefined);
     setRequestedPage(undefined);
     setFieldSelection(undefined);
-    setLoadedSample(undefined);
+    setSample(undefined);
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setErrors((current) => ({ ...current, pdf: undefined }));
     setBusy((current) => ({ ...current, pdf: true }));
     try {
-      const [engine, bytes] = await Promise.all([import('../core/pdf'), file.arrayBuffer()]);
-      const info = await engine.inspectTemplate(new Uint8Array(bytes));
-      if (request.current.pdf === id) setTemplate({ name: file.name, bytes: new Uint8Array(bytes), info, overlays: engine.getWidgetOverlays(info) });
+      const { inspectFillSource } = await import('./fill-template-source');
+      const result = await inspectFillSource(file);
+      if (request.current.pdf !== id) return;
+      if (result.template) setTemplate(result.template);
+      else {
+        setErrors((current) => ({ ...current, pdf: result.code }));
+        setFlatSource(result.flatSource);
+      }
     } catch (error) {
       if (request.current.pdf === id) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
     } finally {
@@ -221,7 +207,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const openedAt = new Date();
     invalidate(true);
     setRoster(undefined);
-    setLoadedSample(undefined);
+    setSample(undefined);
     resetRows(!roster);
     setErrors((current) => ({ ...current, roster: undefined }));
     setBusy((current) => ({ ...current, roster: true }));
@@ -262,17 +248,18 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     }
     setPresetError(false);
     setTemplate(undefined);
+    setFlatSource(undefined);
     setFieldSelection(undefined);
     setRoster(undefined);
-    setLoadedSample(undefined);
+    setSample(undefined);
     setErrors({});
     setBusy({ pdf: true, roster: true });
     try {
       const { loadSampleWorkflow } = await import('./workflow-loader');
-      const { template, roster } = await loadSampleWorkflow(selectedSample, openedAt);
+      const { template, roster, notice } = await loadSampleWorkflow(selectedSample, openedAt, locale);
       if (request.current.pdf === pdfId) setTemplate(template);
       if (request.current.roster === rosterId) setRoster(roster);
-      if (request.current.pdf === pdfId && request.current.roster === rosterId) setLoadedSample(selectedSample);
+      if (request.current.pdf === pdfId && request.current.roster === rosterId) setSample({ workflow: selectedSample, notice });
     } catch (error) {
       if (request.current.pdf === pdfId) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
     } finally {
@@ -527,7 +514,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }
 
   return {
-    template, roster, loadedSample, busy, errors, sheet, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
+    template, flatSource, roster, sample, busy, errors, sheet, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
     virtualMappings, virtualTemplateBlocked, changeVirtualMapping, fieldSelection, focusMappingField, selectWidget,
     sourceRevision: `${request.current.roster}:${roster?.sheetName ?? ''}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,

@@ -1,0 +1,144 @@
+.field-designer { min-inline-size: 0; }
+.designer-body, .designer-paper, .designer-inspector, .designer-properties {
+  display: grid;
+  min-inline-size: 0;
+  align-content: start;
+  gap: .8rem;
+}
+.designer-source {
+  display: grid;
+  gap: .55rem;
+  padding: .72rem;
+  border: 1px dashed var(--control-line);
+  border-radius: .45rem;
+  background: #f8f9f4;
+}
+.designer-source-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .2rem .5rem;
+  color: var(--muted);
+  font-size: .87rem;
+  overflow-wrap: anywhere;
+}
+.designer-source-name bdi { font-weight: 650; color: var(--forest); }
+.designer-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 17rem);
+  gap: .95rem;
+}
+.designer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.designer-body .button { min-block-size: 44px; gap: .25rem; }
+.designer-page-control, .designer-inspector label {
+  min-inline-size: 0;
+  display: grid;
+  gap: .25rem;
+  font-size: .86rem;
+  font-weight: 650;
+}
+.designer-page-control { min-inline-size: 5rem; max-inline-size: 100%; }
+.designer-page-bed {
+  min-inline-size: 0;
+  min-block-size: 9rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  justify-items: center;
+  background: #e5eae2;
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  padding: .55rem;
+}
+.designer-page-bed > p { align-self: center; justify-self: center; }
+.designer-stage {
+  position: relative;
+  max-width: 100%;
+  direction: ltr;
+  touch-action: none;
+  user-select: none;
+  background: #fff;
+  box-shadow: 0 2px 7px #192e2540;
+  cursor: crosshair;
+}
+.designer-stage canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.designer-field, .designer-draw-rect {
+  position: absolute;
+  padding: 0;
+  border: 2px solid #194b36;
+  border-radius: 0;
+  background: #73c8a333;
+  box-shadow: 0 0 0 1px #fff;
+}
+.designer-field::before { position: absolute; inset: -8px; content: ''; }
+.designer-field[aria-pressed="true"] {
+  z-index: 1;
+  border-color: #113f75;
+  background: #6da4ed3b;
+}
+.designer-field:focus-visible {
+  z-index: 2;
+  outline: 2px solid #113f75;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 6px #fff;
+}
+.designer-field:disabled { opacity: .65; }
+.designer-draw-rect { z-index: 3; border-style: dashed; pointer-events: none; }
+.designer-inspector {
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  padding: .75rem;
+  background: #f8f9f4;
+}
+.designer-inspector h3 { color: var(--forest); }
+.designer-properties { border: 0; padding: 0; margin: 0; }
+.designer-properties > .button { justify-self: start; }
+.designer-properties input[type="number"] {
+  inline-size: 100%;
+  min-inline-size: 0;
+  border: 1px solid var(--control-line);
+  border-radius: .38rem;
+  background: var(--surface);
+  padding: .32rem .48rem;
+  font-size: .87rem;
+  font-weight: 450;
+}
+.designer-properties input::placeholder { color: var(--muted); opacity: 1; }
+.designer-body select, .designer-properties input:not([type="checkbox"]) { min-block-size: 44px; }
+.designer-inspector .designer-multiline {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-block-size: 44px;
+}
+.designer-multiline input { inline-size: 1rem; block-size: 1rem; accent-color: var(--forest); }
+.designer-axes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; direction: ltr; }
+.designer-outputs {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  padding-block-start: .75rem;
+  border-block-start: 1px solid var(--line);
+}
+@media (max-width: 46rem) {
+  .designer-editor { grid-template-columns: minmax(0, 1fr); }
+}
+@media (forced-colors: active) {
+  .designer-field, .designer-draw-rect { border-color: CanvasText; }
+  .designer-field[aria-pressed="true"], .designer-field:focus-visible { border-color: Highlight; outline-color: Highlight; }
+}

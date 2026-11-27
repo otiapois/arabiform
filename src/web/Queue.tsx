@@ -102,6 +102,7 @@ function searchable(value: string) {
 
 export default function Queue({ desk, language, characterKeys }: QueueProps) {
   const { labels, arabic } = language;
+  const fieldLabels = activeFillLabels(arabic);
   const copy = arabic ? ar : en;
   const [editSession, setEditSession] = useState<{
     sheet: typeof desk.sheet; row: number; revision: number; original: typeof desk.rowEdit;
@@ -321,7 +322,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
         </div>
       )}
       {row && (
-        <section className="row-editor" aria-label={fillLabel(labels.selected, { row: desk.selected + 1 })}
+        <section className="row-editor" aria-label={fillLabel(fieldLabels.selected, { row: desk.selected + 1 })}
           onKeyDown={(event) => {
             if (!activeEdit || event.key !== 'Escape' || event.nativeEvent.isComposing) return;
             event.preventDefault();
@@ -331,7 +332,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
           }}>
           <div className="row-editor-head">
             <div className="row-summary">
-              <h3>{fillLabel(labels.selected, { row: desk.selected + 1 })}</h3>
+              <h3>{fillLabel(fieldLabels.selected, { row: desk.selected + 1 })}</h3>
               <Filename name={desk.filenamePlans[desk.selected]!.filename} />
               {result?.status === 'pass' && <p>{copy.cleanRow}</p>}
               {desk.checking && <p>{copy.unresolved}</p>}
@@ -397,9 +398,9 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
                         value={current?.input ?? value}
                         onChange={(event) => updateCell(column, event.currentTarget.value)}
                       >
-                        {!current && <option value={value} disabled>{value || labels.blankChoice}</option>}
+                        {!current && <option value={value} disabled>{value || fieldLabels.blankChoice}</option>}
                         {options.map(({ choice, input }) => (
-                          <option key={input} value={input}>{choiceText(choice, labels.blankChoice)}</option>
+                          <option key={input} value={input}>{choiceText(choice, fieldLabels.blankChoice)}</option>
                         ))}
                       </select>
                     )
@@ -422,3 +423,4 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
     </>
   );
 }
+import { activeFillLabels } from './active-fill-labels';

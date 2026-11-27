@@ -11,6 +11,10 @@ import { createBatchProcessor } from '../src/core/worker/batch';
 import { encodeQr, resolveQrPayload } from '../src/core/pdf/qr-encoder';
 import type { QrPrintRequest } from '../src/core/pdf/qr-settings';
 import { proveQrMatrix } from '../tests/core/qr-proof';
+import { authorFlatPdf, inspectFlatPdf, type FieldDraftSpec } from '../src/core/designer/author';
+import { displayToSource, type NormalizedRect } from '../src/core/designer/geometry';
+import { loadFieldLayout, saveFieldLayout } from '../src/core/designer/layout';
+import { extractBatch } from '../src/core/extractor/extract';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -28,7 +32,9 @@ interface ExpectedChoices {
 
 type AlignmentMode = 'auto' | 'rtl' | 'ltr' | 'center';
 type ExpectedAlignment = Record<string, { mode: AlignmentMode; anchor: 'rtl' | 'ltr' | 'center' }>;
-const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean; alignments?: ExpectedAlignment } & ExpectedChoices)[] = [];
+interface DesignerProof { source: string; rotation: number; rects: Record<string, NormalizedRect> }
+const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean;
+  alignments?: ExpectedAlignment; designer?: DesignerProof } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
@@ -111,21 +117,28 @@ async function compareRawPdf(before: Uint8Array, after: Uint8Array, expected: Re
   }
 }
 
-async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
-  { customFont, expected = values, alignments, ...choices }: ExpectedChoices & { customFont?: Uint8Array; expected?: Record<string, string>; alignments?: ExpectedAlignment } = {}) {
-  const alignOverrides = alignments && Object.fromEntries(Object.entries(alignments).map(([name, { mode }]) => [name, mode]));
-  const options = { ...settings, minFontSize, customFont, alignOverrides };
-  const result = await preflightRow(source, values, options);
-  assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
-  assert(result.pdfBytes);
-  await compareRawPdf(source, result.pdfBytes, expected, choices);
+async function snapshotSource(source: Uint8Array) {
   const before = `source-${createHash('sha256').update(source).digest('hex')}.pdf`;
   if (!originalSnapshots.has(before)) {
     await writeFile(resolve(root, before), source);
     originalSnapshots.add(before);
   }
+  return before;
+}
+
+async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
+  { customFont, expected = values, alignments, designer, ...choices }: ExpectedChoices & {
+    customFont?: Uint8Array; expected?: Record<string, string>; alignments?: ExpectedAlignment; designer?: DesignerProof;
+  } = {}) {
+  const alignOverrides = !designer && alignments ? Object.fromEntries(Object.entries(alignments).map(([name, { mode }]) => [name, mode])) : undefined;
+  const options = { ...settings, minFontSize, customFont, alignOverrides };
+  const result = await preflightRow(source, values, options);
+  assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
+  assert(result.pdfBytes);
+  await compareRawPdf(source, result.pdfBytes, expected, choices);
+  const before = await snapshotSource(source);
   await writeFile(resolve(root, filename), result.pdfBytes);
-  cases.push({ before, after: filename, values: expected, label, alignments, ...choices, ...(customFont && { customFont: true }) });
+  cases.push({ before, after: filename, values: expected, label, alignments, designer, ...choices, ...(customFont && { customFont: true }) });
   return { filename, pdfBytes: result.pdfBytes, fontSizes: result.fontSizes };
 }
 
@@ -662,6 +675,68 @@ for (const [kind, rotation] of [['portrait', 0], ['rotated-landscape', 90]] as c
   assert(!imposedDoc.catalog.has(key('AcroForm')));
   await writeFile(resolve(root, spec.pdf), imposed);
   await writeFile(resolve(root, spec.referencePdf), reference);
+  impositionProofs.push(spec);
+}
+
+for (const [rotation, mode] of [[0, 'auto'], [90, 'rtl'], [180, 'ltr'], [270, 'center']] as const) {
+  const flat = await PDFDocument.create({ updateMetadata: false });
+  const page = flat.addPage([420, 330]);
+  page.setCropBox(23.25, 18.75, 370, 288);
+  page.setRotation(degrees(rotation));
+  page.drawRectangle({ x: 36, y: 35, width: 330, height: 253, borderWidth: 1, borderColor: rgb(0.12, 0.25, 0.42) });
+  page.drawRectangle({ x: 50, y: 251, width: 100, height: 8, color: rgb(0.07, 0.21, 0.37) });
+  page.drawRectangle({ x: 58, y: 116, width: 285, height: 86, color: rgb(0.94, 0.96, 0.99) });
+  const original = await flat.save();
+  const source = await inspectFlatPdf(original);
+  const rects = { Name: [0.16, 0.32, 0.63, 0.14], Verified: [0.18, 0.52, 0.075, 0.08] } as const;
+  const fields = [
+    { name: 'Name', kind: 'text', pageIndex: 0, rectPdf: displayToSource(rects.Name, source.pages[0]!),
+      alignment: mode, multiline: true, maxLen: 55, fontSize: 16 },
+    { name: 'Verified', kind: 'checkbox', pageIndex: 0, rectPdf: displayToSource(rects.Verified, source.pages[0]!) },
+  ] satisfies FieldDraftSpec[];
+  const layout = await saveFieldLayout(source, fields);
+  assert.deepEqual(await loadFieldLayout(layout, source), fields);
+  const bytes = Buffer.from(await authorFlatPdf(original, fields));
+  const inspected = await inspectTemplate(bytes);
+  assert.deepEqual(inspected.fields.map(({ name, kind, value }) => [name, kind, value]), [['Name', 'text', ''], ['Verified', 'checkbox', 'Off']]);
+  assert.equal(inspected.fields[0]?.maxLength, 55);
+  assert.equal(inspected.fields[0]?.defaultFontSize, 16);
+  for (const [index, field] of inspected.fields.entries()) {
+    const { x, y, width, height, rotation: widgetRotation } = field.widgets[0]!;
+    assert.equal(widgetRotation, rotation);
+    for (const [axis, value] of [x, y, width, height].entries()) assert(Math.abs(value - fields[index]!.rectPdf[axis]!) < 1e-8);
+  }
+  const designer = { source: await snapshotSource(original), rotation, rects };
+  const values = { Name: 'مُحَمَّد عَبْدُ ٱللَّٰه 00123', Verified: 'نعم' };
+  const options = { designer, alignments: { Name: { mode, anchor: mode === 'auto' ? 'rtl' as const : mode } },
+    checkboxes: { Verified: 'Yes' }, expected: { Name: values.Name, Verified: 'Yes' } };
+  const row = await passingCase(bytes, values, `m15-designer-${rotation}.pdf`, `M15 authored flat, rotation ${rotation}`, settings.minFontSize, options);
+  const readback = await extractBatch([{ filename: row.filename, bytes: row.pdfBytes }]);
+  assert.deepEqual({ ...readback.rows[0]?.fields }, {
+    Name: { kind: 'text', value: values.Name },
+    Verified: { kind: 'checkbox', value: 'checked', nativeValue: 'Yes' },
+  });
+  if (rotation !== 90) continue;
+  const custom = 'سَلْمَى بِنْت يَاسِين';
+  const second = await passingCase(bytes, { Name: custom, Verified: 'لا' }, 'm15-designer-custom.pdf',
+    'M15 authored rotated, local custom Arabic face', settings.minFontSize, {
+      ...options, checkboxes: { Verified: 'Off' }, expected: { Name: custom, Verified: 'Off' }, customFont: settings.fonts.arabic,
+    });
+  const payloads = ['CERT-00123', 'شهادة 00007'];
+  const modules = payloads.map((payload) => {
+    const symbol = encodeQr(payload);
+    proveQrMatrix(symbol, payload);
+    return symbol.modules;
+  });
+  const corner = 'bottom-right';
+  const sizePt = 36;
+  const qrStamp: QrPrintRequest = { placement: corner, sizePt, payloads };
+  const watermark = { settings: { kind: 'draft-ar', opacity: 0.22, angle: -45 } as const, fonts: settings.fonts };
+  const rows = [row, second];
+  const spec = { pdf: 'm15-designer-imposed.pdf', referencePdf: 'm15-designer-qr-reference.pdf',
+    coverPages: 0, filenames: rows.map(({ filename }) => filename), rowNumbers: [1, 2], corner, sizePt, modules, payloads };
+  await writeFile(resolve(root, spec.pdf), await createMergedPdf(rows, undefined, undefined, watermark, qrStamp, '2-up'));
+  await writeFile(resolve(root, spec.referencePdf), await createMergedPdf(rows, undefined, undefined, watermark, qrStamp));
   impositionProofs.push(spec);
 }
 

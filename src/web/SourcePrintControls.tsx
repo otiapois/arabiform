@@ -1,12 +1,13 @@
 import type { Imposition } from '../core/pdf/exports';
 import type { translator } from './labels';
+import { sourceProblem } from './source-problems';
 import type { useWorkbench } from './useWorkbench';
 
 type Desk = ReturnType<typeof useWorkbench>;
 
 export function WorksheetPicker({ desk, language }: { desk: Desk; language: ReturnType<typeof translator> }) {
   const { workbook, sheetName, sheetError } = desk.roster!;
-  const { arabic, problem } = language;
+  const { arabic } = language;
   return (
     <>
       <label className="full-control">
@@ -18,7 +19,7 @@ export function WorksheetPicker({ desk, language }: { desk: Desk; language: Retu
         </select>
       </label>
       {sheetError && <p className="alert" role="alert" id="worksheet-error" data-testid="worksheet-error">
-        {sheetError === 'invalid-roster-headers' ? problem(sheetError)
+        {sheetError === 'invalid-roster-headers' ? sourceProblem(sheetError, arabic)
           : arabic ? 'تعذّرت قراءة ورقة العمل هذه. اختر ورقة أخرى أو تحقّق منها في Excel.'
             : 'This worksheet could not be read. Choose another worksheet or check this sheet in Excel.'}
       </p>}

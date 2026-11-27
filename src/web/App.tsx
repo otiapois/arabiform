@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useState, type ChangeEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { fillLabel, translator } from './labels';
 import { QueuePanel } from './QueuePanel';
 import { saveDownload } from './resources';
+import type { FlatSource } from './fill-template-source';
 import { sampleWorkflows, useWorkbench } from './useWorkbench';
 import { WatermarkControls } from './WatermarkControls';
 
@@ -22,6 +23,11 @@ const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
 const WorksheetPicker = lazy(() => import('./SourcePrintControls').then(({ WorksheetPicker }) => ({ default: WorksheetPicker })));
 const PrintLayout = lazy(() => import('./SourcePrintControls').then(({ PrintLayout }) => ({ default: PrintLayout })));
 const PdfExtractor = lazy(() => import('./PdfExtractor'));
+const FieldDesigner = lazy(() => import('./FieldDesigner'));
+const SourceError = lazy(() => import('./SourceError'));
+const ExportCounts = lazy(() => import('./BatchExportStatus').then(({ ExportCounts }) => ({ default: ExportCounts })));
+const SelectedExportScope = lazy(() => import('./BatchExportStatus').then(({ SelectedExportScope }) => ({ default: SelectedExportScope })));
+const ExportProgress = lazy(() => import('./BatchExportStatus').then(({ ExportProgress }) => ({ default: ExportProgress })));
 
 type AppProps = {
   arabic: boolean;
@@ -40,6 +46,7 @@ type FilePickerProps = {
   isLoading: boolean;
   loadingLabel: string;
   onChoose: (file: File) => void;
+  allowDrop?: boolean;
 };
 
 function chooseLocalFile(event: ChangeEvent<HTMLInputElement>, onChoose: (file: File) => void) {
@@ -48,11 +55,15 @@ function chooseLocalFile(event: ChangeEvent<HTMLInputElement>, onChoose: (file: 
   if (file) onChoose(file);
 }
 
-function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isLoading, loadingLabel, onChoose }: FilePickerProps) {
+function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isLoading, loadingLabel, onChoose, allowDrop }: FilePickerProps) {
   return (
     <div className="file-picker">
       <label className="field-label" htmlFor={id}>{label}</label>
-      <div className="file-box">
+      <div className="file-box" onDragOver={allowDrop ? (event) => event.preventDefault() : undefined} onDrop={allowDrop ? (event) => {
+        event.preventDefault();
+        const file = event.dataTransfer.files[0];
+        if (file) onChoose(file);
+      } : undefined}>
         <span className="file-icon" aria-hidden="true" />
         {filename && !isLoading
           ? <bdi dir="auto" className="loaded-filename">{filename}</bdi>
@@ -75,12 +86,34 @@ function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isL
 
 export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
-  const { labels, problem } = language;
+  const { labels } = language;
   const desk = useWorkbench(arabic ? 'ar' : 'en');
-  const [mode, setMode] = useState<'fill' | 'extract'>();
+  const [mode, setMode] = useState<'fill' | 'extract' | 'design'>('fill');
   const extractMode = mode === 'extract';
+  const designMode = mode === 'design';
+  const fillMode = mode === 'fill';
+  const activeMode = useRef(mode);
+  const [extractOpened, setExtractOpened] = useState(false);
+  const [design, setDesign] = useState<{ revision: number; source?: FlatSource }>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
+
+  function openMode(next: typeof mode, source?: FlatSource) {
+    activeMode.current = next;
+    if (next === 'extract') setExtractOpened(true);
+    if (next === 'design') setDesign((current) => !current || source
+      ? { revision: (current?.revision ?? 0) + 1, source }
+      : current);
+    setMode(next);
+  }
+
+  function useDesignedPdf(file: File) {
+    if (activeMode.current !== 'design') return;
+    flushSync(() => openMode('fill'));
+    document.getElementById('files-heading')?.focus();
+    void desk.loadPdf(file);
+  }
+
   useEffect(() => {
     if (!characterKeys) return;
     function handleCharacterShortcut(event: KeyboardEvent) {
@@ -97,7 +130,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
         event.preventDefault();
         setShortcutTrigger((current) => current ?? trigger);
       } else {
-        if (extractMode) return;
+        if (!fillMode) return;
         const search = document.getElementById('queue-search');
         if (!search) return;
         event.preventDefault();
@@ -106,7 +139,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
     }
     document.addEventListener('keydown', handleCharacterShortcut);
     return () => document.removeEventListener('keydown', handleCharacterShortcut);
-  }, [arabic, characterKeys, extractMode]);
+  }, [arabic, characterKeys, fillMode]);
 
   const { ready, flagged, customFont } = desk;
   const subset = desk.exportScope.exportScope === 'selected-subset';
@@ -146,7 +179,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               <span className="privacy-dot" aria-hidden="true" />
               {labels.privacyBadge}
             </div>
-            <button type="button" className="button primary sample-button" hidden={extractMode} disabled={desk.busy.pdf && desk.busy.roster} onClick={() => void desk.loadSample()}>
+            <button type="button" className="button primary sample-button" hidden={!fillMode} disabled={desk.busy.pdf && desk.busy.roster} onClick={() => void desk.loadSample()}>
               {labels.trySample}
             </button>
           </div>
@@ -154,21 +187,24 @@ export function App({ arabic, heading, summary, details }: AppProps) {
 
         <div id="workbench" tabIndex={-1}>
           <div className="workbench-modes" role="group" aria-label={arabic ? 'وضع العمل' : 'Workspace mode'}>
-            <button type="button" className="button" data-testid="mode-fill" aria-pressed={!extractMode} onClick={() => setMode(mode && 'fill')}>
+            <button type="button" className="button" data-testid="mode-fill" aria-pressed={fillMode} onClick={() => openMode('fill')}>
               <span>{arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs'}</span>
             </button>
-            <button type="button" className="button" data-testid="mode-extract" aria-pressed={extractMode} onClick={() => setMode('extract')}>
+            <button type="button" className="button" data-testid="mode-extract" aria-pressed={extractMode} onClick={() => openMode('extract')}>
               <span>{arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx'}</span>
+            </button>
+            <button type="button" id="mode-design" className="button" data-testid="mode-design" aria-pressed={designMode} onClick={() => openMode('design')}>
+              {arabic ? 'تصميم الحقول' : 'Design fields'}
             </button>
           </div>
 
-          <section className="sample-gallery" hidden={extractMode} aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
+          <section className="sample-gallery" hidden={!fillMode} aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
             <h2 id="sample-workflows-heading">{labels.sampleWorkflows}</h2>
             <div className="sample-cards">
               {sampleWorkflows.map(workflow => (
                 <button key={workflow} type="button" className="button secondary sample-card" data-testid={`sample-${workflow}`}
                   aria-label={`${labels[workflow]} · ${labels.synthetic}`}
-                  aria-current={desk.loadedSample === workflow ? 'true' : undefined}
+                  aria-current={desk.sample?.workflow === workflow ? 'true' : undefined}
                   disabled={desk.busy.pdf || desk.busy.roster} onClick={() => void desk.loadSample(workflow)}>
                   <span>{labels[workflow]}</span>
                   <small>{labels.synthetic}{' · '}{labels[`${workflow}Feature`]}</small>
@@ -177,14 +213,14 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             </div>
           </section>
 
-          <div className="workbench" hidden={extractMode}>
+          <div className="workbench" hidden={!fillMode}>
             {desk.template && (
               <Suspense><CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
             )}
             <div className="workbench-grid">
               <div className="setup">
                 <section className="panel source-panel" aria-labelledby="files-heading">
-                  <header><h2 id="files-heading">{labels.files}</h2></header>
+                  <header><h2 id="files-heading" tabIndex={-1}>{labels.files}</h2></header>
                   <div className="panel-body file-stack">
                     <FilePicker
                       id="pdf-upload"
@@ -196,8 +232,13 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       isLoading={desk.busy.pdf}
                       loadingLabel={labels.loading}
                       onChoose={desk.loadPdf}
+                      allowDrop
                     />
-                    {desk.errors.pdf && <p className="alert" role="alert">{problem(desk.errors.pdf) ?? labels.loadError}</p>}
+                    {desk.errors.pdf && <Suspense><SourceError code={desk.errors.pdf} arabic={arabic}
+                      onDesign={desk.flatSource ? () => {
+                        openMode('design', desk.flatSource);
+                        document.getElementById('mode-design')?.focus();
+                      } : undefined} /></Suspense>}
                     <FilePicker
                       id="roster-upload"
                       label={labels.yourRoster}
@@ -209,11 +250,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       loadingLabel={labels.loading}
                       onChoose={desk.loadRoster}
                     />
-                    {desk.errors.roster && <p className="alert" role="alert">{problem(desk.errors.roster) ?? labels.loadError}</p>}
+                    {desk.errors.roster && <Suspense><SourceError code={desk.errors.roster} arabic={arabic} /></Suspense>}
                     {desk.roster?.workbook && <Suspense><WorksheetPicker desk={desk} language={language} /></Suspense>}
                     <div className="source-note" aria-live="polite">
-                      {desk.loadedSample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
-                      <p>{desk.loadedSample === 'workshop' ? labels.sampleNotice : desk.loadedSample ? labels.workflowNotice : labels.realNotice}</p>
+                      {desk.sample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
+                      <p>{desk.sample?.notice ?? labels.realNotice}</p>
                     </div>
                   </div>
                 </section>
@@ -366,14 +407,14 @@ export function App({ arabic, heading, summary, details }: AppProps) {
             <section className="panel exports" aria-labelledby="export-heading">
               <header>
                 <h2 id="export-heading">{labels.export}</h2>
-                <p data-testid="export-counts">{!desk.results ? labels.exportWait
-                  : subset ? labels.exportSubsetHelp : fillLabel(labels.exportHelp, { ready, flagged })}</p>
+                {desk.results
+                  ? <Suspense><ExportCounts arabic={arabic} subset={subset} ready={ready} flagged={flagged} /></Suspense>
+                  : <p data-testid="export-counts">{labels.exportWait}</p>}
               </header>
               <div className="panel-body export-actions">
-                <p role="status" className={subset ? 'tag tag-subset' : 'tag tag-pass'} data-testid="export-scope">
-                  {fillLabel(subset ? labels.exportSelected : labels.exportAll, { count: desk.exportCount })}
-                </p>
-                {emptySubset && desk.results && <p className="alert warning" data-testid="export-subset-empty">{labels.exportSubsetEmpty}</p>}
+                {subset
+                  ? <Suspense><SelectedExportScope arabic={arabic} count={desk.exportCount} showEmpty={emptySubset && Boolean(desk.results)} /></Suspense>
+                  : <p role="status" className="tag tag-pass" data-testid="export-scope">{fillLabel(labels.exportAll, { count: desk.exportCount })}</p>}
                 <div className="actions">
                   <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.printSettingsBlocked)}
                     onClick={() => desk.download('zip')}>{labels.zip}</button>
@@ -392,14 +433,19 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                     </Suspense>
                   ) : custodyPending}
                 </div>
-                {desk.exporting && <p role="status">{labels.exporting}</p>}
+                {desk.exporting && <Suspense><ExportProgress arabic={arabic} /></Suspense>}
                 {desk.exportError && <Suspense><ExportError error={desk.exportError} language={language} /></Suspense>}
               </div>
             </section>
           </div>
 
-          {mode && <div hidden={!extractMode}>
+          {extractOpened && <div hidden={!extractMode}>
             <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}><PdfExtractor arabic={arabic} /></Suspense>
+          </div>}
+          {design && <div hidden={!designMode}>
+            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
+              <FieldDesigner key={design.revision} arabic={arabic} initialSource={design.source} onUseInFill={useDesignedPdf} />
+            </Suspense>
           </div>}
         </div>
 
