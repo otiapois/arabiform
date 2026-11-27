@@ -7,15 +7,15 @@ import { expect, it } from 'vitest';
 
 const project = fileURLToPath(new URL('../../', import.meta.url));
 
-function withBundle(site: string | undefined, check: (dist: string, verify: (...args: string[]) => SpawnSyncReturns<string>) => void) {
+function withBundle(site: string | undefined, check: (dist: string, verify: (args?: string[], origin?: string) => SpawnSyncReturns<string>) => void) {
   const cache = process.platform === 'win32' ? 'D:\\cache\\arabiform\\tmp' : tmpdir();
   mkdirSync(cache, { recursive: true });
   const parent = realpathSync(cache);
   const temporary = mkdtempSync(join(parent, 'release-bundle-'));
-  function run(script: string, args: string[] = []) {
+  function run(script: string, args: string[] = [], origin?: string) {
     const env = { ...process.env };
     delete env.SITE_URL;
-    if (site) env.SITE_URL = site;
+    if (origin !== undefined) env.SITE_URL = origin;
     return spawnSync(process.execPath, [join(temporary, script), ...args], { encoding: 'utf8', cwd: temporary, env });
   }
   try {
@@ -33,9 +33,9 @@ function withBundle(site: string | undefined, check: (dist: string, verify: (...
     const index = readFileSync(join(project, 'index.html'), 'utf8');
     writeFileSync(join(dist, 'index.html'), index.replace('/src/web/main.tsx', '/assets/index-test.js'));
     writeFileSync(join(dist, 'assets/index-test.js'), '// synthetic entry');
-    const prerender = run('scripts/prerender.mjs');
+    const prerender = run('scripts/prerender.mjs', [], site);
     expect(prerender.status, prerender.stderr).toBe(0);
-    check(dist, (...args) => run('scripts/verify-release-bundle.mjs', args));
+    check(dist, (args, origin) => run('scripts/verify-release-bundle.mjs', args, origin));
   } finally {
     const resolved = realpathSync(temporary);
     if (resolved !== temporary || dirname(resolved) !== parent) throw new Error('Unexpected test directory');
@@ -54,23 +54,55 @@ it('accepts the default local build and rejects an extra HTML page', () => {
     expect(oversized.status).toBe(1);
     expect(oversized.stderr).toContain('entry JS exceeds its budget');
     writeFileSync(entry, '// synthetic entry');
+
+    const headersPath = join(dist, '_headers');
+    const headers = readFileSync(headersPath, 'utf8');
+    writeFileSync(headersPath, headers.replace("connect-src 'none'", "connect-src 'self'"));
+    const relaxed = verify();
+    expect(relaxed.status).toBe(1);
+    expect(relaxed.stderr).toContain("requires connect-src 'none'");
+    writeFileSync(headersPath, headers);
+
     writeFileSync(join(dist, 'extra.html'), '<title>Extra</title>');
     const extra = verify();
     expect(extra.status).toBe(1);
     expect(extra.stderr).toContain('exactly the five');
   });
-});
+}, 15_000);
 
-it('accepts a strict origin and rejects a local hostname leak in any release metadata file', () => {
-  withBundle('https://release-check.invalid', (dist, verify) => {
-    const strict = verify('--strict-origin');
+it('accepts either strict origin input and rejects mismatches or placeholder metadata', () => {
+  const origin = 'https://release-check.invalid';
+  withBundle(origin, (dist, verify) => {
+    const strict = verify(['--strict-origin'], origin);
     expect(strict.status, strict.stderr).toBe(0);
+
+    const positional = verify(['--strict-origin', origin]);
+    expect(positional.status, positional.stderr).toBe(0);
+    expect(positional.stdout).toContain(origin + ' (strict origin)');
+
+    const matching = verify(['--strict-origin', origin], origin + '/');
+    expect(matching.status, matching.stderr).toBe(0);
+
+    const invalidInputs = [
+      { args: ['--strict-origin'], message: 'requires SITE_URL or an explicit origin' },
+      { args: ['--strict-origin', origin + '/guide/..'], message: 'must be an HTTP(S) origin' },
+      { args: ['--strict-origin', origin + '\n'], message: 'must be an HTTP(S) origin' },
+      { args: ['--strict-origin', 'https://arabiform.example'], message: 'requires a non-placeholder origin' },
+      { args: ['--strict-origin', origin], env: 'https://other-release.invalid', message: 'does not match SITE_URL' },
+      { args: ['--strict-origin', 'https://other-release.invalid'], message: 'has an unexpected canonical' },
+    ];
+    for (const { args, env, message } of invalidInputs) {
+      const result = verify(args, env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(message);
+    }
+
     for (const file of ['ar/pdf-mail-merge/index.html', 'sitemap.xml', 'robots.txt']) {
       const path = join(dist, file);
       const original = readFileSync(path, 'utf8');
       const comment = file === 'robots.txt' ? '# https://arabiform.example' : '<!-- https://arabiform.example -->';
       writeFileSync(path, original + '\n' + comment);
-      const leaked = verify('--strict-origin');
+      const leaked = verify(['--strict-origin', origin]);
       expect(leaked.status).toBe(1);
       expect(leaked.stderr).toContain('dist/' + file + ' contains the arabiform.example placeholder');
       writeFileSync(path, original);

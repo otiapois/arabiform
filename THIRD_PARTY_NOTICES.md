@@ -1,5 +1,7 @@
 # Third-party notices
 
+This notice covers the fonts and runtime packages distributed with ArabiForm. It also includes the notices for the JavaScript fuzz-test dependencies. The release build includes this file, the ArabiForm [MIT license](LICENSE), and both original font licenses.
+
 ## Bundled fonts
 
 ArabiForm distributes two fonts. Both files are the unchanged static Regular, unhinted TrueType binaries from the official Noto releases. Each release's original OFL text is included alongside its font.
