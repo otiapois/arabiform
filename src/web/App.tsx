@@ -152,254 +152,256 @@ export function App({ arabic, heading, summary, details }: AppProps) {
           </div>
         </section>
 
-        <div id="workbench" tabIndex={-1} className="workbench-modes" role="group" aria-label={arabic ? 'وضع العمل' : 'Workspace mode'}>
-          <button type="button" className="button" data-testid="mode-fill" aria-pressed={!extractMode} onClick={() => setMode(mode && 'fill')}>
-            <span>{arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs'}</span>
-          </button>
-          <button type="button" className="button" data-testid="mode-extract" aria-pressed={extractMode} onClick={() => setMode('extract')}>
-            <span>{arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx'}</span>
-          </button>
-        </div>
-
-        <section className="sample-gallery" hidden={extractMode} aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
-          <h2 id="sample-workflows-heading">{labels.sampleWorkflows}</h2>
-          <div className="sample-cards">
-            {sampleWorkflows.map(workflow => (
-              <button key={workflow} type="button" className="button secondary sample-card" data-testid={`sample-${workflow}`}
-                aria-label={`${labels[workflow]} · ${labels.synthetic}`}
-                aria-current={desk.loadedSample === workflow ? 'true' : undefined}
-                disabled={desk.busy.pdf || desk.busy.roster} onClick={() => void desk.loadSample(workflow)}>
-                <span>{labels[workflow]}</span>
-                <small>{labels.synthetic}{' · '}{labels[`${workflow}Feature`]}</small>
-              </button>
-            ))}
+        <div id="workbench" tabIndex={-1}>
+          <div className="workbench-modes" role="group" aria-label={arabic ? 'وضع العمل' : 'Workspace mode'}>
+            <button type="button" className="button" data-testid="mode-fill" aria-pressed={!extractMode} onClick={() => setMode(mode && 'fill')}>
+              <span>{arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs'}</span>
+            </button>
+            <button type="button" className="button" data-testid="mode-extract" aria-pressed={extractMode} onClick={() => setMode('extract')}>
+              <span>{arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx'}</span>
+            </button>
           </div>
-        </section>
 
-        <div className="workbench" hidden={extractMode}>
-          {desk.template && (
-            <Suspense><CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
-          )}
-          <div className="workbench-grid">
-            <div className="setup">
-              <section className="panel source-panel" aria-labelledby="files-heading">
-                <header><h2 id="files-heading">{labels.files}</h2></header>
-                <div className="panel-body file-stack">
-                  <FilePicker
-                    id="pdf-upload"
-                    label={labels.yourTemplate}
-                    pickerLabel={labels.choosePdf}
-                    accept=".pdf,application/pdf"
-                    filename={desk.template?.name}
-                    placeholder={labels.noPdf}
-                    isLoading={desk.busy.pdf}
-                    loadingLabel={labels.loading}
-                    onChoose={desk.loadPdf}
-                  />
-                  {desk.errors.pdf && <p className="alert" role="alert">{problem(desk.errors.pdf) ?? labels.loadError}</p>}
-                  <FilePicker
-                    id="roster-upload"
-                    label={labels.yourRoster}
-                    pickerLabel={labels.chooseRoster}
-                    accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    filename={desk.roster?.name}
-                    placeholder={<>{labels.noRoster}{' '}<bdi dir="ltr">.xlsx</bdi></>}
-                    isLoading={desk.busy.roster}
-                    loadingLabel={labels.loading}
-                    onChoose={desk.loadRoster}
-                  />
-                  {desk.errors.roster && <p className="alert" role="alert">{problem(desk.errors.roster) ?? labels.loadError}</p>}
-                  {desk.roster?.workbook && <Suspense><WorksheetPicker desk={desk} language={language} /></Suspense>}
-                  <div className="source-note" aria-live="polite">
-                    {desk.loadedSample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
-                    <p>{desk.loadedSample === 'workshop' ? labels.sampleNotice : desk.loadedSample ? labels.workflowNotice : labels.realNotice}</p>
-                  </div>
-                </div>
-              </section>
-              <section className="panel mapping-panel" aria-labelledby="mapping-heading">
-                <header className="wide-heading">
-                  <h2 id="mapping-heading">{labels.settings}</h2>
-                  {desk.fields.length > 0 && desk.sheet && (
-                    <button type="button" className="text-button" onClick={desk.resetMapping}>{labels.autoMap}</button>
-                  )}
-                </header>
-                <div className="panel-body">
-                  {desk.templateFields.length > 0
-                    ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><MappingRows desk={desk} language={language} /></Suspense>
-                    : <p className="quiet">{labels.mappingWait}</p>}
-                </div>
-              </section>
-              <section className="panel settings-panel" aria-labelledby="settings-heading">
-                <header><h2 id="settings-heading">{labels.pdfSettings}</h2></header>
-                <div className="panel-body settings-fields">
-                  <label className="full-control">
-                    <span className="range-label">
-                      <span>{labels.minSize}</span>
-                      <output htmlFor="min-font-size">{desk.minFontSize} {labels.points}</output>
-                    </span>
-                    <input id="min-font-size" aria-label={labels.minSize} type="range" min={6} max={10} step={0.01} value={desk.minFontSize} onChange={(event) => desk.changeSize(Number(event.currentTarget.value))} />
-                  </label>
-                  <label className="full-control">
-                    {labels.font}
-                    <select value={desk.font} disabled={Boolean(customFont)} onChange={(event) => desk.changeFont(event.currentTarget.value as typeof desk.font)}>
-                      <option value="auto">{labels.fontAuto}</option>
-                      <option value="arabic">{labels.fontNaskh}</option>
-                      <option value="latin">{labels.fontSans}</option>
-                    </select>
-                  </label>
-                  <div className="custom-font">
+          <section className="sample-gallery" hidden={extractMode} aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
+            <h2 id="sample-workflows-heading">{labels.sampleWorkflows}</h2>
+            <div className="sample-cards">
+              {sampleWorkflows.map(workflow => (
+                <button key={workflow} type="button" className="button secondary sample-card" data-testid={`sample-${workflow}`}
+                  aria-label={`${labels[workflow]} · ${labels.synthetic}`}
+                  aria-current={desk.loadedSample === workflow ? 'true' : undefined}
+                  disabled={desk.busy.pdf || desk.busy.roster} onClick={() => void desk.loadSample(workflow)}>
+                  <span>{labels[workflow]}</span>
+                  <small>{labels.synthetic}{' · '}{labels[`${workflow}Feature`]}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <div className="workbench" hidden={extractMode}>
+            {desk.template && (
+              <Suspense><CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
+            )}
+            <div className="workbench-grid">
+              <div className="setup">
+                <section className="panel source-panel" aria-labelledby="files-heading">
+                  <header><h2 id="files-heading">{labels.files}</h2></header>
+                  <div className="panel-body file-stack">
                     <FilePicker
-                      id="custom-font-upload"
-                      label={labels.customFont}
-                      pickerLabel={labels.chooseFont}
-                      accept=".ttf,.otf"
-                      filename={customFont?.status === 'ready' ? customFont.family : undefined}
-                      placeholder={labels.noCustomFont}
-                      isLoading={customFont?.status === 'loading'}
-                      loadingLabel={labels.customFontLoading}
-                      onChoose={desk.loadCustomFont}
+                      id="pdf-upload"
+                      label={labels.yourTemplate}
+                      pickerLabel={labels.choosePdf}
+                      accept=".pdf,application/pdf"
+                      filename={desk.template?.name}
+                      placeholder={labels.noPdf}
+                      isLoading={desk.busy.pdf}
+                      loadingLabel={labels.loading}
+                      onChoose={desk.loadPdf}
                     />
-                    <div className="custom-font-help">
-                      <small>{labels.customFontLocal}</small>
-                      {customFont && <button type="button" className="text-button" data-testid="custom-font-clear" onClick={desk.clearCustomFont}>{labels.clearFont}</button>}
+                    {desk.errors.pdf && <p className="alert" role="alert">{problem(desk.errors.pdf) ?? labels.loadError}</p>}
+                    <FilePicker
+                      id="roster-upload"
+                      label={labels.yourRoster}
+                      pickerLabel={labels.chooseRoster}
+                      accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      filename={desk.roster?.name}
+                      placeholder={<>{labels.noRoster}{' '}<bdi dir="ltr">.xlsx</bdi></>}
+                      isLoading={desk.busy.roster}
+                      loadingLabel={labels.loading}
+                      onChoose={desk.loadRoster}
+                    />
+                    {desk.errors.roster && <p className="alert" role="alert">{problem(desk.errors.roster) ?? labels.loadError}</p>}
+                    {desk.roster?.workbook && <Suspense><WorksheetPicker desk={desk} language={language} /></Suspense>}
+                    <div className="source-note" aria-live="polite">
+                      {desk.loadedSample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
+                      <p>{desk.loadedSample === 'workshop' ? labels.sampleNotice : desk.loadedSample ? labels.workflowNotice : labels.realNotice}</p>
                     </div>
-                    {customFont && customFont.status !== 'loading' && (
-                      <Suspense><CustomFontFeedback customFont={customFont} desk={desk} arabic={arabic} /></Suspense>
-                    )}
                   </div>
-                  <label className="full-control">
-                    {labels.pattern}
-                    <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern}
-                      disabled={desk.exporting} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
-                    <small>{labels.patternHelp}</small>
-                  </label>
-                  {(desk.template || desk.roster) && <Suspense><VirtualFilenameTokens arabic={arabic} /></Suspense>}
-                  <label className="output-mode zip-mode">
-                    <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exportingZip}
-                      onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
-                    <span>{labels.flattenZip}</span>
-                  </label>
-                  {desk.template && <Suspense><PrintLayout desk={desk} arabic={arabic} /></Suspense>}
-                  <label className="output-mode">
-                    <input type="checkbox" data-testid="include-cover-sheet" checked={desk.includeCoverSheet} disabled={desk.exporting}
-                      onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
-                    <span>{labels.includeCoverSheet}</span>
-                  </label>
-                  {desk.includeCoverSheet && (
-                    <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                      <CoverOptions desk={desk} arabic={arabic} />
-                    </Suspense>
-                  )}
-                  <WatermarkControls settings={desk.watermark} change={desk.changeWatermark} disabled={desk.exporting}
-                    invalid={desk.watermarkBlocked} arabic={arabic} />
-                  <details className="qr-stamp" open={desk.qrOpen} onToggle={(event) => desk.setQrOpen(event.currentTarget.open)}>
-                    <summary data-testid="qr-stamp-toggle">{arabic ? 'رمز QR للطباعة (اختياري)' : 'Print QR stamp (optional)'}</summary>
-                    {desk.qrOpen && (
+                </section>
+                <section className="panel mapping-panel" aria-labelledby="mapping-heading">
+                  <header className="wide-heading">
+                    <h2 id="mapping-heading">{labels.settings}</h2>
+                    {desk.fields.length > 0 && desk.sheet && (
+                      <button type="button" className="text-button" onClick={desk.resetMapping}>{labels.autoMap}</button>
+                    )}
+                  </header>
+                  <div className="panel-body">
+                    {desk.templateFields.length > 0
+                      ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><MappingRows desk={desk} language={language} /></Suspense>
+                      : <p className="quiet">{labels.mappingWait}</p>}
+                  </div>
+                </section>
+                <section className="panel settings-panel" aria-labelledby="settings-heading">
+                  <header><h2 id="settings-heading">{labels.pdfSettings}</h2></header>
+                  <div className="panel-body settings-fields">
+                    <label className="full-control">
+                      <span className="range-label">
+                        <span>{labels.minSize}</span>
+                        <output htmlFor="min-font-size">{desk.minFontSize} {labels.points}</output>
+                      </span>
+                      <input id="min-font-size" aria-label={labels.minSize} type="range" min={6} max={10} step={0.01} value={desk.minFontSize} onChange={(event) => desk.changeSize(Number(event.currentTarget.value))} />
+                    </label>
+                    <label className="full-control">
+                      {labels.font}
+                      <select value={desk.font} disabled={Boolean(customFont)} onChange={(event) => desk.changeFont(event.currentTarget.value as typeof desk.font)}>
+                        <option value="auto">{labels.fontAuto}</option>
+                        <option value="arabic">{labels.fontNaskh}</option>
+                        <option value="latin">{labels.fontSans}</option>
+                      </select>
+                    </label>
+                    <div className="custom-font">
+                      <FilePicker
+                        id="custom-font-upload"
+                        label={labels.customFont}
+                        pickerLabel={labels.chooseFont}
+                        accept=".ttf,.otf"
+                        filename={customFont?.status === 'ready' ? customFont.family : undefined}
+                        placeholder={labels.noCustomFont}
+                        isLoading={customFont?.status === 'loading'}
+                        loadingLabel={labels.customFontLoading}
+                        onChoose={desk.loadCustomFont}
+                      />
+                      <div className="custom-font-help">
+                        <small>{labels.customFontLocal}</small>
+                        {customFont && <button type="button" className="text-button" data-testid="custom-font-clear" onClick={desk.clearCustomFont}>{labels.clearFont}</button>}
+                      </div>
+                      {customFont && customFont.status !== 'loading' && (
+                        <Suspense><CustomFontFeedback customFont={customFont} desk={desk} arabic={arabic} /></Suspense>
+                      )}
+                    </div>
+                    <label className="full-control">
+                      {labels.pattern}
+                      <input type="text" dir="auto" aria-label={labels.pattern} className="pattern-input" value={desk.pattern}
+                        disabled={desk.exporting} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
+                      <small>{labels.patternHelp}</small>
+                    </label>
+                    {(desk.template || desk.roster) && <Suspense><VirtualFilenameTokens arabic={arabic} /></Suspense>}
+                    <label className="output-mode zip-mode">
+                      <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exportingZip}
+                        onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
+                      <span>{labels.flattenZip}</span>
+                    </label>
+                    {desk.template && <Suspense><PrintLayout desk={desk} arabic={arabic} /></Suspense>}
+                    <label className="output-mode">
+                      <input type="checkbox" data-testid="include-cover-sheet" checked={desk.includeCoverSheet} disabled={desk.exporting}
+                        onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
+                      <span>{labels.includeCoverSheet}</span>
+                    </label>
+                    {desk.includeCoverSheet && (
                       <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                        <QrStampOptions desk={desk} arabic={arabic} />
+                        <CoverOptions desk={desk} arabic={arabic} />
                       </Suspense>
                     )}
-                  </details>
-                  <div className="preset-controls">
-                    <h3>{labels.preset}</h3>
-                    <p className="quiet">{labels.presetHelp}</p>
-                    <div className="actions compact">
-                      <label className="button secondary preset-picker">
-                        {labels.presetImport}
-                        <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
-                          onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
-                      </label>
-                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.printSettingsBlocked || desk.virtualTemplateBlocked}
-                        onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
+                    <WatermarkControls settings={desk.watermark} change={desk.changeWatermark} disabled={desk.exporting}
+                      invalid={desk.watermarkBlocked} arabic={arabic} />
+                    <details className="qr-stamp" open={desk.qrOpen} onToggle={(event) => desk.setQrOpen(event.currentTarget.open)}>
+                      <summary data-testid="qr-stamp-toggle">{arabic ? 'رمز QR للطباعة (اختياري)' : 'Print QR stamp (optional)'}</summary>
+                      {desk.qrOpen && (
+                        <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
+                          <QrStampOptions desk={desk} arabic={arabic} />
+                        </Suspense>
+                      )}
+                    </details>
+                    <div className="preset-controls">
+                      <h3>{labels.preset}</h3>
+                      <p className="quiet">{labels.presetHelp}</p>
+                      <div className="actions compact">
+                        <label className="button secondary preset-picker">
+                          {labels.presetImport}
+                          <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
+                            onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
+                        </label>
+                        <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.printSettingsBlocked || desk.virtualTemplateBlocked}
+                          onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
+                      </div>
+                      {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
+                      {desk.presetWarnings && <Suspense><PresetWarnings warnings={desk.presetWarnings} arabic={arabic} /></Suspense>}
                     </div>
-                    {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
-                    {desk.presetWarnings && <Suspense><PresetWarnings warnings={desk.presetWarnings} arabic={arabic} /></Suspense>}
+                    {desk.template && desk.sheet && (
+                      <Suspense>
+                        <BatchDraftControls key={desk.sourceRevision} desk={desk} arabic={arabic} />
+                      </Suspense>
+                    )}
                   </div>
-                  {desk.template && desk.sheet && (
-                    <Suspense>
-                      <BatchDraftControls key={desk.sourceRevision} desk={desk} arabic={arabic} />
+                </section>
+              </div>
+
+              <section id="preview" tabIndex={-1} className="panel preview" aria-labelledby="preview-heading">
+                {desk.template
+                  ? (
+                    <Suspense fallback={<>
+                      <h2 className="preview-heading" id="preview-heading">{labels.preview}</h2>
+                      <div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>
+                    </>}>
+                      <WorkbenchPreview template={desk.template} desk={desk} language={language} />
                     </Suspense>
+                  )
+                  : (
+                    <>
+                    <header className="preview-heading wide-heading">
+                      <div><h2 id="preview-heading">{labels.preview}</h2><p>{labels.previewHelp}</p></div>
+                    </header>
+                    <div className="preview-bed empty-preview" data-testid="empty-preview">
+                      <div className="document-placeholder" aria-hidden="true">
+                        <span className="document-title" />
+                        <span className="document-lines" />
+                        <span className="document-field" />
+                        <span className="document-fields"><span /><span /></span>
+                        <span className="document-field document-notes" />
+                        <span className="document-signature" />
+                      </div>
+                      <p className="preview-message">{labels.previewEmpty}</p>
+                    </div>
+                    </>
                   )}
-                </div>
               </section>
             </div>
 
-            <section id="preview" tabIndex={-1} className="panel preview" aria-labelledby="preview-heading">
-              {desk.template
-                ? (
-                  <Suspense fallback={<>
-                    <h2 className="preview-heading" id="preview-heading">{labels.preview}</h2>
-                    <div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>
-                  </>}>
-                    <WorkbenchPreview template={desk.template} desk={desk} language={language} />
-                  </Suspense>
-                )
-                : (
-                  <>
-                  <header className="preview-heading wide-heading">
-                    <div><h2 id="preview-heading">{labels.preview}</h2><p>{labels.previewHelp}</p></div>
-                  </header>
-                  <div className="preview-bed empty-preview" data-testid="empty-preview">
-                    <div className="document-placeholder" aria-hidden="true">
-                      <span className="document-title" />
-                      <span className="document-lines" />
-                      <span className="document-field" />
-                      <span className="document-fields"><span /><span /></span>
-                      <span className="document-field document-notes" />
-                      <span className="document-signature" />
-                    </div>
-                    <p className="preview-message">{labels.previewEmpty}</p>
-                  </div>
-                  </>
-                )}
+            {desk.rows.length > 0 && (
+              <Suspense>
+                <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
+              </Suspense>
+            )}
+            <QueuePanel key={desk.sourceRevision} desk={desk} language={language} characterKeys={characterKeys} />
+
+            <section className="panel exports" aria-labelledby="export-heading">
+              <header>
+                <h2 id="export-heading">{labels.export}</h2>
+                <p data-testid="export-counts">{!desk.results ? labels.exportWait
+                  : subset ? labels.exportSubsetHelp : fillLabel(labels.exportHelp, { ready, flagged })}</p>
+              </header>
+              <div className="panel-body export-actions">
+                <p role="status" className={subset ? 'tag tag-subset' : 'tag tag-pass'} data-testid="export-scope">
+                  {fillLabel(subset ? labels.exportSelected : labels.exportAll, { count: desk.exportCount })}
+                </p>
+                {emptySubset && desk.results && <p className="alert warning" data-testid="export-subset-empty">{labels.exportSubsetEmpty}</p>}
+                <div className="actions">
+                  <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.printSettingsBlocked)}
+                    onClick={() => desk.download('zip')}>{labels.zip}</button>
+                  <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
+                    onClick={() => desk.download('merged')}>{labels.merged}</button>
+                </div>
+                <div className="actions audit-actions" role="group" aria-label={labels.audit}>
+                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
+                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
+                </div>
+                <div className="custody-controls">
+                  {desk.custody ? (
+                    <Suspense fallback={custodyPending}>
+                      <CustodyPanel sources={desk.custody} outputs={desk.custodyOutputs} scope={desk.exportScope} disabled={emptySubset || desk.exporting}
+                        label={custodyLabel} arabic={arabic} />
+                    </Suspense>
+                  ) : custodyPending}
+                </div>
+                {desk.exporting && <p role="status">{labels.exporting}</p>}
+                {desk.exportError && <Suspense><ExportError error={desk.exportError} language={language} /></Suspense>}
+              </div>
             </section>
           </div>
 
-          {desk.rows.length > 0 && (
-            <Suspense>
-              <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
-            </Suspense>
-          )}
-          <QueuePanel key={desk.sourceRevision} desk={desk} language={language} characterKeys={characterKeys} />
-
-          <section className="panel exports" aria-labelledby="export-heading">
-            <header>
-              <h2 id="export-heading">{labels.export}</h2>
-              <p data-testid="export-counts">{!desk.results ? labels.exportWait
-                : subset ? labels.exportSubsetHelp : fillLabel(labels.exportHelp, { ready, flagged })}</p>
-            </header>
-            <div className="panel-body export-actions">
-              <p role="status" className={subset ? 'tag tag-subset' : 'tag tag-pass'} data-testid="export-scope">
-                {fillLabel(subset ? labels.exportSelected : labels.exportAll, { count: desk.exportCount })}
-              </p>
-              {emptySubset && desk.results && <p className="alert warning" data-testid="export-subset-empty">{labels.exportSubsetEmpty}</p>}
-              <div className="actions">
-                <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.printSettingsBlocked)}
-                  onClick={() => desk.download('zip')}>{labels.zip}</button>
-                <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
-                  onClick={() => desk.download('merged')}>{labels.merged}</button>
-              </div>
-              <div className="actions audit-actions" role="group" aria-label={labels.audit}>
-                <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
-                <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
-              </div>
-              <div className="custody-controls">
-                {desk.custody ? (
-                  <Suspense fallback={custodyPending}>
-                    <CustodyPanel sources={desk.custody} outputs={desk.custodyOutputs} scope={desk.exportScope} disabled={emptySubset || desk.exporting}
-                      label={custodyLabel} arabic={arabic} />
-                  </Suspense>
-                ) : custodyPending}
-              </div>
-              {desk.exporting && <p role="status">{labels.exporting}</p>}
-              {desk.exportError && <Suspense><ExportError error={desk.exportError} language={language} /></Suspense>}
-            </div>
-          </section>
+          {mode && <div hidden={!extractMode}>
+            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}><PdfExtractor arabic={arabic} /></Suspense>
+          </div>}
         </div>
-
-        {mode && <div hidden={!extractMode}>
-          <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}><PdfExtractor arabic={arabic} /></Suspense>
-        </div>}
 
         {details && <div className="route-details" dangerouslySetInnerHTML={details} />}
         <section className="checklist" aria-labelledby="checklist-heading">
