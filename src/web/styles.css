@@ -203,9 +203,9 @@ input:is([type="checkbox"], [type="radio"]) { accent-color: var(--forest); }
   border-radius: .6rem;
   background: var(--surface);
 }
-.workbench-modes .button { color: var(--forest); }
+.workbench-modes .button { color: var(--forest); border-color: var(--control-line); }
 .workbench-modes .button:hover { background: var(--green-soft); }
-.workbench-modes [aria-pressed="true"], .workbench-modes [aria-pressed="true"]:hover { color: #fff; background: var(--forest); }
+.workbench-modes .button[aria-pressed="true"] { color: #fff; background: var(--forest); border-color: var(--forest); }
 .workbench-grid {
   display: grid;
   grid-template-columns: minmax(19rem, 22rem) minmax(0, 1fr);
