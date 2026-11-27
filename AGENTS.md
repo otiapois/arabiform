@@ -12,7 +12,7 @@
 ## 2. Non-Negotiable Product, Privacy & Quality Invariants
 - **100% Browser-Local Zero-Upload Processing**: Every PDF template, CSV/Excel roster, rendered preview, and generated ZIP/PDF MUST be processed strictly inside the browser. Production headers MUST enforce `Content-Security-Policy: default-src 'self'; connect-src 'none'; ...`. Bundle `Noto Naskh Arabic Regular` and `Noto Sans Regular` locally under `public/fonts/` and serve every font from the local build.
 - **Zero Silent Clipping / Zero Silent Corruption (Fail-Closed)**:
-  - Never silently strip XFA (`pdf-lib.getForm()` strips XFA unless checked BEFORE calling `getForm()` — check `/XFA` at entry and reject XFA, encrypted, signed, and 0-field flat PDFs with clear human explanations!).
+  - Check the raw PDF for `/XFA`, encryption, and signatures at intake before calling `pdf-lib.getForm()` and reject these files with clear explanations. Fill also rejects PDFs without supported editable fields. Design accepts only flat sources without existing interactive fields or widgets.
   - Never silently clip Arabic descenders (`ن`, `ى`, `ي`, `م`, `ق`) or diacritics (`harakat`/`tashkeel`). Compute true shaped glyph ink BBox via `@pdf-lib/fontkit`, auto-fit within `[minFontSize, maxFontSize]`, center ink baseline vertically, and flag any widget/row that cannot fit cleanly without clipping!
   - Preserve text leading zeros (`00123`, `00007`) strictly as text across CSV AND `.xlsx` ingestion; warn explicitly if an Excel cell already contains scientific notation or numeric stripping!
   - Preserve every unmapped field's original `/V` value and appearance untouched (`KEEP 00109` invariance).
