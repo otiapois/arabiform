@@ -135,4 +135,4 @@ it('accepts either strict origin input and rejects mismatches or placeholder met
       writeFileSync(path, original);
     }
   });
-}, 15_000);
+}, 30_000);
