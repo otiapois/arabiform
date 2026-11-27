@@ -93,7 +93,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 12**（M1、M2、M5、M9、M10、M11、M12、M13、M14、M15、M16、M17，各计一次）。M17 冻结主线在同一调用处失败，保留了[首次日志](test-results/m17-evidence/qa-pixels.log)和[原命令的本机记录](test-results/m17-evidence/qa-pixels-native.log)。M16 冻结主线的相同启动错误及同版本重跑分别保存在[沙箱日志](test-results/m16-evidence/qa-pixels.log)和[本机日志](test-results/m16-evidence/qa-pixels-native.log)。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[M14 启动错误](test-results/m14-evidence/qa-pixels.log)。M15 在冻结主线上复现，使用同一提交及 D 盘输入重跑原命令。[M15 启动错误](test-results/m15-evidence/qa-pixels.log) · [原命令重跑](test-results/m15-evidence/qa-pixels-native.log)。此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 13**（M1、M2、M5、M9、M10、M11、M12、M13、M14、M15、M16、M17、M18，各计一次）。M18 的像素检查和 CLI 首次运行在同一处停止，沿用冻结提交及 D 盘输入复验通过。[像素启动错误](test-results/m18-evidence/qa-pixels.log) · [原命令复验](test-results/m18-evidence/qa-pixels-native.log) · [CLI 启动错误](test-results/m18-evidence/qa-cli-9aeeb15-local/studio.stderr)。M17 冻结主线在同一调用处失败，保留了[首次日志](test-results/m17-evidence/qa-pixels.log)和[原命令的本机记录](test-results/m17-evidence/qa-pixels-native.log)。M16 冻结主线的相同启动错误及同版本重跑分别保存在[沙箱日志](test-results/m16-evidence/qa-pixels.log)和[本机日志](test-results/m16-evidence/qa-pixels-native.log)。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[M14 启动错误](test-results/m14-evidence/qa-pixels.log)。M15 在冻结主线上复现，使用同一提交及 D 盘输入重跑原命令。[M15 启动错误](test-results/m15-evidence/qa-pixels.log) · [原命令重跑](test-results/m15-evidence/qa-pixels-native.log)。此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
@@ -106,7 +106,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 
 | 规则 | 原因与实测证据 | Seen |
 |---|---|---|
-| 进程级测试超时后，用同一提交串行复跑，先定位耗时的用例，再调整该用例的预算。 | Worker A 并行执行验收时，校验发布域名的子进程测试超过默认 5 秒。串行复跑通过，提交 `38bc40f` 仅将此项设为 15 秒，保留了伪域名泄漏的全部断言。合并后主线 59 项全部通过。[测试](tests/core/verify-release-bundle.test.ts) | 1（M6） |
+| 保留测试超时的首轮日志，按用例复跑并核对实际耗时。保留原有输入、用例数及断言，按测量结果调整确实耗时的单项。 | M6 并行验收时，严格来源的子进程检查超过默认 5 秒，提交 `38bc40f` 为该项设置 15 秒。M11 再次记录该检查实际耗时 22.248 秒，串行主线复跑全部 100 项通过。M18 首轮 50 例 PDF 字节比对和 150 例验真超过各自的 60 秒和 5 秒，改为逐字节比较并给这两项 180 秒和 30 秒后，冻结主线的 55 项种子测试全部通过。已纳入[代码标准](docs/code-standards.md)。[M6](docs/reports/M6-verification.md) · [M11 超时](test-results/m11-evidence/core-test-full-native.log) · [M11 全套](test-results/m11-evidence/qa-main-unit.log) · [M18 首轮](test-results/m18-evidence/worker-a/fuzz-and-regressions.log) · [M18 冻结复验](test-results/m18-evidence/qa-fuzz.log) | 3（M6、M11、M18，各计一次） |
 | Windows PowerShell 收集原生命令的 stdout 与 stderr 时，命令结束即保存并显式返回 `$LASTEXITCODE`，同时保留测试运行器的状态文件。 | Edge 通过 58 项，运行器保存了 `passed` 和空失败列表。Node 将颜色配置警告写到 stderr，PowerShell 合流后整段命令的退出值为 1。仅让原生退出 0 的 Node 程序写一行 stderr，同样复现了该外壳状态。显式返回保存的原生退出值后为 0。[主线验收](docs/reports/M6-verification.md) | 1（M6） |
 
 ### 用浏览器字符坐标验证阿文转换示例（2026-11-27）
@@ -191,3 +191,9 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - 在两种界面用相同模板和设置生成 PDF，比较相同尺寸画布的 RGBA，并打开两张截图检查字形。M17 中，PDF.js 画布继承了阿语界面的 RTL 方向，英文标题中的字母错位。两边画布均有墨迹，下载文件的 4 倍实绘也通过了检查。
 - 将 PDF 绘图画布设为 LTR 后，两种界面在桌面和手机上都得到相同的 760 × 538 像素画面。前后两轮分别保存了画布哈希和截图。[失败截图](test-results/m17-evidence/qa-rtl-preview-red/desktop-m17-template-studio-ar.png) · [修复后的截图](docs/reports/screenshots/m17/desktop-m17-template-studio-ar.png) · [浏览器断言](tests/e2e/m17-studio-verifier.spec.ts)
 - **Seen: 1**（M17，两种视口复现同一处画布方向错误）。
+
+### 同步独立发布测试包的预渲染输入（2026-11-28）
+
+- **规则**　预渲染器新增文件输入时，把该文件列入隔离测试包。用原有断言分别验证默认来源、入口大小和严格来源。
+- **证据**　M18 将工作台翻译移入本地 JSON 后，开发工作树能够完整构建，独立测试包仍遗漏这份文件。首次冻结主线的 3 项发布检查都在预渲染处退出。补入单条文件路径后，隔离检查 3/3 通过，最终主线单元测试 185/185 通过。[隔离复现](test-results/m18-evidence/worker-b/release-fixture-red.log) · [修复后](test-results/m18-evidence/worker-b/release-fixture-green.log) · [主线验收](docs/reports/M18-verification.md)
+- **Seen: 1**（M18，同一份输入引起三个用例失败，计一次）。
