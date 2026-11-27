@@ -91,6 +91,17 @@ export function widgetFlags(widget: PDFDict): number {
   return widget.lookupMaybe(key('F'), PDFNumber)?.asNumber() ?? 0;
 }
 
+export function hasUnsupportedPrintAnnotation(page: PDFPage): boolean {
+  const annots = page.node.Annots();
+  for (let index = 0; annots && index < annots.size(); index++) {
+    const annot = annots.lookup(index, PDFDict);
+    if (annot.lookupMaybe(key('Subtype'), PDFName) === key('Widget')) continue;
+    const flags = widgetFlags(annot);
+    if (flags & 4 && !(flags & (1 | 2))) return true;
+  }
+  return false;
+}
+
 export function fieldAttributes(field: PDFDict, name: string) {
   for (let node: PDFDict | undefined = field; node; node = node.lookupMaybe(key('Parent'), PDFDict)) {
     if (node.has(key(name))) return node.lookup(key(name));

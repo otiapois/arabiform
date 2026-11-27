@@ -49,10 +49,19 @@ it('checks 500 real bilingual mapped rows in 25-row chunks without serializing a
     if (!checked || !('rows' in checked)) throw new Error('Expected checked rows');
     expect(checked.custody).toEqual({ templateSha256: digest(template), rosterSha256: digest(roster) });
     expect(checked.rows).toHaveLength(500);
+    expect(checked.spotlight).toMatchObject({ longestMappedTextRow: 50, firstFlaggedRow: 50 });
     for (const [index, result] of checked.rows.entries()) {
-      expect(Object.keys(result).sort()).toEqual(['diagnostics', 'fontSizes', 'pageNumbers', 'status']);
       expect(result.status).toBe(index % 50 === 49 ? 'flagged' : 'pass');
-      if (result.status === 'flagged') expect(result.diagnostics.map(({ code }) => code)).toEqual(['too-narrow']);
+      const { inkClearancePt, smallestInkFontSizePt, ...legacyFields } = result;
+      expect(Object.keys(legacyFields).sort()).toEqual(['diagnostics', 'fontSizes', 'pageNumbers', 'status']);
+      if (result.status === 'flagged') {
+        expect(result.diagnostics.map(({ code }) => code)).toEqual(['too-narrow']);
+        expect(smallestInkFontSizePt).toBeUndefined();
+        expect(inkClearancePt).toBeUndefined();
+      } else {
+        expect(smallestInkFontSizePt).toBe(Math.min(...Object.values(result.fontSizes).flat()));
+        expect(inkClearancePt).toBeGreaterThan(0);
+      }
     }
     const preview = (rowIndex: number) => processBatch({ phase: 'preview', rowIndex }, () => {});
     expect(await preview(49)).toBeUndefined();

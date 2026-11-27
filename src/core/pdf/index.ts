@@ -38,6 +38,8 @@ export interface RowPreflightResult {
   diagnostics: FieldDiagnostic[];
   pageNumbers: number[];
   fontSizes: Record<string, number[]>;
+  smallestInkFontSizePt?: number;
+  inkClearancePt?: number;
   pdfBytes?: Uint8Array;
 }
 
@@ -63,7 +65,7 @@ function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFo
 }
 
 function planRow(
-  { fields }: OpenTemplate, valuesByField: Record<string, string>,
+  { fields, pages }: OpenTemplate, valuesByField: Record<string, string>,
   { fonts, minFontSize, preferredFont, custom, alignOverrides }: ReturnType<typeof layoutOptions>,
 ) {
   let shaper: ReturnType<typeof createShaper> | undefined;
@@ -81,6 +83,8 @@ function planRow(
   const sizes: [string, number[]][] = [];
   const fontKeys = new Set<FontKey>();
   const customGlyphIds = new Set<number>();
+  let smallestInkFontSizePt = Infinity;
+  let inkClearancePt = Infinity;
 
   for (const { field, widgets, meta, alignment, completeWidgetList, pageNumbers, dropdownOptions } of fields) {
     const { name } = meta;
@@ -189,8 +193,20 @@ function planRow(
     }
     if (placed.length !== widgets.length) continue;
     sizes.push([name, placed.map(({ placement }) => placement.size)]);
-    for (const { placement } of placed) {
-      for (const { line } of placement.lines) {
+    for (const { widget, placement: { size, lines } } of placed) {
+      const { width, height, rotation, pageIndex } = widget.meta;
+      const quarterTurn = rotation % 180 !== 0;
+      const outerWidth = quarterTurn ? height : width;
+      const outerHeight = quarterTurn ? width : height;
+      const { userUnit } = pages[pageIndex]!;
+      for (const { line, origin, baseline } of lines) {
+        if (line.painted) {
+          const [left, right] = line.inkX;
+          const clearance = Math.min(origin + left * size, outerWidth - (origin + right * size),
+            baseline + line.bounds.minY * size, outerHeight - (baseline + line.bounds.maxY * size));
+          smallestInkFontSizePt = Math.min(smallestInkFontSizePt, size * userUnit);
+          inkClearancePt = Math.min(inkClearancePt, clearance * userUnit);
+        }
         for (const glyph of line.glyphs) {
           fontKeys.add(glyph.font);
           if (glyph.font === 'custom') customGlyphIds.add(glyph.id);
@@ -203,13 +219,21 @@ function planRow(
   const fontSizes = Object.fromEntries(sizes);
   const pageNumbers = [...new Set(diagnostics.flatMap((issue) => issue.pageNumbers))].sort((first, second) => first - second);
   const result: CheckedRow = { status: diagnostics.length ? 'flagged' : 'pass', diagnostics, pageNumbers, fontSizes };
+  if (result.status === 'pass' && Number.isFinite(smallestInkFontSizePt) && Number.isFinite(inkClearancePt)) {
+    result.smallestInkFontSizePt = smallestInkFontSizePt;
+    result.inkClearancePt = inkClearancePt;
+  }
   return { result, plans, buttonPlans, fontKeys, customGlyphIds };
 }
 
 export async function prepareRowPreflight(bytes: Uint8Array | ArrayBuffer, options: PreflightOptions) {
+  return (await prepareTemplatePreflight(bytes, options)).check;
+}
+
+export async function prepareTemplatePreflight(bytes: Uint8Array | ArrayBuffer, options: PreflightOptions) {
   const template = await openTemplate(bytes);
   const layout = layoutOptions(options);
-  return async (valuesByField: Record<string, string>): Promise<CheckedRow> => {
+  const check = async (valuesByField: Record<string, string>): Promise<CheckedRow> => {
     const { result, customGlyphIds } = planRow(template, valuesByField, layout);
     if (result.status === 'pass' && customGlyphIds.size) {
       // The custom subset encoder reads parts of untrusted fonts lazily, after layout.
@@ -223,6 +247,7 @@ export async function prepareRowPreflight(bytes: Uint8Array | ArrayBuffer, optio
     }
     return result;
   };
+  return { check, fields: template.fields.map(({ meta }) => meta) };
 }
 
 export async function preflightRow(

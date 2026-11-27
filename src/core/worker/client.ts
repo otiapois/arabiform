@@ -1,5 +1,6 @@
 import type { Imposition } from '../pdf';
 import type { GroupingPlan } from '../export/grouping';
+import type { PrintEstimateRequest, PrintJobEstimate } from '../export/print-estimator';
 import type { BatchQrPrintRequest } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { BatchCommand, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRequest, BatchResponse,
@@ -57,6 +58,7 @@ export function createBatchWorker() {
   return {
     preflight: (input: BatchInput, onProgress?: ProgressListener) => send({ phase: 'preflight', input }, onProgress) as Promise<BatchPreflightResult>,
     preview: (rowIndex: number) => send({ phase: 'preview', rowIndex }) as Promise<Uint8Array | undefined>,
+    estimate: (request: PrintEstimateRequest) => send({ phase: 'estimate', ...request }) as Promise<PrintJobEstimate>,
     zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, grouping?: GroupingPlan) =>
       send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection, qrStamp, grouping }, onProgress) as Promise<BatchZipResult>,
     merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition) =>

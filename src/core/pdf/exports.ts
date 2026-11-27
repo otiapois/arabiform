@@ -8,7 +8,7 @@ import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
 import type { ExportScope } from '../worker/row-selection';
 import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
-import { key, number, openTemplate, widgetFlags, type TemplateMetadata } from './template';
+import { hasUnsupportedPrintAnnotation, key, number, openTemplate, widgetFlags, type TemplateMetadata } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 import type { FontBytes } from './shaping';
 import { validateQrPrintRequest, type QrPrintRequest } from './qr-settings';
@@ -264,11 +264,7 @@ async function buildMergedPdf(
     const paintQr = qr?.(sourcePages, index);
     flattenWidgets(source);
     if (twoUp) {
-      const annots = sourcePages[0]!.node.Annots();
-      for (let ordinal = 0; annots && ordinal < annots.size(); ordinal++) {
-        const flags = widgetFlags(annots.lookup(ordinal, PDFDict));
-        if (flags & 4 && !(flags & (1 | 2))) throw new Error('imposition-unsupported-print-annotation');
-      }
+      if (hasUnsupportedPrintAnnotation(sourcePages[0]!)) throw new Error('imposition-unsupported-print-annotation');
       recordGeometry.push(geometry[0]!);
     }
     const pages = await merged.copyPages(source, source.getPageIndices());
