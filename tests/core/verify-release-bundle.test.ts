@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { expect, it } from 'vitest';
 
 const project = fileURLToPath(new URL('../../', import.meta.url));
@@ -58,6 +59,10 @@ it('accepts the default local build and rejects an extra HTML page', () => {
     const relaxed = verify();
     expect(relaxed.status).toBe(1);
     expect(relaxed.stderr).toContain("requires connect-src 'none'");
+    writeFileSync(headersPath, headers.replace("default-src 'self'", "default-src *"));
+    const permissiveDefault = verify();
+    expect(permissiveDefault.status).toBe(1);
+    expect(permissiveDefault.stderr).toContain("requires default-src 'self'");
     writeFileSync(headersPath, headers);
 
     writeFileSync(join(dist, 'extra.html'), '<title>Extra</title>');
@@ -70,19 +75,25 @@ it('accepts the default local build and rejects an extra HTML page', () => {
 it('enforces the raw and gzip entry limits independently', () => {
   withBundle(undefined, (dist, verify) => {
     const entry = join(dist, 'assets/index-test.js');
-    writeFileSync(entry, ' '.repeat(284_999));
+    writeFileSync(entry, ' '.repeat(279_999));
     const belowRawLimit = verify();
     expect(belowRawLimit.status, belowRawLimit.stderr).toBe(0);
-    writeFileSync(entry, ' '.repeat(285_000));
+    writeFileSync(entry, ' '.repeat(280_000));
     const atRawLimit = verify();
     expect(atRawLimit.status).toBe(1);
-    expect(atRawLimit.stderr).toContain('entry JS exceeds its budget: 285000 raw');
+    expect(atRawLimit.stderr).toContain('entry JS exceeds its budget: 280000 raw');
 
-    const lowCompressibility = createHash('shake256', { outputLength: 89_000 }).update('release budget fixture').digest();
-    writeFileSync(entry, lowCompressibility);
-    const aboveGzipLimit = verify();
-    expect(aboveGzipLimit.status).toBe(1);
-    expect(aboveGzipLimit.stderr).toContain('entry JS exceeds its budget: 89000 raw');
+    const lowCompressibility = createHash('shake256', { outputLength: 87_500 }).update('release budget fixture').digest();
+    const gzipOverhead = gzipSync(lowCompressibility).length - lowCompressibility.length;
+    const rawAtGzipLimit = 87_500 - gzipOverhead;
+    writeFileSync(entry, lowCompressibility.subarray(0, rawAtGzipLimit - 1));
+    const belowGzipLimit = verify();
+    expect(belowGzipLimit.status, belowGzipLimit.stderr).toBe(0);
+    expect(belowGzipLimit.stdout).toContain(' / 87499 gzip bytes');
+    writeFileSync(entry, lowCompressibility.subarray(0, rawAtGzipLimit));
+    const atGzipLimit = verify();
+    expect(atGzipLimit.status).toBe(1);
+    expect(atGzipLimit.stderr).toContain('entry JS exceeds its budget: ' + rawAtGzipLimit + ' raw / 87500 gzip bytes');
   });
 }, 15_000);
 
