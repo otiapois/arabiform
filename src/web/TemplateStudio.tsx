@@ -112,7 +112,8 @@ function StudioPreview({ bytes, copy }: { bytes: Uint8Array; copy: typeof en }) 
     <>
       {state === 'failed' && <p className="alert" role="alert">{copy.previewFailed}</p>}
       {!state && <p className="quiet" role="status">{copy.preparing}</p>}
-      <canvas ref={canvas} role="img" aria-label={copy.preview} data-testid="studio-canvas"
+      {/* PDF.js places glyphs with LTR canvas start alignment. */}
+      <canvas ref={canvas} dir="ltr" role="img" aria-label={copy.preview} data-testid="studio-canvas"
         data-rendered={state === 'ready' ? 'true' : undefined} hidden={state !== 'ready'} />
     </>
   );
