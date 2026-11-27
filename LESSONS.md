@@ -77,7 +77,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 
 | 规则 | 失败证据与修正 | Seen |
 |---|---|---|
-| 对混排文件名，用浏览器 Range 测量数字前缀、词干和扩展名。移动端发生折行时，每个前缀只与同一行的文字比较。 | M2 文件名逻辑字符串正确，旧 `dir="auto"` 在两个语种和视口的 8 组原布局观测中有 6 组后缀错位。现在队列和所选行共用显式 LTR 容器，阿语词组隔离，`.pdf` 单独固定在右端。[组件](src/web/Filename.tsx) · [Edge 测量](tests/e2e/m3-pro.spec.ts) | 1 |
+| 在 RTL 正文中用显式 LTR 方向隔离拉丁扩展名和随附的括号。用浏览器 Range 核对同一行的点、字母和括号的实绘顺序。对于混排文件名，同时检查编号、词干与扩展名。 | M3 的 8 组原布局中有 6 组 PDF 文件名后缀错位。M7 将来源卡的 `.xlsx` 放入 LTR 隔离元素，并在两种视口测得点位于字母左侧。M16 的 390 px 阿语按钮曾把 `(.zip)` 画成 `(zip.)`。修复前点的横坐标为 142.609 px，位于 p 的 134.031 px 右侧。修复后点为 122.109 px，z 为 125.844 px。已纳入[代码标准](docs/code-standards.md)。[M3 文件名](tests/e2e/m3-pro.spec.ts) · [M7 来源卡](docs/reports/M7-verification.md) · [M16 修复前](test-results/m16-evidence/worker-b/split-extension-before.json) · [M16 修复后](test-results/m16-evidence/worker-b/split-extension-after.json) | 3（M3、M7、M16 各计一个验证周期） |
 | 核对交互控件转为打印页面前后的整页像素。可见控件缺少所需外观或其活动状态不明确时，阻止打印导出并保留可编辑导出。 | M3 旧合并页的 3 个复选框各差 66 个像素。修正非整数坐标的外观放置矩阵后，4 倍渲染完全相同。M4 回放发现旧打印路径遇到缺少 `/AP`、`/V` 为数组的下拉框时改变 86,832 个像素，遇到已选中却缺少 `/AS` 的复选框时改变 350 个像素。修正后，两种样本均阻止生成合并 PDF 和压平 ZIP，可编辑 ZIP 的成员字节完整保留。[打印回归](tests/core/choices.test.ts) · [逐页校验](scripts/verify-pdf-pixels.py) · [M4 验收](docs/reports/M4-verification.md) | 2（M3、M4） |
 | 验证自定义字体子集时，同时读取嵌入数据、检查渲染器警告并测量实际墨迹。 | Adobe Source Serif 4 的 CFF 子集头曾写出无效的 `offSize=0x0e`。FreeType 回退后仍有墨迹。改为合法值 `0x04` 后，字形像素随之改变，PyMuPDF 渲染无警告。[字体嵌入](src/core/pdf/custom-font.ts) · [CFF 像素案例](scripts/verify-pdf-pixels.ts) | 1 |
 
@@ -93,7 +93,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 10**（M1、M2、M5、M9、M10、M11、M12、M13、M14、M15，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[M14 启动错误](test-results/m14-evidence/qa-pixels.log)。M15 在冻结主线上复现，使用同一提交及 D 盘输入重跑原命令。[M15 启动错误](test-results/m15-evidence/qa-pixels.log) · [原命令重跑](test-results/m15-evidence/qa-pixels-native.log)。此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 11**（M1、M2、M5、M9、M10、M11、M12、M13、M14、M15、M16，各计一次）。M16 冻结主线的相同启动错误及同版本重跑分别保存在[沙箱日志](test-results/m16-evidence/qa-pixels.log)和[本机日志](test-results/m16-evidence/qa-pixels-native.log)。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[M14 启动错误](test-results/m14-evidence/qa-pixels.log)。M15 在冻结主线上复现，使用同一提交及 D 盘输入重跑原命令。[M15 启动错误](test-results/m15-evidence/qa-pixels.log) · [原命令重跑](test-results/m15-evidence/qa-pixels-native.log)。此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
@@ -179,3 +179,9 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　新增模式切换时，让既有 `#workbench` 跳转目标包含两个模式的实际内容，并用原有批任务进度和取消用例复跑。
 - **原因**　M14 把这个 ID 移到模式按钮组，队列成了它的兄弟节点。首轮主线验收中 200 行已就绪，绑定在工作台内的观察器却收不到进度变化，两个原有场景相继超时。[首轮主线日志](test-results/m14-evidence/qa-edge-before-workbench.log) · [原有进度用例](tests/e2e/m2-batch.spec.ts)
 - **Seen: 1**（M14，两个受影响的场景计一次）。
+
+### 按分组后的文件名搜索和显示队列（2026-11-27）
+
+- **规则**　以该行在 ZIP 中的实际文件名驱动队列、重名提醒、搜索与所选行摘要。用两个分组中的同名文件，以及同一分组中的第二个同名文件，逐个对照下载结果。
+- **原因与证据**　M16 开发版将另一个分组里的首份 `same-label.pdf` 显示为 `same-label-2.pdf`，并提示重名。修复后两个分组都能保留原名，同组重名才带上后缀。独立 Edge 用后缀名搜索，只命中原始第 3 行，所选行摘要、审计和 ZIP 内路径与这条记录一致。[首次失败](test-results/m16-evidence/worker-b/grouped-preview-red.log) · [浏览器回归](tests/e2e/m16-grouped-designer.spec.ts)
+- **Seen: 1**（M16，同一处分组命名变化计一次）。
