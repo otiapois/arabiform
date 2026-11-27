@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { fillLabel, translator } from './labels';
+import { fillLabel, type translator } from './labels';
 import { QueuePanel } from './QueuePanel';
 import { saveDownload } from './resources';
 import type { FlatSource } from './fill-template-source';
@@ -33,12 +33,13 @@ const ExportProgress = lazy(() => import('./BatchExportStatus').then(({ ExportPr
 const GroupingControl = lazy(() => import('./GroupedOutputs').then(({ GroupingControl }) => ({ default: GroupingControl })));
 const GroupedSummary = lazy(() => import('./GroupedOutputs').then(({ GroupedSummary }) => ({ default: GroupedSummary })));
 const SplitDownload = lazy(() => import('./GroupedOutputs').then(({ SplitDownload }) => ({ default: SplitDownload })));
+const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
 
 const modes = ['fill', 'extract', 'design', 'create', 'verify'] as const;
 type Mode = typeof modes[number];
 
 type AppProps = {
-  arabic: boolean;
+  language: ReturnType<typeof translator>;
   heading?: string;
   summary?: string;
   details?: { __html: string };
@@ -92,9 +93,8 @@ function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isL
   );
 }
 
-export function App({ arabic, heading, summary, details }: AppProps) {
-  const language = translator(arabic);
-  const { labels } = language;
+export function App({ language, heading, summary, details }: AppProps) {
+  const { arabic, labels } = language;
   const desk = useWorkbench(arabic ? 'ar' : 'en');
   const [mode, setMode] = useState<Mode>('fill');
   const extractMode = mode === 'extract';
@@ -106,6 +106,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const [design, setDesign] = useState<{ revision: number; source?: FlatSource }>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
+  const [cliOpen, setCliOpen] = useState(false);
   const modeLabels = {
     fill: arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs',
     extract: arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx',
@@ -372,6 +373,12 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       {(desk.presetError || desk.presetWarnings) && (
                         <Suspense><PresetFeedback invalid={desk.presetError} warnings={desk.presetWarnings} arabic={arabic} /></Suspense>
                       )}
+                      <details className="cli-command" data-testid="cli-command-helper" onToggle={(event) => setCliOpen(event.currentTarget.open)}>
+                        <summary>{arabic ? 'أمر التشغيل المحلي' : 'Local CLI command'}</summary>
+                        {cliOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
+                          <LocalCliCommand desk={desk} arabic={arabic} />
+                        </Suspense>}
+                      </details>
                     </div>
                     {desk.template && desk.sheet && (
                       <Suspense>

@@ -94,7 +94,7 @@ export function createBatchProcessor() {
     const cover = coverSheet && {
       locale: coverLanguage === 'auto' ? coverSheet.locale : coverLanguage,
       templateName: coverSheet.templateName,
-      exportedAt: new Date(),
+      exportedAt: coverSheet.exportedAt ?? new Date(),
       preflight: input.options,
       rowNumbers: selectedRowNumbers,
       flagged: results.filter(({ status }) => status === 'flagged').length,

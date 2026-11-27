@@ -118,7 +118,10 @@ if (!['https:', 'http:'].includes(site.protocol) || site.href !== `${site.origin
   throw new Error('SITE_URL must be an HTTP(S) origin without a path, query, or fragment')
 }
 
-const template = await readFile(join(dist, 'index.html'), 'utf8')
+const [template, translations] = await Promise.all([
+  readFile(join(dist, 'index.html'), 'utf8'),
+  readFile(join(project, 'src/web/workbench-labels.json'), 'utf8').then(JSON.parse),
+])
 const metaMarker = '<!-- ARABIFORM_META -->'
 const contentMarker = '<!-- ARABIFORM_CONTENT -->'
 const defaultLanguage = '<html lang="en" dir="ltr">'
@@ -130,9 +133,10 @@ if (!template.includes(metaMarker) || !template.includes(contentMarker) ||
 
 const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
 const escapeHtml = (value) => value.replace(/[&<>"]/g, (character) => entities[character])
+const escapeScriptJson = (value) => JSON.stringify(value).replace(/</g, '\\u003c')
 
 function structuredData(data) {
-  const json = JSON.stringify({ '@context': 'https://schema.org', ...data }).replace(/</g, '\\u003c')
+  const json = escapeScriptJson({ '@context': 'https://schema.org', ...data })
   return `<script type="application/ld+json">${json}</script>`
 }
 
@@ -204,7 +208,8 @@ async function writeRoute(route) {
     `<dt>${escapeHtml(question)}</dt><dd>${escapeHtml(answer)}</dd>`).join('\n')
   const links = route.links.map(([path, label, language]) =>
     `<li><a href="${path}"${language ? ` lang="${language}"` : ''}>${escapeHtml(label)}</a></li>`).join('\n')
-  const content = `<section data-route-content>
+  const content = `<script type="application/json" data-workbench-labels>${escapeScriptJson(translations[lang])}</script>
+<section data-route-content>
   <h1>${escapeHtml(route.heading)}</h1>
   <p data-route-summary>${escapeHtml(route.summary)}</p>
   <div data-route-details>

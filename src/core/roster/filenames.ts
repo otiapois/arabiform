@@ -10,6 +10,10 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const physicalTokens = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const allTokens = new RegExp(`${physicalTokens.source}|\\[\\[@(${VIRTUAL_COLUMNS.join('|')})\\]\\]`, 'g');
 
+export function physicalFilenameColumns(pattern: string): string[] {
+  return Array.from(pattern.matchAll(physicalTokens), (match) => match[1]!);
+}
+
 export function hasVirtualFilenameToken(pattern: string): boolean {
   for (const match of pattern.matchAll(allTokens)) if (match[2]) return true;
   return false;

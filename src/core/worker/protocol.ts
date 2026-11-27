@@ -22,7 +22,10 @@ export interface BatchProgress {
 }
 
 export type { CoverLanguage } from '../pdf/qr-settings';
-export type MergeCoverSheet = { coverLanguage?: CoverLanguage; locale: 'en' | 'ar'; templateName: string; filenames: readonly string[]; includeCustody?: boolean };
+export type MergeCoverSheet = {
+  coverLanguage?: CoverLanguage; locale: 'en' | 'ar'; templateName: string; filenames: readonly string[];
+  includeCustody?: boolean; exportedAt?: string;
+};
 
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }

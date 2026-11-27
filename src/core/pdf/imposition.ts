@@ -83,7 +83,7 @@ function pageGeometry({ printBounds, rotation, userUnit }: TemplateMetadata['pag
 }
 
 export async function imposeRecordPages(source: PDFDocument, pages: TemplateMetadata['pages']) {
-  const doc = await PDFDocument.create();
+  const doc = await PDFDocument.create({ updateMetadata: false });
   const sourcePages = source.getPages();
   const geometry = pages.map(pageGeometry);
   for (const page of sourcePages) {
