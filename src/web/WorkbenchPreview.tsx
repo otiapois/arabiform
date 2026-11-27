@@ -59,6 +59,7 @@ export default function WorkbenchPreview({ template, desk, language }: {
     { id: 'smallest', label: copy.smallest, row: spotlight?.smallestFontRow },
     { id: 'flagged', label: copy.flagged, row: spotlight?.firstFlaggedRow },
   ];
+  const canCompare = Boolean(results && results.length > 1);
 
   return (
     <>
@@ -69,7 +70,7 @@ export default function WorkbenchPreview({ template, desk, language }: {
         </div>
         {!comparing && status && <span className={`tag tag-${status}`}>{fillLabel(rowLabel, { row: selected + 1 })}</span>}
       </header>
-      {spotlight && checkedWorker && (
+      {spotlight && checkedWorker && (canCompare || jumps.some(({ row }) => row !== undefined)) && (
         <div className="preview-gallery" data-testid="preview-gallery">
           <div className="boundary-jumps" role="group" aria-label={copy.spotlight}>
             {jumps.map(({ id, label, row }) => {
@@ -82,7 +83,7 @@ export default function WorkbenchPreview({ template, desk, language }: {
                 <span id={description} className="sr-only">{fillLabel(copy.jumpRow, { row })}{id === 'longest' ? ` ${copy.longestHelp}` : ''}</span>
               </button>;
             })}
-            {results && results.length > 1 && (
+            {canCompare && (
               <button type="button" className="button secondary" data-testid="toggle-row-compare"
                 aria-expanded={comparing} aria-controls={drawerId}
                 onClick={() => setCompareWorker(comparing ? undefined : checkedWorker)}>{copy.compare}</button>

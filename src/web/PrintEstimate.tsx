@@ -14,6 +14,7 @@ const en = {
   twoUp: '2-up sheets',
   cover: 'Cover pages',
   saves: '2-up saves',
+  sheet: 'sheet',
   sheets: 'sheets',
   'imposition-requires-single-page': '2-up requires a single-page template.',
   'imposition-invalid-page-geometry': '2-up is unavailable for this page size or rotation.',
@@ -32,8 +33,9 @@ const ar: typeof en = {
   oneUp: 'الأوراق لصفحة واحدة في الورقة',
   twoUp: 'الأوراق لصفحتين في الورقة',
   cover: 'صفحات الغلاف',
-  saves: 'التوفير عند طباعة صفحتين في الورقة',
-  sheets: 'ورقة',
+  saves: 'الأوراق التي يوفرها تخطيط الصفحتين',
+  sheet: '',
+  sheets: '',
   'imposition-requires-single-page': 'طباعة صفحتين في الورقة تتطلب قالبًا من صفحة واحدة.',
   'imposition-invalid-page-geometry': 'طباعة صفحتين في الورقة غير متاحة بسبب حجم الصفحة أو زاوية تدويرها.',
   'imposition-unsupported-print-annotation': 'طباعة صفحتين في الورقة غير متاحة لوجود تعليق توضيحي قابل للطباعة في القالب.',
@@ -76,7 +78,7 @@ export default function PrintEstimate({ worker, output, arabic }: { worker: Batc
             <div><h4>{copy.combined}</h4><SheetCounts counts={estimate} copy={copy} kind="combined" alternative={alternative} /></div>
             {estimate.split && <div><h4>{copy.split}</h4>
               <SheetCounts counts={estimate.split} copy={copy} kind="split" alternative={alternative} />
-              <details className="print-estimate-groups">
+              {estimate.split.groupBreakdowns.length > 0 && <details className="print-estimate-groups">
                 <summary>{copy.groupDetails}</summary>
                 <ul>
                   {estimate.split.groupBreakdowns.map(group => (
@@ -86,7 +88,7 @@ export default function PrintEstimate({ worker, output, arabic }: { worker: Batc
                     </li>
                   ))}
                 </ul>
-              </details>
+              </details>}
             </div>}
           </div>{estimate.twoUpUnavailableReason && <p className="sheet-estimate-note">{copy[estimate.twoUpUnavailableReason]}</p>}</>
         ) : <p className="quiet">{current ? copy.error : copy.loading}</p>}
@@ -99,6 +101,7 @@ function SheetCounts({ counts, copy, kind, alternative }: {
   counts: Counts; copy: typeof en; kind: 'combined' | 'split' | 'group'; alternative: boolean;
 }) {
   const { totalRecords, coverPages, activePhysicalSheets, oneUpPhysicalSheets, twoUpPhysicalSheets, sheetsSavedByTwoUp, percentPaperSaved } = counts;
+  const savingsUnit = sheetsSavedByTwoUp === 1 ? copy.sheet : copy.sheets;
   return (
     <>
       <dl className="sheet-counts" data-testid={`print-estimate-${kind}`} data-records={totalRecords} data-cover-pages={coverPages}
@@ -111,7 +114,7 @@ function SheetCounts({ counts, copy, kind, alternative }: {
         {twoUpPhysicalSheets !== null && <div><dt>{copy.twoUp}</dt><dd><bdi dir="ltr">{twoUpPhysicalSheets}</bdi></dd></div>}
       </dl>
       {kind !== 'group' && sheetsSavedByTwoUp !== null && <p className="sheet-savings">
-        {copy.saves} <bdi dir="ltr">{sheetsSavedByTwoUp}</bdi> {copy.sheets} <bdi dir="ltr">({percentPaperSaved}%)</bdi>
+        {copy.saves} <bdi dir="ltr">{sheetsSavedByTwoUp}{savingsUnit && ` ${savingsUnit}`} ({percentPaperSaved}%)</bdi>
       </p>}
     </>
   );

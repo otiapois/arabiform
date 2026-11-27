@@ -426,7 +426,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                 <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
               </Suspense>
             )}
-            <QueuePanel key={desk.sourceRevision} desk={desk} language={language} characterKeys={characterKeys} />
+            <QueuePanel desk={desk} language={language} characterKeys={characterKeys} />
 
             <section className="panel exports" aria-labelledby="export-heading">
               <header>
