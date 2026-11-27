@@ -137,8 +137,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, activeCoverLanguage, printLayout]);
   const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output);
   const results = useMemo(() => job.results?.map((result, index): RowResult => ({
-    ...result, ...filenamePlans[index]!,
-  })), [job.results, filenamePlans]);
+    ...result, ...(grouping?.rows[index] ?? filenamePlans[index]!),
+  })), [job.results, grouping, filenamePlans]);
   const ready = useMemo(() => job.results?.filter(({ status }) => status === 'pass').length ?? 0, [job.results]);
   const warningRows = useMemo(() => rows.filter((row) => row.warnings.length > 0).length, [rows]);
   const firstFlaggedPage = job.results?.[selected]?.pageNumbers[0];

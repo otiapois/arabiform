@@ -9,4 +9,4 @@
 .grouped-summary summary { color: var(--forest); cursor: pointer; }
 .grouped-summary summary:focus-visible { outline: 2px solid var(--focus); }
 .grouped-summary ul { margin-block: .25rem 0; padding-inline-start: 1.4rem; }
-.split-download { max-inline-size: 100%; white-space: normal; }
+.split-download { gap: .25rem; max-inline-size: 100%; white-space: normal; }

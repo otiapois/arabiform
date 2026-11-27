@@ -11,7 +11,7 @@ const en = {
   summary: '{rows} ready rows in {groups} groups. The Clean PDFs ZIP puts each group in its own folder.',
   details: 'Group folders and row counts',
   blank: 'Ready rows with a blank group value go into',
-  split: 'Download Split Merged PDFs by Group (.zip)',
+  split: 'Download Split Merged PDFs by Group',
 };
 
 const ar: typeof en = {
@@ -21,7 +21,7 @@ const ar: typeof en = {
   summary: 'الصفوف الجاهزة: {rows}، المجموعات: {groups}. يضع ملف ZIP كل مجموعة في مجلد مستقل.',
   details: 'مجلدات المجموعات وعدد صفوفها',
   blank: 'تُحفظ الصفوف الجاهزة التي لا تحمل قيمة للمجموعة في مجلد',
-  split: 'تنزيل ملفات PDF المدمجة لكل مجموعة (.zip)',
+  split: 'تنزيل ملفات PDF المدمجة لكل مجموعة',
 };
 
 export function GroupingControl({ desk, arabic }: { desk: Desk; arabic: boolean }) {
@@ -62,8 +62,9 @@ export function GroupedSummary({ desk, arabic }: { desk: Desk; arabic: boolean }
           <ul>
             {groups.map(({ folder, groupValue, count }) => (
               <li key={folder}>
-                {groupValue !== null && <><bdi dir="auto">{groupValue}</bdi>{' → '}</>}
-                <bdi dir="auto">{folder}</bdi>{' · '}{count}
+                <bdi dir="auto">{folder}</bdi>
+                {groupValue !== null && groupValue !== folder && <> (<bdi dir="auto">{groupValue}</bdi>)</>}
+                {' · '}{count}
               </li>
             ))}
           </ul>
@@ -77,7 +78,7 @@ export function SplitDownload({ desk, arabic }: { desk: Desk; arabic: boolean })
   return (
     <button type="button" className="button secondary split-download" data-testid="download-split"
       disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked} onClick={() => desk.download('split')}>
-      {(arabic ? ar : en).split}
+      {(arabic ? ar : en).split}{' '}<bdi dir="ltr">(.zip)</bdi>
     </button>
   );
 }
