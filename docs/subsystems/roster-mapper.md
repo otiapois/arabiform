@@ -24,3 +24,9 @@
   - Build single-component PDF filenames from exact roster headers in `{{ColumnName}}` tokens and virtual values in `[[@ROW_INDEX]]`, `[[@PADDED_ROW_001]]`, `[[@TODAY_ISO]]`, and `[[@TODAY_AR]]`. For instance, `{{ROW_INDEX}}` still addresses the roster header `ROW_INDEX`. Remove separator, control, and format characters, guard Windows device stems even before an extension, and retain display text in NFC. Limit generated stems to 180 UTF-8 bytes at grapheme boundaries before adding the collision suffix and `.pdf`.
   - Deduplicate with a compatibility-normalized, case-insensitive key (`name.pdf`, `name-2.pdf`). ZIP independently rejects unsafe components, normalized duplicates, and names above 255 UTF-8 bytes.
   - Use the full batch filename plan in the queue, ZIP, audit, and optional merged-PDF cover index. An exported row keeps the filename and collision suffix from that plan for any subset.
+
+## QR Payload Patterns
+
+- Resolve `{{ColumnName}}` against the exact roster header and use the selected row's effective cell value, including edits and applied cleanup. Retain leading zeros and Unicode text without filename sanitization.
+- Use `[[@ROW_INDEX]]`, `[[@PADDED_ROW_001]]`, `[[@TODAY_ISO]]`, or `[[@TODAY_AR]]` to explicitly select a virtual value. A bare known virtual ID such as `{{PADDED_ROW_001}}` falls back to the virtual value when no physical column has that exact name. Both forms use the original roster position or the date captured at roster load.
+- Permit literal text around references. Reject missing or malformed references, a blank result, invalid Unicode, and payloads over the byte limit. The same resolution rules apply to the browser QR preview and stamped exports. [PDF stamp contract](pdf-engine.md)

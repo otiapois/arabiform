@@ -72,7 +72,6 @@ function entrySize(html, route) {
     raw += bytes.length
     gzip += gzipSync(bytes).length
   }
-  requireCheck(raw < 285_000 && gzip < 89_000, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
   return { raw, gzip }
 }
 
@@ -87,7 +86,7 @@ function checkHeaders() {
   }
   const policy = headers.get('content-security-policy') ?? ''
   const directives = policy.split(';').map(value => value.trim().split(/\s+/)).filter(([key]) => key)
-  for (const [name, sources] of [['connect-src', "'none'"], ['worker-src', "'self'"], ['form-action', "'none'"]]) {
+  for (const [name, sources] of [['default-src', "'self'"], ['connect-src', "'none'"], ['worker-src', "'self'"], ['form-action', "'none'"]]) {
     const matches = directives.filter(([key]) => key.toLowerCase() === name)
     requireCheck(matches.length === 1 && matches[0].slice(1).join(' ') === sources, '_headers requires ' + name + ' ' + sources)
   }
@@ -153,7 +152,7 @@ function verifyRelease() {
   for (const [index, route] of routes.entries()) {
     const html = read(pages[index]).replace(/<!--[\s\S]*?-->/g, '')
     checkRoute(html, route, site, titles, descriptions)
-    sizes.push(entrySize(html, route))
+    sizes.push({ route, ...entrySize(html, route) })
   }
   const sitemap = read('sitemap.xml')
   const urls = [...sitemap.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)].map(([, value]) => value)
@@ -166,6 +165,9 @@ function verifyRelease() {
   checkHeaders()
   checkLicensesAndCi()
   console.log('Verified five routes, sitemap, response headers, notices and CI for ' + site.origin + (strict ? ' (strict origin)' : ''))
+  for (const { route, raw, gzip } of sizes) {
+    requireCheck(raw < 280_000 && gzip < 87_500, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
+  }
   console.log('Largest entry JS: ' + Math.max(...sizes.map(size => size.raw)) + ' raw / ' +
     Math.max(...sizes.map(size => size.gzip)) + ' gzip bytes')
 }

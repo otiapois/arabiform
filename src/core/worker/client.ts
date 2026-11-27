@@ -1,3 +1,4 @@
+import type { QrPrintRequest } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { BatchCommand, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRequest, BatchResponse,
   BatchResult, BatchZipResult, MergeCoverSheet } from './protocol';
@@ -54,10 +55,10 @@ export function createBatchWorker() {
   return {
     preflight: (input: BatchInput, onProgress?: ProgressListener) => send({ phase: 'preflight', input }, onProgress) as Promise<BatchPreflightResult>,
     preview: (rowIndex: number) => send({ phase: 'preview', rowIndex }) as Promise<Uint8Array | undefined>,
-    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection) =>
-      send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection }, onProgress) as Promise<BatchZipResult>,
-    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection) =>
-      send({ phase: 'merged', coverSheet, watermark, rowSelection }, onProgress) as Promise<BatchMergedResult>,
+    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: QrPrintRequest) =>
+      send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection, qrStamp }, onProgress) as Promise<BatchZipResult>,
+    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: QrPrintRequest) =>
+      send({ phase: 'merged', coverSheet, watermark, rowSelection, qrStamp }, onProgress) as Promise<BatchMergedResult>,
     dispose: () => stop(new DOMException('Batch canceled', 'AbortError')),
   };
 }

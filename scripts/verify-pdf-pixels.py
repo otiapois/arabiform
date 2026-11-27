@@ -231,6 +231,25 @@ def check_cover_ink(page, footer):
     return evidence
 
 
+def check_bilingual_panel_ink(page):
+    width, _, samples = render(page)
+    red = samples[::CHANNELS]
+    middle = page.rect.width * 2
+    left = math.ceil(middle - 12 * 4)
+    right = math.floor(middle + 12 * 4)
+    table = min(drawing["rect"].y0 for drawing in page.get_drawings() if drawing["rect"].width > 500)
+    table_start = math.floor(table * 4) - 2
+    white = b"\xff" * (right - left)
+    left_ink = right_ink = 0
+    for row in range(40 * 4 - 1, table_start):
+        start = row * width
+        assert red[start + left:start + right] == white, "bilingual cover header ink crossed the central gutter"
+        left_ink += red[start:start + left].translate(DARK_PIXELS).count(b"\x01")
+        right_ink += red[start + right:start + width].translate(DARK_PIXELS).count(b"\x01")
+    assert left_ink > 300 and right_ink > 300, "both bilingual panels need shaped text ink"
+    return {"en": left_ink, "ar": right_ink}
+
+
 def check_covered_merge(spec, directory):
     cover_pages = spec["coverPages"]
     expected = spec["expectedText"]
@@ -245,7 +264,8 @@ def check_covered_merge(spec, directory):
             assert not list(page.widgets()) and not page.get_images(), "cover must be printable vector text"
             spans = [(bytes.fromhex(value.decode("ascii")).decode("utf-16"), operators)
                      for value, operators in COVER_SPAN.findall(page.read_contents())]
-            header = [expected["title"], *(expected["details"] if page_number == 0 else []), *expected["headings"]]
+            titles = expected["titles"] if "titles" in expected else [expected["title"]]
+            header = [*titles, *(expected["details"] if page_number == 0 else []), *expected["headings"]]
             assert [text for text, _ in spans[:len(header)]] == header, (spec["pdf"], page_number, spans[:len(header)])
             assert all(b" Tj" in operators for _, operators in spans), f"{spec['pdf']}: cover text span has no glyphs"
             footer = expected.get("footer")
@@ -258,7 +278,10 @@ def check_covered_merge(spec, directory):
                 if filename[0] in expected["wrappedFilenames"]:
                     assert filename[1].count(b"BT\n") > 1, f"{spec['pdf']}: expected filename to wrap"
                 index_rows.append((ordinal[0], row_number[0], filename[0], pages[0]))
-            ink.append(check_cover_ink(page, footer))
+            proof = check_cover_ink(page, footer)
+            if "titles" in expected:
+                proof["bilingualPanelInkAt4x"] = check_bilingual_panel_ink(page)
+            ink.append(proof)
         index = 0
         expected_index = []
         for ordinal, (row, filename, row_number) in enumerate(zip(spec["rows"], expected["filenames"], expected["rowNumbers"], strict=True), 1):
@@ -350,6 +373,76 @@ def check_watermark(spec, directory):
     return {"label": spec["label"], "pdf": spec["pdf"], "clippedWatermarkInkPixels": 0, "pages": pages}
 
 
+def check_qr_stamp(spec, directory):
+    modules = spec["modules"]
+    size = len(modules)
+    assert size in range(21, 42, 4) and all(len(row) == size for row in modules)
+    inset = 9 * 4
+    stamp = spec["sizePt"] * 4
+    cell = stamp / (size + 8)
+    finder = ["1111111", "1000001", "1011101", "1011101", "1011101", "1000001", "1111111"]
+    cover = spec["coverPages"]
+    pages = []
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    with ZipFile(directory / spec["zip"]) as archive, \
+            fitz.open(directory / spec["pdf"]) as merged, \
+            fitz.open(directory / spec["plainPdf"]) as plain, \
+            fitz.open(stream=archive.read(spec["member"]), filetype="pdf") as member:
+        assert len(merged) == len(plain) == cover + len(member)
+        for index in range(cover):
+            assert render(merged[index]) == render(plain[index]), "QR changed a cover page"
+        for index, zip_page in enumerate(member):
+            page = merged[cover + index]
+            baseline = plain[cover + index]
+            assert not list(page.widgets()) and not page.get_images(), "QR output must use vector page content"
+            actual = render(page)
+            assert actual == render(zip_page), "merged and flattened ZIP QR pixels differ"
+            width, height, data = actual
+            expected_width, expected_height = page.rect.width * 4, page.rect.height * 4
+            x = expected_width - inset - stamp if spec["corner"].endswith("right") else inset
+            y = expected_height - inset - stamp if spec["corner"].startswith("bottom") else inset
+            allowed = (math.floor(x), math.floor(y), math.ceil(x + stamp), math.ceil(y + stamp))
+            assert 0 < allowed[0] < allowed[2] < width and 0 < allowed[1] < allowed[3] < height
+            assert_same_outside(render(baseline), actual, [allowed], f"QR page {index + 1}")
+
+            def value(px, py):
+                offset = (py * width + px) * CHANNELS
+                return data[offset:offset + CHANNELS]
+
+            measured = []
+            for row in range(-4, size + 4):
+                measured_row = []
+                for col in range(-4, size + 4):
+                    dark = 0 <= row < size and 0 <= col < size and modules[row][col]
+                    monochrome = b"\x00" * CHANNELS if dark else b"\xff" * CHANNELS
+                    x0, y0 = x + (col + 4) * cell, y + (row + 4) * cell
+                    # Sample the interior of each module and leave room for
+                    # raster antialiasing at the borders.
+                    cores = [value(px, py) for py in range(math.ceil(y0 + 0.25), math.floor(y0 + cell - 1.25) + 1)
+                             for px in range(math.ceil(x0 + 0.25), math.floor(x0 + cell - 1.25) + 1)]
+                    assert cores and all(pixel == monochrome for pixel in cores), (spec["pdf"], index, col, row, monochrome, cores)
+                    measured_row.append(cores[0] == b"\x00" * CHANNELS)
+                if 0 <= row < size:
+                    measured.append(measured_row[4:-4])
+            assert measured == modules, "independent pixel matrix does not match the expected QR"
+            for left, top in ((0, 0), (size - 7, 0), (0, size - 7)):
+                assert ["".join(str(int(bit)) for bit in row[left:left + 7]) for row in measured[top:top + 7]] == finder
+            # The four-module strips must be completely white away from the
+            # shared painted boundaries, including seams between white cells.
+            l, t, r, b = math.ceil(x + 0.5), math.ceil(y + 0.5), math.floor(x + stamp - 1.5), math.floor(y + stamp - 1.5)
+            inner_l, inner_t, inner_r, inner_b = (x + 4 * cell, y + 4 * cell, x + stamp - 4 * cell, y + stamp - 4 * cell)
+            for py in range(t, b + 1):
+                for px in range(l, r + 1):
+                    if px + 1.5 <= inner_l or px - 0.5 >= inner_r or py + 1.5 <= inner_t or py - 0.5 >= inner_b:
+                        assert value(px, py) == b"\xff" * CHANNELS, "non-white quiet zone"
+            pages.append({"rotation": page.rotation, "boundsAt4x": allowed, "sizePt": spec["sizePt"],
+                          "verifiedModules": size * size, "quietZoneModules": 4, "finderPatterns": 3,
+                          "clippedPixels": 0, "pixelDiffOutsideStamp": 0})
+    warnings = fitz.TOOLS.mupdf_warnings(reset=True)
+    assert not warnings, f"{spec['pdf']}: MuPDF emitted warnings: {warnings}"
+    return {"pdf": spec["pdf"], "zip": spec["zip"], "coverPagesUnchanged": cover, "pages": pages}
+
+
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
     arguments.add_argument("manifest", nargs="?", type=Path, default=Path("test-results/pdf-pixels/manifest.json"))
@@ -366,11 +459,12 @@ def main():
     covered = [check_covered_merge(spec, path.parent) for spec in manifest.get("coveredMerged", [])]
     zipped = check_zip(manifest["choiceZip"], path.parent) if manifest.get("choiceZip") else 0
     watermarks = [check_watermark(spec, path.parent) for spec in manifest.get("watermarkProofs", [])]
+    qr_proofs = [check_qr_stamp(spec, path.parent) for spec in manifest.get("qrProofs", [])]
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "flattenedZipPagesPixelIdentical": zipped,
-        "coveredMerged": covered, "watermarkProofs": watermarks,
+        "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs,
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -388,6 +482,10 @@ def main():
     if watermarks:
         pages = sum(len(proof["pages"]) for proof in watermarks)
         print(f"Watermarks: {pages} stamped pages with visible ink, 0 clipped pixels, and original dark ink preserved.")
+    if qr_proofs:
+        stamped = [page for proof in qr_proofs for page in proof["pages"]]
+        checked_modules = sum(page["verifiedModules"] for page in stamped)
+        print(f"QR: {len(stamped)} identical merged/ZIP stamped pages, {checked_modules} exact modules, 4-module quiet zones, 0 clipped or outside-change pixels.")
 
 
 if __name__ == "__main__":

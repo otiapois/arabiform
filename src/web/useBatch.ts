@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { CustodyManifest, CustodySources } from '../core/audit/custody';
 import type { AlignOverride } from '../core/pdf/alignment';
+import type { QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { resolveVirtualMapping, VirtualColumnMapping } from '../core/roster/virtual-columns';
@@ -11,19 +12,20 @@ import { resolveRowSelection, type RowSelection } from '../core/worker/row-selec
 import type { FontMode } from './presets';
 import { errorCode, loadFonts, saveDownload } from './resources';
 
-type BatchWorker = ReturnType<typeof createBatchWorker>;
-type ExportKind = 'zip' | 'merged' | 'csv' | 'json';
+export type BatchWorker = ReturnType<typeof createBatchWorker>;
+export type ExportKind = 'zip' | 'merged' | 'csv' | 'json';
 type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256'>;
 
-type OutputSettings = {
+export type OutputSettings = {
   filenamePlans: readonly FilenamePlan[];
   rowSelection: RowSelection;
   flattenZip: boolean;
   cover?: Omit<MergeCoverSheet, 'filenames'>;
   watermark?: WatermarkSettings;
+  qrStamp?: Exclude<QrStampSettings, { placement: 'none' }>;
 };
 
-type BatchSettings = {
+export type BatchSettings = {
   template: Uint8Array;
   roster: Uint8Array;
   rows: readonly RosterRow[];
@@ -48,7 +50,7 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
   const [preview, setPreview] = useState<{ results: BatchRowResult[]; row: number; bytes?: Uint8Array }>();
   const [progress, setProgress] = useState<BatchProgress>();
   const [exporting, setExporting] = useState<ExportKind>();
-  const [exportError, setExportError] = useState<string>();
+  const [exportError, setExportError] = useState<{ code: string; rowNumber?: number }>();
   const current = checked?.batch === batch ? checked : undefined;
   const results = current?.results;
   const exportScope = useMemo(() => resolveRowSelection(results ?? [], output.rowSelection), [results, output.rowSelection]);
@@ -96,20 +98,11 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     let client: BatchWorker | undefined;
     const timer = window.setTimeout(async () => {
       try {
-        const [{ createBatchWorker }, fonts] = await Promise.all([import('../core/worker/client'), loadFonts()]);
+        const [{ createBatchWorker, makeBatchInput }, fonts] = await Promise.all([import('./batch-preflight'), loadFonts()]);
         if (!active || generation.current !== revision) return;
         client = createBatchWorker();
         worker.current = client;
-        const mapped = Object.entries(batch.mapping).filter(([, column]) => column);
-        const virtual = Object.entries(batch.virtualMappings);
-        const rows = batch.rows.map(({ values }, index) => Object.fromEntries([
-          ...mapped.map(([field, column]) => [field, Object.hasOwn(values, column) ? values[column]! : '']),
-          ...virtual.map(([field, binding]) => [field, batch.resolveVirtualMapping(binding, index + 1, batch.localDate)]),
-        ]));
-        const { rows: results, custody } = await client.preflight({
-          template: batch.template, roster: batch.roster, rows,
-          options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides },
-        }, trackProgress(client));
+        const { rows: results, custody } = await client.preflight(makeBatchInput(batch, fonts), trackProgress(client));
         if (worker.current === client) {
           setChecked({ batch, results, custody });
           setProgress(undefined);
@@ -154,42 +147,34 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
 
   async function download(kind: ExportKind) {
     const client = worker.current;
-    if (!client || !results || exportLock.current) return;
+    if (!batch || !client || !results || exportLock.current) return;
     if (!exportCount && (output.rowSelection !== 'all-ready' || kind === 'zip' || kind === 'merged')) return;
     const operation = Symbol();
     exportLock.current = operation;
     setExporting(kind);
     setExportError(undefined);
-    const { filenamePlans, flattenZip, cover, watermark, rowSelection } = output;
+    const currentExport = () => exportLock.current === operation && worker.current === client;
     try {
-      if (kind === 'csv' || kind === 'json') {
-        const { createAudit } = await import('../core/pdf');
-        if (exportLock.current !== operation || worker.current !== client) return;
-        const audit = createAudit(results.map((result, index) => ({
-          rowNumber: index + 1,
-          filename: filenamePlans[index]!.filename,
-          status: result.status,
-          diagnostics: result.diagnostics,
-          fontSizes: result.fontSizes,
-        })), exportScope);
-        saveDownload(audit[kind], `arabiform-preflight.${kind}`, kind === 'csv' ? 'text/csv;charset=utf-8' : 'application/json');
-      } else {
-        const onProgress = trackProgress(client);
+      if (kind === 'zip' || kind === 'merged') {
         setProgress({ phase: kind, completed: 0, total: exportCount });
-        const isZip = kind === 'zip';
-        const filenames = isZip || cover ? filenamePlans.map(({ filename }) => filename) : [];
-        const { bytes, ...digests } = await (isZip
-          ? client.zip(filenames, onProgress, flattenZip, flattenZip ? watermark : undefined, rowSelection)
-          : client.merged(onProgress, cover ? { ...cover, filenames } : undefined, watermark, rowSelection));
-        if (exportLock.current === operation && worker.current === client) {
-          saveDownload(bytes, isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', isZip ? 'application/zip' : 'application/pdf');
+      }
+      const { buildDownload } = await import('./batch-exports');
+      if (!currentExport()) return;
+      const download = await buildDownload(kind, client, trackProgress(client), batch, results, output, exportScope, currentExport);
+      if (download && currentExport()) {
+        const { data, filename, mime, digests } = download;
+        saveDownload(data, filename, mime);
+        if (digests) {
           setExported((previous) => ({ settings: output, digests: {
             ...(previous?.settings === output ? previous.digests : undefined), ...digests,
           } }));
         }
       }
     } catch (error) {
-      if (exportLock.current === operation) setExportError(errorCode(error, 'exportError') || 'exportError');
+      if (exportLock.current === operation) {
+        const rowNumber = error instanceof Error && 'rowNumber' in error && typeof error.rowNumber === 'number' ? error.rowNumber : undefined;
+        setExportError({ code: errorCode(error, 'exportError') || 'exportError', rowNumber });
+      }
     } finally {
       if (exportLock.current === operation) {
         exportLock.current = undefined;

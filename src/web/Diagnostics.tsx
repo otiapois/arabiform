@@ -5,6 +5,20 @@ import type { RowResult } from './useWorkbench';
 type Diagnostic = RowResult['diagnostics'][number];
 type Language = ReturnType<typeof translator>;
 
+const en = {
+  diagnostics: 'PDF field diagnostics',
+  needsSize: 'Needs {size} pt (min is {min} pt)',
+  exceedsOneChar: 'Exceeds MaxLen by {count} char',
+  exceedsChars: 'Exceeds MaxLen by {count} chars',
+};
+
+const ar: typeof en = {
+  diagnostics: 'نتائج فحص حقول PDF',
+  needsSize: 'يلزم حجم {size} نقطة (الحد الأدنى الحالي {min} نقطة)',
+  exceedsOneChar: 'يتجاوز الحد الأقصى للحقل (MaxLen) بحرف واحد',
+  exceedsChars: 'عدد الأحرف الزائدة على الحد الأقصى للحقل (MaxLen) هو {count}',
+};
+
 const problems: Record<string, readonly [string, string]> = {
   'too-narrow': ['Text exceeds the field width at the minimum font size.', 'يتجاوز النص عرض الحقل عند الحد الأدنى لحجم الخط.'],
   'too-low': ['Text exceeds the field height at the minimum font size.', 'يتجاوز النص ارتفاع الحقل عند الحد الأدنى لحجم الخط.'],
@@ -36,14 +50,14 @@ export function diagnosticProblem(code: string, { arabic, problem }: Language) {
 }
 
 export function diagnosticText(issue: Diagnostic, minSize: number, language: Language) {
-  const { labels } = language;
+  const copy = language.arabic ? ar : en;
   if (issue.requiredFontSizePt !== undefined) {
-    return fillLabel(labels.needsSize, { size: issue.requiredFontSizePt, min: minSize });
+    return fillLabel(copy.needsSize, { size: issue.requiredFontSizePt, min: minSize });
   }
   if (issue.maxLengthExcess !== undefined) {
-    return fillLabel(issue.maxLengthExcess === 1 ? labels.exceedsOneChar : labels.exceedsChars, { count: issue.maxLengthExcess });
+    return fillLabel(issue.maxLengthExcess === 1 ? copy.exceedsOneChar : copy.exceedsChars, { count: issue.maxLengthExcess });
   }
-  return diagnosticProblem(issue.code, language) ?? labels.pdfError;
+  return diagnosticProblem(issue.code, language) ?? language.labels.pdfError;
 }
 
 export { safeRowMinSize } from '../core/pdf/batch-font-suggestion';
@@ -56,7 +70,7 @@ export function Diagnostics({ issues, minSize, language, testId }: {
 }) {
   const { labels } = language;
   return (
-    <ul className="diagnostics" aria-label={labels.diagnostics} data-testid={testId}>
+    <ul className="diagnostics" aria-label={(language.arabic ? ar : en).diagnostics} data-testid={testId}>
       {issues.map((issue, index) => (
         <li key={index}>
           <bdi dir="auto">{issue.field}</bdi>{' · '}{diagnosticText(issue, minSize, language)}

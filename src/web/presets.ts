@@ -1,5 +1,6 @@
-import { validateMappingPreset, type FontMode, type MappingPreset, type MappingPresetV4, type MappingPresetV5, type MappingPresetV6 } from '../core/draft/mapping-preset';
+import { validateMappingPreset, type FontMode, type MappingPreset, type MappingPresetV4, type MappingPresetV5, type MappingPresetV6, type MappingPresetV7 } from '../core/draft/mapping-preset';
 import type { AlignOverride } from '../core/pdf/alignment';
+import type { CoverLanguage, QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import { hasVirtualFilenameToken } from '../core/roster/filenames';
 import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
@@ -16,8 +17,12 @@ export function makeDraftSettings(
   mapping: Record<string, string>, filenamePattern: string, minFontSize: number, font: FontMode,
   flattenZip = false, includeCoverSheet = false, alignOverrides: Record<string, AlignOverride> = {}, watermark?: WatermarkSettings,
   virtualMappings: Record<string, VirtualColumnMapping> = {},
-): MappingPresetV4 | MappingPresetV5 | MappingPresetV6 {
+  qrStamp: QrStampSettings = { placement: 'none' }, coverLanguage: CoverLanguage = 'auto',
+): MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 {
   const settings = { mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides };
+  if (qrStamp.placement !== 'none' || coverLanguage !== 'auto') {
+    return { version: 7, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings, qrStamp, coverLanguage };
+  }
   if (Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern)) {
     return { version: 6, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings };
   }
@@ -28,10 +33,11 @@ export function makeMappingPreset(
   mapping: Record<string, string>, filenamePattern: string, minFontSize: number, font: FontMode,
   flattenZip = false, includeCoverSheet = false, alignOverrides: Record<string, AlignOverride> = {}, watermark?: WatermarkSettings,
   virtualMappings: Record<string, VirtualColumnMapping> = {},
+  qrStamp: QrStampSettings = { placement: 'none' }, coverLanguage: CoverLanguage = 'auto',
 ): MappingPreset {
   if ((watermark && watermark.kind !== 'none') || Object.keys(alignOverrides).length
-    || Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern)) {
-    return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings);
+    || Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern) || qrStamp.placement !== 'none' || coverLanguage !== 'auto') {
+    return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage);
   }
   const settings = { mapping, filenamePattern, minFontSize, font };
   if (includeCoverSheet) return { version: 3, ...settings, flattenZip, includeCoverSheet };

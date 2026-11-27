@@ -1,6 +1,7 @@
 import { hashCustodySources, sha256 } from '../audit/custody';
 import { createMergedPdf, preflightRow, prepareRowPreflight } from '../pdf';
 import { createGeneratedZip } from '../pdf/exports';
+import { isCoverLanguage, validateQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 import { resolveRowSelection } from './row-selection';
 
@@ -67,9 +68,16 @@ export function createBatchProcessor() {
       return { filename: filenames?.[index] ?? '', getPdfBytes: () => getPdfBytes(index) };
     });
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
-    if (phase === 'zip') return createGeneratedZip(ready, progress, command.flattenZip, watermark);
+    let qrStamp: QrPrintRequest | undefined;
+    if (command.qrStamp !== undefined && (phase === 'merged' || command.flattenZip)) {
+      const { placement, sizePt, payloads } = validateQrPrintRequest(command.qrStamp, results.length);
+      qrStamp = { placement, sizePt, payloads: selectedRowNumbers.map((number) => payloads[number - 1]!) };
+    }
+    if (phase === 'zip') return createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp);
+    const coverLanguage = coverSheet?.coverLanguage ?? 'auto';
+    if (!isCoverLanguage(coverLanguage)) throw new Error('cover-sheet-invalid-metadata');
     const bytes = await createMergedPdf(ready, progress, coverSheet && {
-      locale: coverSheet.locale,
+      locale: coverLanguage === 'auto' ? coverSheet.locale : coverLanguage,
       templateName: coverSheet.templateName,
       exportedAt: new Date(),
       preflight: input.options,
@@ -77,7 +85,7 @@ export function createBatchProcessor() {
       flagged: results.filter(({ status }) => status === 'flagged').length,
       skipped: results.length - ready.length,
       custody: coverSheet.includeCustody ? custody : undefined,
-    }, watermark);
+    }, watermark, qrStamp);
     return { bytes, mergedPdfSha256: await sha256(bytes) };
   }
 

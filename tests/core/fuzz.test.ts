@@ -15,7 +15,10 @@ import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { createGeneratedZip } from '../../src/core/pdf/exports';
 import { inspectPrintMargins } from '../../src/core/pdf/margin-preflight';
-import { paginateCoverRows } from '../../src/core/pdf/merge-cover';
+import { coverTableLayout, paginateCoverRows } from '../../src/core/pdf/merge-cover';
+import { encodeQr, resolveQrPayload } from '../../src/core/pdf/qr-encoder';
+import { qrStampLayout } from '../../src/core/pdf/qr-stamp';
+import type { RectangleBounds } from '../../src/core/pdf/template';
 import { createShaper, fitText } from '../../src/core/pdf/shaping';
 import { watermarkLayout } from '../../src/core/pdf/watermark';
 import { createBatchProcessor } from '../../src/core/worker/batch';
@@ -23,6 +26,8 @@ import { resolveRowSelection } from '../../src/core/worker/row-selection';
 import { makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
+
+import { proveQrMatrix } from './qr-proof';
 
 const seed = 0x4a216d32;
 const encoder = new TextEncoder();
@@ -55,7 +60,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(12_000);
+  expect(acceptedCases).toBeGreaterThanOrEqual(15_000);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1122,4 +1127,110 @@ describe('seeded virtual columns, presets and canvas geometry', () => {
       ] });
     }), 160);
   }, 15_000);
+});
+
+describe('seeded QR codewords, rotated print stamps and bilingual covers', () => {
+  it('checks 1,200 locally encoded payloads and failures with independent Byte/ECI and RS readback', async () => {
+    const shapes = fc.record({
+      capacity: fc.constantFrom(14, 26, 42, 62, 84, 106),
+      delta: fc.integer({ min: -2, max: 3 }),
+      flavor: fc.constantFrom('ASCII', 'Arabic', 'supplementary', 'blank', 'malformed'),
+      tail: fc.array(fc.constantFrom('0', 'z', '%', ' ', 'A', '#', '-'), { minLength: 6, maxLength: 16 }),
+      row: fc.integer({ min: 1, max: 21_000 }),
+    });
+    await verify(fc.asyncProperty(shapes, async ({ capacity, delta, flavor, tail, row }) => {
+      const length = capacity + delta;
+      const prefix = flavor === 'Arabic' ? 'لِ' : flavor === 'supplementary' ? '𐍈' : 'A';
+      const ascii = tail.join('').repeat(20);
+      const payload = flavor === 'blank' ? ' \t ' : flavor === 'malformed' ? 'بد\ud800A'
+        : prefix + ascii.slice(0, length - encoder.encode(prefix).length);
+      const error = flavor === 'blank' ? 'qr-stamp-empty-payload' : flavor === 'malformed' ? 'qr-stamp-invalid-payload'
+        : length > (flavor === 'ASCII' ? 106 : 105) ? 'qr-stamp-payload-too-long' : undefined;
+      if (error) {
+        expect(() => encodeQr(payload)).toThrow(error);
+        expect(() => resolveQrPayload('{{ID}}', { ID: payload }, row, '2026-11-27')).toThrow(error);
+      } else {
+        expect(resolveQrPayload('{{ID}}', { ID: payload }, row, '2026-11-27')).toBe(payload);
+        const symbol = encodeQr(payload);
+        const cap = [14, 26, 42, 62, 84, 106].findIndex((limit) => length <= limit - Number(flavor !== 'ASCII'));
+        expect(symbol.version).toBe(cap + 1);
+        proveQrMatrix(symbol, payload);
+      }
+    }), 1_200);
+  }, 30_000);
+
+  it('checks 950 corner transforms including clipped crops, physical size and unsafe geometries', async () => {
+    const geometry = fc.record({
+      x: fc.integer({ min: -200, max: 200 }), y: fc.integer({ min: -200, max: 200 }),
+      width: fc.integer({ min: 35, max: 240 }), height: fc.integer({ min: 35, max: 240 }),
+      dx0: fc.integer({ min: -18, max: 18 }), dy0: fc.integer({ min: -18, max: 18 }),
+      dx1: fc.integer({ min: -18, max: 18 }), dy1: fc.integer({ min: -18, max: 18 }),
+      rotation: fc.constantFrom(0, 90, 180, 270), scale: fc.constantFrom(0.5, 1, 2, 4),
+      corner: fc.constantFrom('top-left', 'top-right', 'bottom-left', 'bottom-right'),
+      size: fc.integer({ min: 36, max: 72 }),
+    });
+    await verify(fc.asyncProperty(geometry, async ({ x, y, width, height, dx0, dy0, dx1, dy1, rotation, scale, corner, size }) => {
+      const media: RectangleBounds = [x + 0.25, y + 0.5, x + width + 0.25, y + height + 0.5];
+      const crop: RectangleBounds = [media[0] + dx0, media[1] + dy0, media[2] + dx1, media[3] + dy1];
+      const [l, b, r, t] = [media[0] + Math.max(0, dx0), media[1] + Math.max(0, dy0),
+        media[2] + Math.min(0, dx1), media[3] + Math.min(0, dy1)];
+      if ((r! - l!) * scale < size + 18 || (t! - b!) * scale < size + 18) {
+        expect(() => qrStampLayout(media, crop, rotation, scale, corner, size)).toThrow('qr-stamp-does-not-fit');
+        return;
+      }
+      const { side, matrix } = qrStampLayout(media, crop, rotation, scale, corner, size);
+      const [a, b0, c, d, tx, ty] = matrix;
+      expect(side * scale).toBe(size);
+      const [pageWidth, pageHeight] = rotation % 180 ? [t! - b!, r! - l!] : [r! - l!, t! - b!];
+      for (const [u, v] of [[0, 0], [side, 0], [0, side], [side, side]] as const) {
+        const px = a * u + c * v + tx;
+        const py = b0 * u + d * v + ty;
+        const displayed = rotation === 90 ? [py - b!, px - l!] : rotation === 180 ? [r! - px, py - b!]
+          : rotation === 270 ? [t! - py, r! - px] : [px - l!, t! - py];
+        const [displayX, displayY] = displayed.map((value) => value * scale);
+        const expectedLeft = corner.endsWith('left') ? 9 : pageWidth! * scale - 9 - size;
+        const expectedTop = corner.startsWith('top') ? 9 : pageHeight! * scale - 9 - size;
+        expect(displayX).toBe(expectedLeft + u * scale);
+        expect(displayY).toBe(expectedTop + size - v * scale);
+      }
+    }), 950);
+  }, 20_000);
+
+  it('checks 800 bilingual panel height and absolute printable index cases', async () => {
+    const panel = fc.record({
+      title: fc.integer({ min: 10, max: 26 }), summary: fc.integer({ min: 8, max: 18 }), settings: fc.integer({ min: 8, max: 18 }),
+      details: fc.tuple(fc.integer({ min: 8, max: 25 }), fc.integer({ min: 8, max: 160 })),
+    });
+    const row = fc.record({ height: fc.integer({ min: 23, max: 500 }), pageCount: fc.integer({ min: 1, max: 16 }) });
+    await verify(fc.asyncProperty(panel, panel, fc.array(row, { minLength: 1, maxLength: 72 }), fc.option(fc.integer({ min: 8, max: 20 })),
+      async (en, ar, rows, footer) => {
+        const layout = coverTableLayout([en, ar], footer ?? undefined);
+        const nextTop = 801.89 - Math.max(en.title, ar.title) - 18 - 34;
+        const headings = Math.max(en.details[0], ar.details[0]) + Math.max(en.details[1], ar.details[1]) + 16
+          + Math.max(en.summary, ar.summary) + Math.max(en.settings, ar.settings) + 22;
+        const firstTop = nextTop - headings;
+        expect(layout.afterTitle - layout.tableHeader).toBeCloseTo(nextTop, 8);
+        expect(layout.firstTable - layout.tableHeader).toBeCloseTo(firstTop, 8);
+        const bottom = footer === null ? 41 : 49 + footer;
+        expect(layout.bottom).toBe(bottom);
+        const sheets = paginateCoverRows(rows, layout.firstTable - layout.tableHeader, layout.afterTitle - layout.tableHeader, bottom);
+        let preceding = sheets.length;
+        let index = 0;
+        for (const [sheetIndex, sheet] of sheets.entries()) {
+          let cursor = sheetIndex ? nextTop : firstTop;
+          for (const position of sheet) {
+            const { height, pageCount } = rows[index]!;
+            expect(position.index).toBe(index++);
+            expect(position.top).toBeCloseTo(cursor, 8);
+            expect(position.startPage).toBe(preceding + 1);
+            expect(position.endPage).toBe(preceding + pageCount);
+            preceding += pageCount;
+            cursor -= height;
+          }
+          expect(cursor).toBeGreaterThanOrEqual(bottom);
+          if (index < rows.length) expect(cursor - rows[index]!.height).toBeLessThan(bottom);
+        }
+        expect(index).toBe(rows.length);
+      }), 800);
+  }, 30_000);
 });

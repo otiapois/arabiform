@@ -105,4 +105,18 @@ describe('local mapping preset boundary', () => {
       missingFields: ['Serial'], missingColumns: ['Name'],
     });
   });
+
+  it('writes v7 whenever QR or a cover language is set, in presets and draft settings', () => {
+    const args = [preset.mapping, preset.filenamePattern, preset.minFontSize, 'arabic', false, true, {}, undefined, {}] as const;
+    const off = { placement: 'none' } as const;
+    const stamp = { placement: 'bottom-right', pattern: 'CERT-{{ID}}', sizePt: 48.5 } as const;
+    expect(makeMappingPreset(...args, off, 'auto').version).toBe(3);
+    expect(makeDraftSettings(...args, off, 'auto').version).toBe(4);
+    for (const [qrStamp, coverLanguage] of [[stamp, 'auto'], [off, 'ar'], [stamp, 'bilingual']] as const) {
+      const settings = makeMappingPreset(...args, qrStamp, coverLanguage);
+      expect(settings).toMatchObject({ version: 7, qrStamp, coverLanguage, virtualMappings: {}, watermark: { kind: 'none' } });
+      expect(makeDraftSettings(...args, qrStamp, coverLanguage)).toEqual(settings);
+      expect(parseMappingPreset(JSON.stringify(settings))).toEqual(settings);
+    }
+  });
 });

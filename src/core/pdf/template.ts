@@ -49,7 +49,7 @@ export interface TemplateMetadata {
   }[];
 }
 
-function readBounds(rect: PDFArray): RectangleBounds {
+export function readBounds(rect: PDFArray): RectangleBounds {
   const firstX = rect.lookup(0, PDFNumber).asNumber();
   const firstY = rect.lookup(1, PDFNumber).asNumber();
   const secondX = rect.lookup(2, PDFNumber).asNumber();

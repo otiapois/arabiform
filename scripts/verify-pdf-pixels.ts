@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { decodePDFRawStream, degrees, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
+import { decodePDFRawStream, degrees, rgb, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import { makeFilenames, readRoster } from '../src/core/roster';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, virtualFilenameToken } from '../src/core/roster/virtual-columns';
 import { createBatchProcessor } from '../src/core/worker/batch';
+import { encodeQr, resolveQrPayload } from '../src/core/pdf/qr-encoder';
+import type { QrPrintRequest } from '../src/core/pdf/qr-settings';
+import { proveQrMatrix } from '../tests/core/qr-proof';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -537,6 +540,78 @@ for (const [kind, label, text, angle, opacity] of [
   watermarkProofs.push({ pdf, plainPdf, zip, member: stampRow.filename, label, text, angle, opacity });
 }
 
+const bilingualSources = Array.from({ length: 30 }, (_, index) => index === 0 ? m4Rows[0]! : singlePageCoverRow);
+const bilingualRows = bilingualSources.map(({ pdfBytes }, index) => ({ pdfBytes, filename: `${index + 1}-${longFilename}` }));
+const bilingualRowNumbers = bilingualRows.map((_, index) => 2 * index + 1);
+const bilingualTemplateName = `توريد ${'Workshop-'.repeat(8)}00123.pdf`;
+const bilingualSpec = {
+  pdf: 'm12-bilingual-covered.pdf', plainPdf: 'm12-bilingual-plain.pdf', coverPages: 3,
+  rows: bilingualSources.map(({ filename }) => filename),
+  expectedText: {
+    titles: ['ArabiForm · Batch Print Manifest', 'ArabiForm · سجل طباعة الدفعة'],
+    headings: ['#', 'Row', 'Filename', 'Pages', 'الصف', 'اسم الملف', 'الصفحات'],
+    details: ['Export date', '2026-11-27', 'Template', bilingualTemplateName,
+      'Ready: 30   ·   Flagged: 3   ·   Skipped: 7', 'Min font size: 7.25 pt   ·   Font mode: Latin',
+      'تاريخ التصدير', '2026-11-27', 'القالب', bilingualTemplateName,
+      'جاهز: 30   ·   يحتاج إلى مراجعة: 3   ·   تم تخطيه: 7', 'الحد الأدنى لحجم الخط: 7.25 نقطة   ·   وضع الخط: لاتيني'],
+    filenames: bilingualRows.map(({ filename }) => filename), rowNumbers: bilingualRowNumbers,
+    wrappedFilenames: bilingualRows.map(({ filename }) => filename),
+  },
+};
+const bilingualCover = await createMergedPdf(bilingualRows, undefined, {
+  locale: 'bilingual', templateName: bilingualTemplateName, exportedAt: new Date(2026, 10, 27, 23, 59),
+  preflight: { ...settings, minFontSize: 7.25, preferredFont: 'latin' }, rowNumbers: bilingualRowNumbers, flagged: 3, skipped: 7,
+});
+const bilingualPlain = await createMergedPdf(bilingualRows);
+assert.equal((await PDFDocument.load(bilingualCover)).getPageCount(), (await PDFDocument.load(bilingualPlain)).getPageCount() + bilingualSpec.coverPages);
+for (const page of (await PDFDocument.load(bilingualCover)).getPages().slice(0, bilingualSpec.coverPages)) {
+  for (const [name, local] of [['ArabiFormCoverArabic', settings.fonts.arabic], ['ArabiFormCoverLatin', settings.fonts.latin]] as const) {
+    const file = page.node.Resources()!.lookup(key('Font'), PDFDict).lookup(key(name), PDFDict).lookup(key('DescendantFonts'), PDFArray)
+      .lookup(0, PDFDict).lookup(key('FontDescriptor'), PDFDict).lookup(key('FontFile2'));
+    assert(file instanceof PDFRawStream);
+    assert.deepEqual(Buffer.from(decodePDFRawStream(file).decode()), local);
+  }
+}
+await writeFile(resolve(root, bilingualSpec.pdf), bilingualCover);
+await writeFile(resolve(root, bilingualSpec.plainPdf), bilingualPlain);
+coveredMerged.push(bilingualSpec);
+
+const qrTemplate = await PDFDocument.create();
+const qrField = qrTemplate.getForm().createTextField('ID');
+for (const [index, rotation] of [0, 90, 180, 270].entries()) {
+  const page = qrTemplate.addPage([220, 190]);
+  page.setMediaBox(-19, -13, 220, 190);
+  page.setCropBox(index === 3 ? -28 : 2, 8, 198, 151);
+  page.setRotation(degrees(rotation));
+  if (index === 1) page.node.set(key('UserUnit'), qrTemplate.context.register(qrTemplate.context.obj(2)));
+  if (index === 2) page.node.set(key('UserUnit'), qrTemplate.context.obj(1.5));
+  page.drawRectangle({ x: -19, y: -13, width: 220, height: 190, color: rgb(0.85, 0.9, 0.96) });
+  qrField.addToPage(page, { x: 65, y: 78, width: 46, height: 20 });
+}
+const qrTemplateBytes = Buffer.from(await qrTemplate.save());
+const qrRowA = await passingCase(qrTemplateBytes, { ID: '00123' }, 'm12-qr-ascii.pdf', 'M12 QR source: four CropBoxes and rotations');
+const qrRowB = await passingCase(qrTemplateBytes, { ID: '00007' }, 'm12-qr-arabic.pdf', 'M12 QR source: second row with independent UTF-8 stamp');
+const qrProofs = [];
+for (const [corner, sizePt, payload] of [
+  ['bottom-right', 72, resolveQrPayload('CERT-{{ID}}', { ID: '00123' }, 1, '2026-11-27')],
+  ['top-left', 36, resolveQrPayload('{{ID}}', { ID: 'ل'.repeat(52) + 'A' }, 2, '2026-11-27')],
+] as const) {
+  const row = corner === 'bottom-right' ? qrRowA : qrRowB;
+  const symbol = encodeQr(payload);
+  proveQrMatrix(symbol, payload);
+  const qrStamp: QrPrintRequest = { placement: corner, sizePt, payloads: [payload] };
+  const watermark = { settings: { kind: 'draft-ar', opacity: 0.22, angle: 45 } as const, fonts: settings.fonts };
+  const pdf = `m12-qr-${corner}-covered.pdf`;
+  const plainPdf = `m12-qr-${corner}-plain.pdf`;
+  const zip = `m12-qr-${corner}.zip`;
+  const cover = { locale: 'bilingual', templateName: bilingualTemplateName, exportedAt: new Date(2026, 10, 27),
+    preflight: settings, rowNumbers: [corner === 'bottom-right' ? 1 : 2], flagged: 0, skipped: 0 } as const;
+  await writeFile(resolve(root, pdf), await createMergedPdf([row], undefined, cover, watermark, qrStamp));
+  await writeFile(resolve(root, plainPdf), await createMergedPdf([row], undefined, cover, watermark));
+  await writeFile(resolve(root, zip), await createFlattenedZip([row], undefined, watermark, qrStamp));
+  qrProofs.push({ pdf, plainPdf, zip, member: row.filename, coverPages: 1, corner, sizePt, modules: symbol.modules });
+}
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -576,5 +651,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

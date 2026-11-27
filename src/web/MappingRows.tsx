@@ -16,6 +16,9 @@ const en = {
   alignLtr: 'Left (LTR)',
   alignCenter: 'Center',
   preserved: 'Preserved untouched',
+  presetMismatch: 'Check this preset against your current files. Missing mappings are skipped.',
+  missingFields: 'Missing or read-only PDF fields',
+  missingColumns: 'Missing roster columns',
   virtualGroup: 'Virtual columns (computed locally)',
   virtualTemplate: 'Text around the value (optional)',
   virtualTemplateHelp: 'Leave blank for the value alone. Include {token} once to add text around it.',
@@ -40,6 +43,9 @@ const ar: typeof en = {
   alignLtr: 'يسار (LTR)',
   alignCenter: 'وسط',
   preserved: 'يبقى دون تغيير',
+  presetMismatch: 'راجع توافق الإعدادات مع ملفاتك الحالية. تُتخطّى الروابط غير المتاحة.',
+  missingFields: 'حقول PDF مفقودة أو للقراءة فقط',
+  missingColumns: 'أعمدة مفقودة في الجدول',
   virtualGroup: 'أعمدة افتراضية (تُحسب محليًا)',
   virtualTemplate: 'نص حول القيمة (اختياري)',
   virtualTemplateHelp: 'اتركه فارغًا لإدراج القيمة وحدها. أضف {token} مرة واحدة لإحاطة القيمة بنص.',
@@ -65,10 +71,11 @@ export function VirtualFilenameTokens({ arabic }: { arabic: boolean }) {
   );
 }
 
-export function PresetWarnings({ warnings, labels }: {
+export function PresetWarnings({ warnings, arabic }: {
   warnings: NonNullable<ReturnType<typeof useWorkbench>['presetWarnings']>;
-  labels: ReturnType<typeof translator>['labels'];
+  arabic: boolean;
 }) {
+  const labels = arabic ? ar : en;
   const { missingFields, missingColumns } = warnings;
   if (!missingFields.length && !missingColumns.length) return null;
   const mismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
