@@ -265,7 +265,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setErrors({});
     setBusy({ pdf: true, roster: true });
     try {
-      const { loadSampleWorkflow } = await import('./sample-workflows');
+      const { loadSampleWorkflow } = await import('./workflow-loader');
       const { template, roster } = await loadSampleWorkflow(selectedSample, openedAt);
       if (request.current.pdf === pdfId) setTemplate(template);
       if (request.current.roster === rosterId) setRoster(roster);
