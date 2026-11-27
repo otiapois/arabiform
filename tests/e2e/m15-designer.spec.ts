@@ -150,14 +150,22 @@ test('M15 recovers a dropped flat PDF, restores its bound layout and reads both 
   ] });
   const upload = page.getByTestId('designer-upload');
   // Same visible filename and PDF page, distinct source bytes.
+  const canvas = page.getByTestId('designer-canvas'), loadLayout = page.getByTestId('designer-load-layout');
+  const firstCanvas = (await canvas.elementHandle())!;
   await upload.setInputFiles({ name: 'flat.pdf', mimeType: 'application/pdf', buffer: Buffer.concat([original, Buffer.from('\n% independent source revision\n')]) });
+  await expect.poll(() => firstCanvas.evaluate(el => el.isConnected)).toBe(false);
+  await expect(canvas).toHaveAttribute('data-rendered', 'true');
+  await expect(loadLayout).toBeEnabled();
   await expect(page.getByTestId('designer-field')).toHaveCount(0);
-  await page.getByTestId('designer-load-layout').setInputFiles(layoutPath);
+  await loadLayout.setInputFiles(layoutPath);
   await expect(page.getByTestId('designer-error')).toHaveAttribute('data-code', 'layout-source-mismatch');
   await expect(page.getByTestId('designer-download')).toBeDisabled();
+  const changedCanvas = (await canvas.elementHandle())!;
   await upload.setInputFiles(golden('flat.pdf'));
-  await expect(page.getByTestId('designer-canvas')).toHaveAttribute('data-rendered', 'true');
-  await page.getByTestId('designer-load-layout').setInputFiles(layoutPath);
+  await expect.poll(() => changedCanvas.evaluate(el => el.isConnected)).toBe(false);
+  await expect(canvas).toHaveAttribute('data-rendered', 'true');
+  await expect(loadLayout).toBeEnabled();
+  await loadLayout.setInputFiles(layoutPath);
   await expect(name).toBeVisible();
   await expect(field(page, 'Verified')).toBeVisible();
   const templatePath = await save(page, 'designer-download', info, 'flat-acroform.pdf');
@@ -228,7 +236,7 @@ for (const arabic of [false, true]) {
     const scripts: string[] = [];
     page.context().on('request', request => {
       const path = new URL(request.url()).pathname;
-      if (path.endsWith('.js')) scripts.push(path);
+      if (/\.m?js$/.test(path)) scripts.push(path);
     });
     const response = await page.goto(arabic ? '/ar/' : '/', { waitUntil: 'networkidle' });
     expect(response?.status()).toBe(200);
