@@ -19,6 +19,7 @@ const en = {
   queueNext: 'Next rows',
   filterEmpty: 'No rows match this filter.',
   row: 'Row',
+  queueTable: 'Roster rows',
   showRow: 'Select row {row}',
   includeRow: 'Include row {row} in export',
   selectFilteredReady: 'Select filtered ready',
@@ -57,6 +58,7 @@ const ar: typeof en = {
   queueNext: 'الصفوف التالية',
   filterEmpty: 'لا توجد صفوف تطابق هذه التصفية.',
   row: 'الصف',
+  queueTable: 'صفوف جدول البيانات',
   showRow: 'اختر الصف {row}',
   includeRow: 'أدرج الصف {row} في التصدير',
   selectFilteredReady: 'حدّد الصفوف الجاهزة المطابقة',
@@ -241,7 +243,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
             }}>{copy.useAllReady}</button>
         )}
       </div>
-      <div className="table-scroll" ref={tableRegion} role="region" tabIndex={0} aria-label={labels.queue}
+      <div className="table-scroll" ref={tableRegion} role="region" tabIndex={0} aria-label={copy.queueTable}
         aria-keyshortcuts="ArrowUp ArrowDown" onKeyDown={navigateRows}>
         <table>
           <thead><tr><th scope="col">{copy.row}</th><th scope="col">{copy.filename}</th><th scope="col">{copy.status}</th><th scope="col">{copy.issues}</th></tr></thead>
