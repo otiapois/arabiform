@@ -1,4 +1,5 @@
 import type { translator } from './labels';
+import { sourceProblem } from './source-problems';
 
 const problems: Record<string, readonly [string, string]> = {
   'unflattenable-widget': ['A field has no saved appearance for printing. Use an editable ZIP or choose a template with saved field appearances.', 'لا يحتوي أحد الحقول على مظهر محفوظ للطباعة. نزّل ملف ZIP دون تسطيح أو اختر قالبًا يحتوي على مظاهر محفوظة لحقوله.'],
@@ -30,9 +31,10 @@ export default function ExportError({ error, language }: {
   error: { code: string; rowNumber?: number };
   language: ReturnType<typeof translator>;
 }) {
-  const { arabic, labels, problem } = language;
+  const { arabic } = language;
   return <p className="alert" role="alert" data-testid="export-error">
     {error.rowNumber !== undefined && <>{arabic ? 'الصف' : 'Row'} {error.rowNumber}.{' '}</>}
-    {printProblem(error.code, arabic) ?? problem(error.code) ?? labels.exportError}
+    {printProblem(error.code, arabic) ?? sourceProblem(error.code, arabic)
+      ?? (arabic ? 'تعذّر تجهيز التنزيل. حاول مجددًا.' : 'The download could not be prepared. Try again.')}
   </p>;
 }

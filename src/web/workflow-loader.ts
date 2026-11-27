@@ -1,4 +1,5 @@
 import { decodeBase64 } from './resources';
+import { rosterViews } from './roster-source';
 import type { SampleWorkflow } from './useWorkbench';
 
 // The sample-* chunks contain individual fixture bytes; this module only selects one of them.
@@ -9,7 +10,7 @@ const samples = {
   badge: { load: () => import('virtual:arabiform/sample-badge'), pdf: 'landscape-badge.pdf', roster: 'badge-roster.csv' },
 } satisfies Record<SampleWorkflow, { load: () => Promise<{ template: string; roster: string }>; pdf: string; roster: string }>;
 
-export async function loadSampleWorkflow(workflow: SampleWorkflow, openedAt: Date) {
+export async function loadSampleWorkflow(workflow: SampleWorkflow, openedAt: Date, locale: 'en' | 'ar') {
   const sample = samples[workflow];
   const [assets, engine, parser, virtual] = await Promise.all([
     sample.load(), import('../core/pdf'), import('../core/roster'), import('../core/roster/virtual-columns'),
@@ -17,8 +18,14 @@ export async function loadSampleWorkflow(workflow: SampleWorkflow, openedAt: Dat
   const bytes = decodeBase64(assets.template);
   const rosterBytes = decodeBase64(assets.roster);
   const [info, data] = await Promise.all([engine.inspectTemplate(bytes), parser.readRoster(rosterBytes, sample.roster)]);
+  const notice = workflow === 'workshop'
+    ? locale === 'ar' ? 'الأسماء والأرقام خيالية. في الصف الأخير اسم طويل يتجاوز مساحة الحقل عمدًا.'
+      : 'Fictional names and IDs. The final row intentionally contains a name that exceeds its field.'
+    : locale === 'ar' ? 'ملفات بأسماء وهمية. راجع الصف المُعلَّم لتجربة هذا المسار.'
+      : 'Fictional files. Review the flagged row to try this workflow.';
   return {
     template: { name: sample.pdf, bytes, info, overlays: engine.getWidgetOverlays(info) },
-    roster: { name: sample.roster, bytes: rosterBytes, sheet: data.sheets[0], engine: parser, virtual, localDate: virtual.localVirtualDate(openedAt) },
+    roster: { name: sample.roster, bytes: rosterBytes, sheet: data.sheets[0], engine: parser, virtual, views: rosterViews, localDate: virtual.localVirtualDate(openedAt) },
+    notice,
   };
 }

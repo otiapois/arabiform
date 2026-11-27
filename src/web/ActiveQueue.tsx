@@ -1,5 +1,7 @@
 import { fillLabel } from './labels';
+import { activeFillLabels } from './active-fill-labels';
 import Queue from './Queue';
+import { sourceProblem } from './source-problems';
 
 const en = {
   addMapping: 'Map at least one PDF field to check the rows.',
@@ -24,7 +26,7 @@ const ar: typeof en = {
 };
 
 export default function ActiveQueue(props: Parameters<typeof Queue>[0]) {
-  const { desk, language: { arabic, problem, labels: workbenchLabels } } = props;
+  const { desk, language: { arabic } } = props;
   const { progress, warningRows } = desk;
   const labels = arabic ? ar : en;
   const phaseLabel = progress && labels[progress.phase];
@@ -32,7 +34,7 @@ export default function ActiveQueue(props: Parameters<typeof Queue>[0]) {
   return (
     <>
       {warningRows > 0 && <p className="alert warning">{fillLabel(labels.sourceWarningCount, { count: warningRows })}</p>}
-      {desk.preflightError && <p role="alert" className="alert">{problem(desk.preflightError) ?? workbenchLabels.pdfError}</p>}
+      {desk.preflightError && <p role="alert" className="alert">{sourceProblem(desk.preflightError, arabic) ?? activeFillLabels(arabic).pdfError}</p>}
       <p className="sr-only" aria-live="polite" aria-atomic="true">{phaseLabel}</p>
       {progress && (
         <div className="batch-state">

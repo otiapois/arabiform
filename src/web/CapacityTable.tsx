@@ -1,5 +1,6 @@
 import type { TemplateCapacityReport } from '../core/pdf/capacity-inspector';
 import type { translator } from './labels';
+import { activeFillLabels } from './active-fill-labels';
 
 const en = ['Field', 'Type', 'Page', 'Widget', 'Rotation', 'W × H (pt)', '/MaxLen', 'Arabic characters', 'Latin characters'];
 const ar = ['الحقل', 'النوع', 'الصفحة', 'العنصر', 'الدوران', 'العرض × الارتفاع (نقطة)', '/MaxLen', 'الأحرف العربية', 'الأحرف اللاتينية'];
@@ -9,7 +10,8 @@ export default function CapacityTable({ report, arabic, labels }: {
   arabic: boolean;
   labels: ReturnType<typeof translator>['labels'];
 }) {
-  const kinds = { text: labels.kindText, checkbox: labels.kindCheckbox, radio: labels.kindRadio, dropdown: labels.kindDropdown };
+  const { kindText, kindCheckbox, kindRadio, kindDropdown } = activeFillLabels(arabic);
+  const kinds = { text: kindText, checkbox: kindCheckbox, radio: kindRadio, dropdown: kindDropdown };
   const heading = arabic ? 'سعة حقول القالب' : 'Template field capacities';
 
   return (

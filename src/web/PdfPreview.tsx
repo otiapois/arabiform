@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PRINT_MARGIN_THRESHOLD_PT } from '../core/pdf/margin-preflight';
 import type { getWidgetOverlays } from '../core/pdf/widget-overlays';
 import { Diagnostics, diagnosticText } from './Diagnostics';
+import { activeFillLabels } from './active-fill-labels';
 import { fillLabel, type translator } from './labels';
+import { openPreviewDocument } from './pdf-preview-document';
 import type { RowResult, TemplateInfo, useWorkbench } from './useWorkbench';
 
 const PrintMarginAdvisory = lazy(() => import('./PrintMarginAdvisory'));
@@ -47,8 +48,6 @@ const ar: typeof en = {
   widget: 'الصفحة {page}، المربع {index}',
 };
 
-GlobalWorkerOptions.workerSrc = workerUrl;
-
 type Desk = ReturnType<typeof useWorkbench>;
 
 export function WorkbenchPreview({ template, desk, language }: {
@@ -68,7 +67,7 @@ export function WorkbenchPreview({ template, desk, language }: {
           <h2 id="preview-heading">{labels.preview}</h2>
           <p>{status === 'pass' ? copy.previewReady : status === 'flagged' ? copy.previewFlagged : copy.previewTemplate}</p>
         </div>
-        {status && <span className={`tag tag-${status}`}>{fillLabel(labels.selected, { row: desk.selected + 1 })}</span>}
+        {status && <span className={`tag tag-${status}`}>{fillLabel(activeFillLabels(arabic).selected, { row: desk.selected + 1 })}</span>}
       </header>
       {desk.hasMapping && (
         <Suspense>
@@ -194,16 +193,7 @@ function PdfPreview({
       setLoaded(undefined);
       return;
     }
-    const task = getDocument({
-      data: Uint8Array.from(bytes),
-      useSystemFonts: true,
-      useWorkerFetch: false,
-      useWasm: false,
-      disableAutoFetch: true,
-      disableRange: true,
-      disableStream: true,
-      enableXfa: false,
-    });
+    const task = openPreviewDocument(bytes);
     let active = true;
     task.promise.then((pdf) => {
       if (active) setLoaded({ bytes, pdf });

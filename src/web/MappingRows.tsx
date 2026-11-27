@@ -96,6 +96,7 @@ export default function MappingRows({ desk, language }: {
   language: ReturnType<typeof translator>;
 }) {
   const { arabic, labels } = language;
+  const fieldLabels = activeFillLabels(arabic);
   const copy = arabic ? ar : en;
   const rows = useRef<HTMLDivElement>(null);
   const focusingFromCanvas = useRef(false);
@@ -123,7 +124,7 @@ export default function MappingRows({ desk, language }: {
     desk.focusMappingField(fieldName, page);
   }
 
-  const fieldKinds = { text: labels.kindText, checkbox: labels.kindCheckbox, radio: labels.kindRadio, dropdown: labels.kindDropdown };
+  const fieldKinds = { text: fieldLabels.kindText, checkbox: fieldLabels.kindCheckbox, radio: fieldLabels.kindRadio, dropdown: fieldLabels.kindDropdown };
   return (
     <>
       <p className="quiet mapping-help">{copy.mappingHelp}</p>
@@ -154,8 +155,8 @@ export default function MappingRows({ desk, language }: {
                 <span className="tag tag-pending">{fieldKinds[field.kind]}</span>
                 {field.choices?.length ? (
                   <details className="choice-options">
-                    <summary>{labels.allowedChoices}</summary>
-                    <ChoiceList choices={field.choices} label={labels.allowedChoices} blank={labels.blankChoice} />
+                    <summary>{fieldLabels.allowedChoices}</summary>
+                    <ChoiceList choices={field.choices} label={fieldLabels.allowedChoices} blank={fieldLabels.blankChoice} />
                   </details>
                 ) : null}
               </div>
@@ -210,3 +211,4 @@ export default function MappingRows({ desk, language }: {
     </>
   );
 }
+import { activeFillLabels } from './active-fill-labels';

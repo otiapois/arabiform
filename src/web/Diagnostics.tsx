@@ -1,5 +1,7 @@
 import { ChoiceList } from './Choices';
+import { activeFillLabels } from './active-fill-labels';
 import { fillLabel, type translator } from './labels';
+import { sourceProblem } from './source-problems';
 import type { RowResult } from './useWorkbench';
 
 type Diagnostic = RowResult['diagnostics'][number];
@@ -45,8 +47,8 @@ const problems: Record<string, readonly [string, string]> = {
   'excel-number-format-warning': ['Excel uses a number format that cannot be reproduced. Check the raw value against the workbook.', 'يستخدم Excel تنسيق أرقام يتعذّر استعادته. قارن القيمة الخام بما يظهر في المصنف.'],
 };
 
-export function diagnosticProblem(code: string, { arabic, problem }: Language) {
-  return problems[code]?.[arabic ? 1 : 0] ?? problem(code);
+export function diagnosticProblem(code: string, { arabic }: Language) {
+  return problems[code]?.[arabic ? 1 : 0] ?? sourceProblem(code, arabic);
 }
 
 export function diagnosticText(issue: Diagnostic, minSize: number, language: Language) {
@@ -57,7 +59,7 @@ export function diagnosticText(issue: Diagnostic, minSize: number, language: Lan
   if (issue.maxLengthExcess !== undefined) {
     return fillLabel(issue.maxLengthExcess === 1 ? copy.exceedsOneChar : copy.exceedsChars, { count: issue.maxLengthExcess });
   }
-  return diagnosticProblem(issue.code, language) ?? language.labels.pdfError;
+  return diagnosticProblem(issue.code, language) ?? activeFillLabels(language.arabic).pdfError;
 }
 
 export { safeRowMinSize } from '../core/pdf/batch-font-suggestion';
@@ -68,7 +70,7 @@ export function Diagnostics({ issues, minSize, language, testId }: {
   language: Language;
   testId: string;
 }) {
-  const { labels } = language;
+  const labels = activeFillLabels(language.arabic);
   return (
     <ul className="diagnostics" aria-label={(language.arabic ? ar : en).diagnostics} data-testid={testId}>
       {issues.map((issue, index) => (
