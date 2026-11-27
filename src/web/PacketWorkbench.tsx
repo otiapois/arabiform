@@ -655,18 +655,23 @@ export default function PacketWorkbench({ arabic, active }: { arabic: boolean; a
               <div><dt>{copy.flagged}</dt><dd className="ink-amber" data-testid="packet-flagged-count">{result.flagged}</dd></div>
             </dl>
             <div className="table-scroll packet-table" role="region" aria-label={copy.table} tabIndex={0}>
-              <table data-testid="packet-readiness-table">
-                <thead>
-                  <tr><th scope="col">{copy.row}</th><th scope="col">{copy.status}</th><th scope="col">{copy.path}</th><th scope="col">{copy.review}</th></tr>
+              <table data-testid="packet-readiness-table" role="table" aria-label={copy.table}>
+                <thead role="rowgroup">
+                  <tr role="row">
+                    <th role="columnheader" scope="col">{copy.row}</th>
+                    <th role="columnheader" scope="col">{copy.status}</th>
+                    <th role="columnheader" scope="col">{copy.path}</th>
+                    <th role="columnheader" scope="col">{copy.review}</th>
+                  </tr>
                 </thead>
-                <tbody>
-                  {result.rows.map((row) => <tr key={row.rowNumber} data-status={row.status}>
-                    <th scope="row">{row.rowNumber}</th>
-                    <td><span className={row.status === 'ready' ? 'tag tag-pass' : 'tag tag-flagged'}>
+                <tbody role="rowgroup">
+                  {result.rows.map((row) => <tr key={row.rowNumber} role="row" data-status={row.status}>
+                    <th role="rowheader" scope="row"><span className="packet-mobile-label" aria-hidden="true">{copy.row}{' '}</span>{row.rowNumber}</th>
+                    <td role="cell"><span className={row.status === 'ready' ? 'tag tag-pass' : 'tag tag-flagged'}>
                       {row.status === 'ready' ? copy.ready : copy.flagged}
                     </span></td>
-                    <td>{row.status === 'ready' && <Filename name={row.path} />}</td>
-                    <td>
+                    <td role="cell">{row.status === 'ready' && <Filename name={row.path} />}</td>
+                    <td role="cell">
                       {row.issues.length > 0 && <IssueList issues={row.issues} copy={copy} arabic={arabic} />}
                       {row.sourceWarnings.length > 0 && <details>
                         <summary>{copy.warnings}</summary>
