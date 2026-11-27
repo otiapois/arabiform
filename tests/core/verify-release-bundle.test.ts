@@ -25,6 +25,7 @@ function withBundle(site: string | undefined, check: (dist: string, verify: (arg
   try {
     const files = [
       'scripts/prerender.mjs', 'scripts/verify-release-bundle.mjs', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
+      'src/web/workbench-labels.json',
       'public/fonts/NotoNaskhArabic-OFL.txt', 'public/fonts/NotoSans-OFL.txt', '.github/workflows/ci.yml',
     ];
     for (const file of files) {
