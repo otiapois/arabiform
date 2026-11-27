@@ -12,6 +12,7 @@ const RowCompare = lazy(() => import('./RowCompare'));
 
 const en = {
   previewReady: 'Generated row',
+  previewSealed: 'Generated row · official approval seal',
   previewFlagged: 'Original template · failed fields outlined',
   previewTemplate: 'Original template',
   spotlight: 'Jump to a boundary row',
@@ -25,6 +26,7 @@ const en = {
 
 const ar: typeof en = {
   previewReady: 'الصف بعد التعبئة',
+  previewSealed: 'الصف بعد التعبئة · ختم الاعتماد الرسمي',
   previewFlagged: 'القالب الأصلي · الحقول التي تحتاج مراجعة محاطة بإطار',
   previewTemplate: 'القالب الأصلي',
   spotlight: 'انتقل إلى صف للمراجعة',
@@ -66,7 +68,8 @@ export default function WorkbenchPreview({ template, desk, language }: {
       <header className="preview-heading wide-heading">
         <div>
           <h2 id="preview-heading">{labels.preview}</h2>
-          {!comparing && <p>{status === 'pass' ? copy.previewReady : status === 'flagged' ? copy.previewFlagged : copy.previewTemplate}</p>}
+          {!comparing && <p>{status === 'pass' ? desk.approvalSeal && bytes ? copy.previewSealed : copy.previewReady
+            : status === 'flagged' ? copy.previewFlagged : copy.previewTemplate}</p>}
         </div>
         {!comparing && status && <span className={`tag tag-${status}`}>{fillLabel(rowLabel, { row: selected + 1 })}</span>}
       </header>
@@ -93,7 +96,7 @@ export default function WorkbenchPreview({ template, desk, language }: {
             {comparing && results && (
               <Suspense fallback={<p className="preview-message" role="status">{labels.previewBusy}</p>}>
                 <RowCompare results={results} selected={selected} spotlight={spotlight} worker={checkedWorker}
-                  template={template} minSize={desk.minFontSize} language={language} />
+                  template={template} minSize={desk.minFontSize} language={language} render={desk.renderRecord} blocked={desk.sealPreviewBlocked} />
               </Suspense>
             )}
           </div>
@@ -111,7 +114,7 @@ export default function WorkbenchPreview({ template, desk, language }: {
           </div>
         )}
         <PdfPreview bytes={bytes} fields={template.info.fields} overlays={template.overlays} diagnostics={selectedResult?.diagnostics}
-          minSize={desk.minFontSize} unavailable={desk.previewError} language={language}
+          minSize={desk.minFontSize} unavailable={status === 'pass' && desk.previewError} language={language}
           fieldSelection={desk.fieldSelection} onWidgetSelect={desk.selectWidget}
           requestedPage={desk.previewPage} onPageChange={desk.setPreviewPage} />
       </>}

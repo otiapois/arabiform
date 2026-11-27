@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { CustodyManifest, CustodySources } from '../core/audit/custody';
 import type { GroupingPlan } from '../core/export/grouping';
 import type { AlignOverride } from '../core/pdf/alignment';
+import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
+import type { FieldTypographyMap } from '../core/pdf/field-typography';
 import type { QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { BoundaryRowSpotlight } from '../core/preflight/spotlight';
@@ -14,6 +16,7 @@ import type { MergeCoverSheet } from '../core/worker/protocol';
 import { resolveRowSelection, type RowSelection } from '../core/worker/row-selection';
 import type { FontMode } from './presets';
 import { errorCode, loadFonts, saveDownload } from './resources';
+import { useRecordPreview, type RenderRecord } from './useRecordPreview';
 
 export type BatchWorker = ReturnType<typeof createBatchWorker>;
 export type ExportKind = 'zip' | 'merged' | 'split' | 'csv' | 'json';
@@ -28,6 +31,7 @@ export type OutputSettings = {
   cover?: Omit<MergeCoverSheet, 'filenames'>;
   watermark?: WatermarkSettings;
   qrStamp?: Exclude<QrStampSettings, { placement: 'none' }>;
+  approvalSeal?: ApprovalSealSettings;
   imposition?: Imposition;
 };
 
@@ -41,12 +45,13 @@ export type BatchSettings = {
   localDate: string;
   resolveVirtualMapping: typeof resolveVirtualMapping;
   alignOverrides: Record<string, AlignOverride>;
+  fieldTypography: FieldTypographyMap;
   minFontSize: number;
   font: FontMode;
   customFont?: Uint8Array;
 };
 
-export function useBatch(batch: BatchSettings | null, selected: number, output: OutputSettings) {
+export function useBatch(batch: BatchSettings | null, selected: number, output: OutputSettings, sealPreviewBlocked: boolean) {
   const generation = useRef(0);
   const worker = useRef<BatchWorker | undefined>(undefined);
   const exportLock = useRef<symbol | undefined>(undefined);
@@ -56,7 +61,6 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     batch: BatchSettings; results?: BatchRowResult[]; custody?: CustodySources; spotlight?: BoundaryRowSpotlight; client?: BatchWorker; error?: string;
   }>();
   const [exported, setExported] = useState<{ settings: OutputSettings; digests: CustodyOutputs }>();
-  const [preview, setPreview] = useState<{ results: BatchRowResult[]; row: number; bytes?: Uint8Array }>();
   const [progress, setProgress] = useState<BatchProgress>();
   const [exporting, setExporting] = useState<ExportKind>();
   const [exportError, setExportError] = useState<{ code: string; rowNumber?: number }>();
@@ -64,7 +68,22 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
   const results = current?.results;
   const exportScope = useMemo(() => resolveRowSelection(results ?? [], output.rowSelection), [results, output.rowSelection]);
   const exportCount = exportScope.selectedRowNumbers.length;
-  const currentPreview = preview?.results === results && preview?.row === selected ? preview : undefined;
+  const { approvalSeal } = output;
+  const qrStamp = approvalSeal ? output.qrStamp : undefined;
+  const renderRecord = useCallback<RenderRecord>(async (client, row) => {
+    if (!approvalSeal) return client.preview(row);
+    const { makeQrPrintRequest } = await import('./batch-exports');
+    const request = await makeQrPrintRequest(batch!, qrStamp, [row + 1]);
+    return client.preview(row, { approvalSeal, qrStamp: request });
+  }, [approvalSeal, batch, qrStamp]);
+  const visibleRow = results?.[selected]?.status === 'pass' ? selected : undefined;
+  const proofRow = approvalSeal && exportCount ? (visibleRow !== undefined && exportScope.selectedRowNumbers.includes(visibleRow + 1)
+    ? visibleRow : exportScope.selectedRowNumbers[0]! - 1) : undefined;
+  const previewClient = sealPreviewBlocked ? undefined : current?.client;
+  const currentPreview = useRecordPreview(previewClient, visibleRow, renderRecord, Boolean(approvalSeal));
+  const alternateProof = useRecordPreview(previewClient, proofRow === visibleRow ? undefined : proofRow, renderRecord, true);
+  const proof = proofRow === undefined ? undefined : proofRow === visibleRow ? currentPreview : alternateProof;
+  const sealCheckPending = proofRow !== undefined && !proof && !sealPreviewBlocked;
   const checking = Boolean(batch && !current && !paused);
   const activeProgress = progress ?? (checking && batch
     ? { phase: 'preflight' as const, completed: 0, total: batch.rows.length } : undefined);
@@ -78,7 +97,6 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     setRevision(next);
     setChecked(undefined);
     setExported(undefined);
-    setPreview(undefined);
     setProgress(undefined);
     setExporting(undefined);
     setExportError(undefined);
@@ -136,19 +154,6 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     };
   }, [batch, paused, revision]);
 
-  useEffect(() => {
-    const client = worker.current;
-    setPreview(undefined);
-    if (!client || !results || results[selected]?.status !== 'pass') return;
-    let active = true;
-    void client.preview(selected).then((bytes) => {
-      if (active && worker.current === client) setPreview({ results, row: selected, bytes });
-    }, () => {
-      if (active && worker.current === client) setPreview({ results, row: selected });
-    });
-    return () => { active = false; };
-  }, [results, selected]);
-
   function cancel() {
     invalidate();
     setPaused(true);
@@ -200,7 +205,9 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     exportScope, exportCount, custody: current?.custody,
     checkedWorker: current?.client, spotlight: current?.spotlight,
     custodyOutputs: exported?.settings === output ? exported.digests : undefined,
-    previewBytes: currentPreview?.bytes, previewError: Boolean(currentPreview && !currentPreview.bytes),
+    previewBytes: currentPreview?.bytes, previewError: sealPreviewBlocked || Boolean(currentPreview?.problem), renderRecord, sealPreviewBlocked,
+    sealProblem: approvalSeal ? proof?.problem ?? currentPreview?.problem : undefined,
+    sealCheckPending, sealPrintBlocked: sealCheckPending || Boolean(proof?.problem),
     exporting: Boolean(exporting), exportError,
     exportLocked: () => Boolean(exportLock.current),
     invalidate, clearExportError: () => setExportError(undefined), cancel,

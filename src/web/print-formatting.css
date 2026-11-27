@@ -1,0 +1,56 @@
+.field-formatting {
+  min-inline-size: 0;
+  margin-block-start: .15rem;
+}
+
+.field-formatting > summary,
+.approval-seal > summary {
+  color: var(--forest);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.field-formatting > summary { font-size: .78rem; }
+
+.field-formatting-options,
+.approval-seal-options {
+  display: grid;
+  min-inline-size: 0;
+  margin: .35rem 0 0;
+  padding: 0;
+  border: 0;
+  gap: .4rem;
+}
+
+.field-formatting-options .align-control {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+}
+
+.field-formatting-options .field-padding { grid-template-columns: minmax(0, 1fr); }
+
+.field-formatting-options :disabled,
+.approval-seal-options :disabled { cursor: not-allowed; }
+
+.approval-seal {
+  min-inline-size: 0;
+  border: 1px solid var(--control-line);
+  border-radius: .55rem;
+  padding: .55rem .65rem;
+}
+
+.approval-seal > summary { font-size: .86rem; }
+.approval-seal-options > .text-button { justify-self: start; }
+.approval-seal-options > .text-button:disabled { color: var(--muted); }
+.approval-seal-options .full-control > input { inline-size: 100%; min-inline-size: 0; }
+.approval-seal-options input[type="date"] {
+  min-block-size: 2.1rem;
+  border: 1px solid var(--control-line);
+  border-radius: .38rem;
+  background: var(--surface);
+  padding: .32rem .48rem;
+  font-size: .87rem;
+  font-weight: 450;
+}
+.approval-seal-status { overflow-wrap: anywhere; }
+.approval-seal-status:not(:empty) { margin-block-start: .35rem; }

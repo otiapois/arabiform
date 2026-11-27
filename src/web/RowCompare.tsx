@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { BoundaryRowSpotlight } from '../core/preflight/spotlight';
 import { Diagnostics } from './Diagnostics';
 import PdfPreview from './PdfPreview';
 import type { FillTemplate } from './fill-template-source';
 import { fillLabel, type translator } from './labels';
 import type { BatchWorker } from './useBatch';
+import { useRecordPreview, type RenderRecord } from './useRecordPreview';
 import type { RowResult } from './useWorkbench';
 
 const en = {
@@ -40,6 +41,8 @@ const ar: typeof en = {
 type PreviewContext = {
   results: readonly RowResult[];
   worker: BatchWorker;
+  render: RenderRecord;
+  blocked: boolean;
   template: FillTemplate;
   minSize: number;
   language: ReturnType<typeof translator>;
@@ -60,10 +63,10 @@ export default function RowCompare({ selected, spotlight, ...context }: PreviewC
   );
 }
 
-function ComparePane({ results, worker, template, minSize, language, side, initialRow }: PreviewContext & {
+function ComparePane({ results, side, initialRow, ...context }: PreviewContext & {
   side: 'a' | 'b'; initialRow: number;
 }) {
-  const copy = language.arabic ? ar : en;
+  const copy = context.language.arabic ? ar : en;
   const [row, setRow] = useState(initialRow);
   const result = results[row - 1]!;
   const options = results.map((_, index) => (
@@ -77,27 +80,16 @@ function ComparePane({ results, worker, template, minSize, language, side, initi
           {options}
         </select>
       </label>
-      <ComparedRow key={row} worker={worker} template={template} minSize={minSize} language={language} row={row} result={result} />
+      <ComparedRow key={row} {...context} row={row} result={result} />
     </div>
   );
 }
 
-function ComparedRow({ worker, template, minSize, language, row, result }: Omit<PreviewContext, 'results'> & { row: number; result: RowResult }) {
+function ComparedRow({ worker, template, minSize, language, render, blocked, row, result }: Omit<PreviewContext, 'results'> & { row: number; result: RowResult }) {
   const copy = language.arabic ? ar : en;
   const ready = result.status === 'pass';
   const [page, setPage] = useState(result.pageNumbers[0] ?? 1);
-  const [preview, setPreview] = useState<{ bytes?: Uint8Array }>();
-
-  useEffect(() => {
-    if (!ready) return;
-    let active = true;
-    void worker.preview(row - 1).then((bytes) => {
-      if (active) setPreview({ bytes });
-    }, () => {
-      if (active) setPreview({});
-    });
-    return () => { active = false; };
-  }, [ready, row, worker]);
+  const preview = useRecordPreview(ready && !blocked ? worker : undefined, row - 1, render);
 
   return (
     <>
@@ -125,7 +117,7 @@ function ComparedRow({ worker, template, minSize, language, row, result }: Omit<
         </div>
       )}
       <PdfPreview compact bytes={ready ? preview?.bytes : template.bytes} fields={template.info.fields} overlays={template.overlays}
-        diagnostics={result.diagnostics} minSize={minSize} unavailable={Boolean(preview && !preview.bytes)} language={language}
+        diagnostics={result.diagnostics} minSize={minSize} unavailable={ready && (blocked || Boolean(preview?.problem))} language={language}
         requestedPage={page} onPageChange={setPage} canvasLabel={fillLabel(ready ? copy.canvas : copy.original, { row })} />
     </>
   );

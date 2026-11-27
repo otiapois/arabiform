@@ -17,6 +17,7 @@ const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
 const CustodyPanel = lazy(() => import('./CustodyPanel'));
 const ShortcutsDialog = lazy(() => import('./ShortcutsDialog'));
 const QrStampOptions = lazy(() => import('./QrStampOptions'));
+const ApprovalSealControl = lazy(() => import('./ApprovalSealControl'));
 const CoverOptions = lazy(() => import('./CoverOptions'));
 const ExportError = lazy(() => import('./ExportError'));
 const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
@@ -359,6 +360,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                         </Suspense>
                       )}
                     </details>
+                    {(desk.template || desk.approvalSeal) && <Suspense><ApprovalSealControl desk={desk} arabic={arabic} /></Suspense>}
                     <div className="preset-controls">
                       <h3>{labels.preset}</h3>
                       <p className="quiet">{labels.presetHelp}</p>
@@ -368,7 +370,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                           <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
                             onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
                         </label>
-                        <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.printSettingsBlocked || desk.virtualTemplateBlocked}
+                        <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.settingsSaveBlocked || desk.virtualTemplateBlocked}
                           onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                       </div>
                       {(desk.presetError || desk.presetWarnings) && (

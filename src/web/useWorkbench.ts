@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import type { BatchDraft } from '../core/draft/batch-draft';
 import type { AlignOverride } from '../core/pdf/alignment';
+import { validateApprovalSealSettings, type ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
+import type { FieldTypography, FieldTypographyMap } from '../core/pdf/field-typography';
 import { DEFAULT_QR_STAMP, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../core/pdf/qr-settings';
 import { DEFAULT_WATERMARK, validateWatermarkSettings, type WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
@@ -41,6 +43,7 @@ type MappingSettings = {
   fromPreset: boolean;
   values: Record<string, string>;
   alignment?: Record<string, AlignOverride>;
+  typography?: FieldTypographyMap;
   virtual?: Record<string, VirtualColumnMapping>;
 };
 
@@ -80,6 +83,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [watermark, setWatermark] = useState<WatermarkSettings>(DEFAULT_WATERMARK);
   const [qrStamp, setQrStamp] = useState<QrStampSettings>(DEFAULT_QR_STAMP);
   const [qrOpen, setQrOpen] = useState(false);
+  const [approvalSeal, setApprovalSeal] = useState<ApprovalSealSettings | null>(null);
   const [presetError, setPresetError] = useState(false);
   const [presetCodec, setPresetCodec] = useState<typeof import('./presets')>();
 
@@ -100,14 +104,22 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const value = alignment && Object.hasOwn(alignment, name) ? alignment[name] : undefined;
     return kind === 'text' && (mapping[name] || Object.hasOwn(virtualMappings, name)) && value && value !== 'auto' ? [[name, value]] : [];
   })), [fields, mapping, virtualMappings, mappingSettings.alignment]);
+  const fieldTypography = useMemo(() => Object.fromEntries(fields.flatMap(({ kind, name }) => {
+    const typography = mappingSettings.typography;
+    return kind === 'text' && (mapping[name] || Object.hasOwn(virtualMappings, name)) && typography && Object.hasOwn(typography, name)
+      ? [[name, typography[name]!]] : [];
+  })), [fields, mapping, virtualMappings, mappingSettings.typography]);
   const rows = useMemo(() => sheet && roster ? roster.views.effectiveRows(sheet.rows, mapping, edits) : emptyRows, [sheet, roster, mapping, edits]);
   const presetWarnings = useMemo(() => mappingSettings.fromPreset
     ? presetCodec?.presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined,
-      sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined)
+      sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined,
+      mappingSettings.typography)
     : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template]);
   const watermarkBlocked = useMemo(() => !validateWatermarkSettings(watermark), [watermark]);
   const qrSettingsBlocked = useMemo(() => !validateQrStampSettings(qrStamp), [qrStamp]);
-  const printSettingsBlocked = watermarkBlocked || qrSettingsBlocked;
+  const validSeal = useMemo(() => validateApprovalSealSettings(approvalSeal), [approvalSeal]);
+  const sealSettingsBlocked = validSeal === undefined;
+  const settingsSaveBlocked = watermarkBlocked || qrSettingsBlocked || sealSettingsBlocked;
 
   const virtualTemplateBlocked = Boolean(roster && Object.values(virtualMappings).some(({ column, template }) =>
     template && !roster.virtual.validateVirtualTemplate(column, template)));
@@ -116,9 +128,9 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const batch = useMemo(() => template && roster && rows.length && hasMapping && !fontBlocked && !virtualTemplateBlocked
     ? { template: template.bytes, roster: roster.bytes, sheetName: roster.explicitSheet ? roster.sheetName : undefined,
       rows, mapping, virtualMappings, localDate: roster.localDate,
-      resolveVirtualMapping: roster.virtual.resolveVirtualMapping, alignOverrides, minFontSize, font,
+      resolveVirtualMapping: roster.virtual.resolveVirtualMapping, alignOverrides, fieldTypography, minFontSize, font,
       customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
-    : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked]);
+    : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, fieldTypography, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked]);
   const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern, { localDate: roster.localDate }) ?? [], [roster, rows, pattern]);
   const grouping = useMemo(() => roster && groupByColumn !== null && sheet?.headers.includes(groupByColumn)
     ? roster.views.planGroupedOutput(rows, groupByColumn, pattern, { localDate: roster.localDate })
@@ -133,9 +145,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     cover: includeCoverSheet && templateName ? { locale, templateName, includeCustody, coverLanguage: activeCoverLanguage } : undefined,
     watermark: watermark.kind !== 'none' ? watermark : undefined,
     qrStamp: qrStamp.placement !== 'none' ? qrStamp : undefined,
+    approvalSeal: validSeal ?? undefined,
     imposition: printLayout,
-  }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, activeCoverLanguage, printLayout]);
-  const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output);
+  }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, validSeal, activeCoverLanguage, printLayout]);
+  const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output, sealSettingsBlocked || Boolean(approvalSeal && qrSettingsBlocked));
+  const printSettingsBlocked = settingsSaveBlocked || job.sealPrintBlocked;
   const results = useMemo(() => job.results?.map((result, index): RowResult => ({
     ...result, ...(grouping?.rows[index] ?? filenamePlans[index]!),
   })), [job.results, grouping, filenamePlans]);
@@ -251,6 +265,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setWatermark(DEFAULT_WATERMARK);
       setQrStamp(DEFAULT_QR_STAMP);
       setQrOpen(false);
+      setApprovalSeal(null);
     }
     setPresetError(false);
     setTemplate(undefined);
@@ -309,6 +324,19 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   function changeAlignment(field: string, value: AlignOverride) {
     recheck();
     setMappingSettings((current) => ({ ...current, alignment: { ...current.alignment, [field]: value } }));
+  }
+
+  function changeFieldTypography(field: string, { numeralPolicy, lineHeightScale, paddingPt }: FieldTypography) {
+    if (exportLocked()) return;
+    recheck();
+    setMappingSettings((current) => {
+      if (numeralPolicy || lineHeightScale || paddingPt) return { ...current, typography: { ...current.typography, [field]: {
+        ...(numeralPolicy && { numeralPolicy }), ...(lineHeightScale && { lineHeightScale }), ...(paddingPt && { paddingPt }),
+      } } };
+      const typography = { ...current.typography };
+      delete typography[field];
+      return { ...current, typography };
+    });
   }
 
   function editCell(row: number, column: string, value: string) {
@@ -445,6 +473,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setQrStamp(value);
   }
 
+  function changeApprovalSeal(value: ApprovalSealSettings | null) {
+    if (exportLocked()) return;
+    clearExportError();
+    request.current.draft++;
+    setApprovalSeal(value);
+  }
+
   function changeCoverLanguage(value: CoverLanguage) {
     if (exportLocked()) return;
     clearExportError();
@@ -481,7 +516,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   function restoreSettings(preset: MappingPreset) {
     setRoster((current) => current?.remapMissing ? { ...current, remapMissing: false } : current);
     setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
-      virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined });
+      virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined,
+      typography: 'fieldTypography' in preset ? preset.fieldTypography : undefined });
     setPattern(preset.filenamePattern);
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
@@ -493,6 +529,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const stamp = 'qrStamp' in preset ? preset.qrStamp : DEFAULT_QR_STAMP;
     setQrStamp(stamp);
     setQrOpen(stamp.placement !== 'none');
+    setApprovalSeal('approvalSeal' in preset ? preset.approvalSeal : null);
     setCoverLanguage('coverLanguage' in preset ? preset.coverLanguage : 'auto');
     setImposition('imposition' in preset ? preset.imposition : '1-up');
   }
@@ -500,11 +537,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   function presetInputs() {
     const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
       !Object.hasOwn(virtualMappings, name) && (kind === 'text' || kind === 'checkbox' || mapping[name]) ? [[name, mapping[name]!]] : []));
-    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn] as const;
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, validSeal ?? null] as const;
   }
 
   async function exportPreset() {
-    if (printSettingsBlocked || virtualTemplateBlocked) return;
+    if (settingsSaveBlocked || virtualTemplateBlocked) return;
     const id = request.current.draft;
     const inputs = presetInputs();
     const { makeMappingPreset } = await import('./presets');
@@ -530,6 +567,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   return {
     template, flatSource, roster, sample, busy, errors, sheet, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
+    fieldTypography, changeFieldTypography, approvalSeal, changeApprovalSeal, sealSettingsBlocked, settingsSaveBlocked,
     virtualMappings, virtualTemplateBlocked, changeVirtualMapping, fieldSelection, focusMappingField, selectWidget,
     sourceRevision: `${request.current.roster}:${roster?.sheetName ?? ''}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,
