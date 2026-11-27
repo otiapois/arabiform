@@ -1,6 +1,7 @@
 import type { CustodyEntry, CustodySources } from '../audit/custody';
 import type { PreflightOptions, RowPreflightResult } from '../pdf';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
+import type { RowSelection } from './row-selection';
 
 export interface BatchInput {
   template: Uint8Array | ArrayBuffer;
@@ -21,8 +22,8 @@ export type MergeCoverSheet = { locale: 'en' | 'ar'; templateName: string; filen
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }
   | { phase: 'preview'; rowIndex: number }
-  | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings }
-  | { phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings };
+  | { phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection }
+  | { phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection };
 
 export type BatchRequest = BatchCommand & { id: number };
 export interface BatchPreflightResult { rows: BatchRowResult[]; custody: CustodySources }

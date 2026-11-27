@@ -1,3 +1,5 @@
+import type { ExportScope } from '../worker/row-selection';
+
 export interface CustodySources {
   templateSha256: string;
   rosterSha256: string;
@@ -14,7 +16,7 @@ interface CustodyOutputs {
   mergedPdfSha256?: string;
 }
 
-export interface CustodyManifest extends CustodySources, CustodyOutputs {
+export interface CustodyManifest extends CustodySources, CustodyOutputs, Partial<ExportScope> {
   version: 1;
 }
 
@@ -34,9 +36,11 @@ export async function hashCustodySources(template: Uint8Array | ArrayBuffer, ros
 
 export function createCustodyManifest(
   { templateSha256, rosterSha256 }: CustodySources, { entries, mergedPdfSha256 }: CustodyOutputs = {},
+  scope?: ExportScope,
 ): string {
   const manifest: CustodyManifest = {
     version: 1, templateSha256, rosterSha256,
+    ...(scope && { exportScope: scope.exportScope, selectedRowNumbers: scope.selectedRowNumbers }),
     ...(entries && { entries: entries.map(({ filename, sha256, bytes }) => ({ filename, sha256, bytes })) }),
     ...(mergedPdfSha256 && { mergedPdfSha256 }),
   };

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { decodePDFRawStream, degrees, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
-import { readRoster } from '../src/core/roster';
+import { makeFilenames, readRoster } from '../src/core/roster';
 import { createBatchProcessor } from '../src/core/worker/batch';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
@@ -414,6 +414,47 @@ for (const locale of ['en', 'ar'] as const) {
   await writeFile(resolve(root, pdf), rendered.bytes);
   coveredMerged.push(spec);
 }
+
+coverSourceField.addToPage(coverSource.addPage([200, 160]), { x: 30, y: 70, width: 120, height: 20 });
+const subsetTemplate = Buffer.from(await coverSource.save());
+const subsetIds = ['بَنِي يَمَن 00123', '00007'];
+const subsetReferences = await Promise.all(subsetIds.map((ID, index) => passingCase(subsetTemplate, { ID },
+  `m10-subset-source-${index + 1}.pdf`, `M10 subset: two-page editable form reference ${index + 1}`)));
+const subsetRoster = Buffer.from(['ID', ...Array.from({ length: 52 }, (_, index) =>
+  index === 2 || index === 51 ? 'W'.repeat(200) : subsetIds[index % 3 === 0 ? 1 : 0]!)].join('\r\n'));
+const subsetInputs = (await readRoster(subsetRoster, 'roster.csv')).sheets[0]!.rows.map(({ values }) => values);
+const subsetFiles = makeFilenames(subsetInputs, longFilename);
+const subsetBatch = createBatchProcessor();
+const subsetChecked = await subsetBatch({ phase: 'preflight', input: {
+  template: subsetTemplate, roster: subsetRoster, rows: subsetInputs, options: settings,
+} }, ignoreProgress);
+assert(subsetChecked && 'rows' in subsetChecked);
+assert.deepEqual(subsetChecked.rows.flatMap(({ status }, index) => status === 'flagged' ? [index + 1] : []), [3, 52]);
+const subsetRowNumbers = Array.from({ length: 25 }, (_, index) => 2 * (index + 1));
+const subsetNames = subsetRowNumbers.map((number) => subsetFiles[number - 1]!);
+const subsetRows = subsetRowNumbers.map((number) => subsetReferences[(number - 1) % 3 === 0 ? 1 : 0]!);
+const subsetCover = 'm10-subset-covered.pdf';
+const subsetPlain = 'm10-subset-reference-plain.pdf';
+const subsetDate = new Date();
+const subsetRendered = await subsetBatch({ phase: 'merged', rowSelection: [52, ...subsetRowNumbers.toReversed(), 2],
+  coverSheet: { locale: 'en', templateName, filenames: subsetFiles, includeCustody: true } }, ignoreProgress);
+assert(subsetRendered && 'mergedPdfSha256' in subsetRendered);
+assert.equal(subsetRendered.mergedPdfSha256, createHash('sha256').update(subsetRendered.bytes).digest('hex'));
+assert.equal((await PDFDocument.load(subsetRendered.bytes)).getPageCount(), 52);
+await writeFile(resolve(root, subsetCover), subsetRendered.bytes);
+await writeFile(resolve(root, subsetPlain), await createMergedPdf(subsetRows));
+const subsetTemplatePrefix = createHash('sha256').update(subsetTemplate).digest('hex').slice(0, 12);
+const subsetRosterPrefix = createHash('sha256').update(subsetRoster).digest('hex').slice(0, 12);
+coveredMerged.push({
+  pdf: subsetCover, plainPdf: subsetPlain, rows: subsetRows.map(({ filename }) => filename), coverPages: 2,
+  expectedText: {
+    title: 'ArabiForm · Batch Print Manifest', headings: ['#', 'Row', 'Filename', 'Pages'],
+    details: ['Export date', `${subsetDate.getFullYear()}-${String(subsetDate.getMonth() + 1).padStart(2, '0')}-${String(subsetDate.getDate()).padStart(2, '0')}`,
+      'Template', templateName, 'Ready: 25   ·   Flagged: 2   ·   Skipped: 27', 'Min font size: 8 pt   ·   Font mode: Auto'],
+    filenames: subsetNames, rowNumbers: subsetRowNumbers, wrappedFilenames: subsetNames,
+    footer: `Template SHA-256 ${subsetTemplatePrefix}   ·   Roster SHA-256 ${subsetRosterPrefix}`,
+  },
+});
 
 const choiceZip = { editable: 'choices-editable.zip', flattened: 'choices-flattened.zip', rows: m4Merged.rows };
 const editableZip = createZip(m4Rows);
