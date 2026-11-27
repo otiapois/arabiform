@@ -12,7 +12,7 @@ export function makeBatchInput(batch: BatchSettings, fonts: BatchInput['options'
     ...virtual.map(([field, binding]) => [field, resolveVirtualMapping(binding, index + 1, localDate)]),
   ]));
   return {
-    template: batch.template, roster: batch.roster, rows,
+    template: batch.template, roster: batch.roster, sheetName: batch.sheetName, rows,
     options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides },
   };
 }

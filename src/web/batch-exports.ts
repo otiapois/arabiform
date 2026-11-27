@@ -10,7 +10,7 @@ export async function buildDownload(
   onProgress: (progress: BatchProgress) => void,
   { rows, localDate }: Pick<BatchSettings, 'rows' | 'localDate'>,
   results: BatchRowResult[],
-  { filenamePlans, flattenZip, cover, watermark, rowSelection, qrStamp }: OutputSettings,
+  { filenamePlans, flattenZip, cover, watermark, rowSelection, qrStamp, imposition }: OutputSettings,
   scope: ExportScope,
   isCurrent: () => boolean,
 ) {
@@ -45,6 +45,6 @@ export async function buildDownload(
   const filenames = isZip || cover ? filenamePlans.map(({ filename }) => filename) : [];
   const { bytes, ...digests } = await (isZip
     ? client.zip(filenames, onProgress, flattenZip, flattenZip ? watermark : undefined, rowSelection, qrRequest)
-    : client.merged(onProgress, cover ? { ...cover, filenames } : undefined, watermark, rowSelection, qrRequest));
+    : client.merged(onProgress, cover ? { ...cover, filenames } : undefined, watermark, rowSelection, qrRequest, imposition));
   return { data: bytes, filename: isZip ? 'arabiform-clean.zip' : 'arabiform-merged.pdf', mime: isZip ? 'application/zip' : 'application/pdf', digests };
 }

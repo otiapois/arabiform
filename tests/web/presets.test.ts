@@ -119,4 +119,21 @@ describe('local mapping preset boundary', () => {
       expect(parseMappingPreset(JSON.stringify(settings))).toEqual(settings);
     }
   });
+
+  it('writes v8 for 2-up and keeps the legacy wire format for 1-up', () => {
+    const args = [preset.mapping, preset.filenamePattern, preset.minFontSize, 'arabic', false, false, {}, undefined, {},
+      { placement: 'none' }, 'auto'] as const;
+    expect(makeMappingPreset(...args, '1-up')).toEqual(preset);
+    expect(makeDraftSettings(...args, '1-up')).toEqual(makeDraftSettings(...args));
+    const settings = makeMappingPreset(...args, '2-up');
+    expect(settings).toEqual({
+      ...preset, version: 8, flattenZip: false, includeCoverSheet: false, alignOverrides: {},
+      watermark: { kind: 'none' }, virtualMappings: {}, qrStamp: { placement: 'none' }, coverLanguage: 'auto', imposition: '2-up',
+    });
+    expect(makeDraftSettings(...args, '2-up')).toEqual(settings);
+    for (const imposition of ['1-up', '2-up']) {
+      const v8 = { ...settings, imposition };
+      expect(parseMappingPreset(JSON.stringify(v8))).toEqual(v8);
+    }
+  });
 });
