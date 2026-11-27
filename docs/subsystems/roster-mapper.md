@@ -19,6 +19,7 @@
   - When an authored template enters Fill, use its canonical field names and types through the usual mapping and worksheet flow. Field Layout JSON belongs to the designer and stores the flat source fingerprint and field specs. [Field authoring contract](pdf-engine.md#flat-pdf-field-authoring)
   - Automatically propose column -> PDF field mappings using normalized exact match + bilingual Arabic/English alias table (`Name / Full Name / الاسم / الاسم الكامل`, `ID / Number / Badge / Employee ID / الرقم / رقم الهوية`, `Date / التاريخ`, `Title / Course / الدورة`, etc.).
   - Never silently overwrite user-adjusted mappings; allow 1-click clear/remap.
+  - Per-field numeral policies apply in the PDF engine after resolving a text mapping and its optional virtual formatter. Roster cells, editable row text, filename tokens, grouping keys, and QR payloads keep using the same effective source values. [PDF text mapping contract](pdf-engine.md#responsibilities)
   - Keep dropdown and radio cell values as supplied by the roster. Header matching uses its own normalization. The PDF engine matches choice values against the template's Unicode labels and exports, and reports invalid or ambiguous cells. [Choice matching contract](pdf-engine.md)
 - **Virtual Columns** (`src/core/roster/virtual-columns.ts`)
   - Values are strings. `ROW_INDEX` is the original 1-based parsed roster position. `PADDED_ROW_001` pads that position to at least four digits (`0001`, `0500`, `10000`). Search, filtering, flagged rows, and selective export leave the position unchanged.

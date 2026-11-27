@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
+import { decodePDFRawStream, PDFArray, PDFDocument, PDFHexString, PDFRawStream } from 'pdf-lib';
 
 const entry = fileURLToPath(new URL('../../scripts/arabiform-cli.ts', import.meta.url));
 const tmp = await realpath(tmpdir());
@@ -88,6 +89,49 @@ try {
   assert.equal(run(0, '--mode', 'verify', '--manifest', manifestPath, '--qr-payload', manifest.qrRecords[0].payload).status, 'VERIFIED_QR_RECORD');
   assert.equal(run(2, '--mode', 'verify', '--manifest', manifestPath, '--qr-payload', 'invalid').status, 'UNMATCHED_UNKNOWN');
 
+  const m20Template = join(directory, 'Numeral Form.pdf');
+  const m20Roster = join(directory, 'Numeral Roster.csv');
+  const m20Preset = join(directory, 'M20 Preset.json');
+  const m20Out = join(directory, 'Approved Records');
+  const m20Block = join(directory, 'Approval Collision');
+  const doc = await PDFDocument.create({ updateMetadata: false });
+  const page = doc.addPage([300, 320]);
+  doc.getForm().createTextField('Date').addToPage(page, { x: 70, y: 180, width: 118, height: 30 });
+  doc.getForm().createTextField('ID').addToPage(page, { x: 70, y: 138, width: 118, height: 30 });
+  await writeFile(m20Template, await doc.save());
+  await writeFile(m20Roster, 'Date,ID\r\n00123,00123\r\n');
+  const labelAr = 'مَكْتَبُ السِّجِلَّاتِ';
+  const preset = { version: 10, mapping: { Date: 'Date', ID: 'ID' }, filenamePattern: '{{ID}}.pdf', minFontSize: 8, font: 'auto',
+    flattenZip: false, includeCoverSheet: false, alignOverrides: {}, watermark: { kind: 'none' }, virtualMappings: {},
+    qrStamp: { placement: 'bottom-right', sizePt: 48, pattern: '{{ID}}' }, coverLanguage: 'auto', imposition: '1-up', groupByColumn: null,
+    fieldTypography: { Date: { numeralPolicy: 'eastern-arabic', paddingPt: 4 }, ID: { numeralPolicy: 'western-ascii' } },
+    approvalSeal: { placement: 'top-left', labelEn: 'Records Office', labelAr, issueDate: '2028-02-29' } };
+  const m20Inputs = ['--template', m20Template, '--roster', m20Roster, '--preset', m20Preset, '--strict'];
+  await writeFile(m20Preset, JSON.stringify(preset));
+  assert.equal(run(0, '--mode', 'fill', ...m20Inputs, '--out-dir', m20Out).status, 'clean');
+  const [editablePdf, printablePdf] = await Promise.all(['arabiform-editable.zip', 'arabiform-flattened.zip'].map(async (zip) => {
+    const members = unzipSync(await readFile(join(m20Out, zip)));
+    assert.deepEqual(Object.keys(members), ['00123.pdf']);
+    return PDFDocument.load(members['00123.pdf']);
+  }));
+  assert.equal(editablePdf.getForm().getTextField('Date').getText(), '٠٠١٢٣');
+  assert.equal(editablePdf.getForm().getTextField('ID').getText(), '00123');
+  const sealText = '/ActualText ' + PDFHexString.fromText(labelAr).toString();
+  function pageHasApprovalSeal(pdf) {
+    const content = pdf.getPage(0).node.Contents();
+    return content instanceof PDFArray && content.asArray().some((ref) => {
+      const stream = pdf.context.lookup(ref);
+      return stream instanceof PDFRawStream && new TextDecoder().decode(decodePDFRawStream(stream).decode()).includes(sealText);
+    });
+  }
+  assert(!pageHasApprovalSeal(editablePdf));
+  assert(pageHasApprovalSeal(printablePdf));
+  assert(pageHasApprovalSeal(await PDFDocument.load(await readFile(join(m20Out, 'arabiform-merged.pdf')))));
+  await writeFile(m20Preset, JSON.stringify({ ...preset, qrStamp: { ...preset.qrStamp, placement: 'top-left' } }));
+  const m20Blocked = run(2, '--mode', 'fill', ...m20Inputs, '--out-dir', m20Block);
+  assert.deepEqual(m20Blocked.issues.map(({ code, pageNumber }) => [code, pageNumber]), [['approval-seal-qr-overlap', 1]]);
+  await assert.rejects(lstat(m20Block), { code: 'ENOENT' });
+
   const flagged = ['--template', 'fixtures/golden/template.pdf', '--roster', 'fixtures/golden/roster.csv'];
   assert.equal(run(2, '--mode', 'fill', ...flagged, '--strict', '--out-dir', strict).status, 'flagged');
   await assert.rejects(lstat(strict), { code: 'ENOENT' });
@@ -109,7 +153,7 @@ try {
   assert.match(run(1, '--mode', 'preflight', ...inputs, '--out-dir', join(link, 'nested')).message, /link, junction/);
   assert.deepEqual(await readdir(target), []);
   assert.equal(run(1, '--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir', 'safe/../escape').status, 'usage-error');
-  console.log('Real subprocess checks passed for all five modes, exact custody, strict output refusal and output-path guards.');
+  console.log('Real subprocess checks passed for all five modes, exact custody, M20 preset numerals and vector seal, strict output refusal and output-path guards.');
 } finally {
   const actual = await realpath(directory);
   assert.equal(dirname(actual), tmp);

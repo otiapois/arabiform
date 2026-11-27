@@ -1,11 +1,11 @@
-import { hashCustodySources, sha256 } from '../audit/custody';
-import { createCustodyQrRecords, type CustodyQrRecord } from '../custody/records';
+import { hashCustodySources, sha256, type CustodySources } from '../audit/custody';
+import { createCustodyQrRecords } from '../custody/records';
 import { validateGroupingPlan } from '../export/grouping';
 import type { preparePrintJobEstimator } from '../export/print-estimator';
 import { planCombinedPrint, planSplitPrint } from '../export/print-job';
 import { createMergedPdf, preflightRow, prepareTemplatePreflight } from '../pdf';
-import { createGeneratedZip, createSplitMergedZip } from '../pdf/exports';
-import { validateBatchQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
+import { createGeneratedZip, createSplitMergedZip, createStampedPreview } from '../pdf/exports';
+import { validateBatchQrPrintRequest, type BatchQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
 import { hasUnsupportedPrintAnnotation, openTemplate } from '../pdf/template';
 import { selectBoundaryRows } from '../preflight/spotlight';
 import { localVirtualDate } from '../roster/virtual-columns';
@@ -41,6 +41,16 @@ async function inspectPrintSource(template: RowInputs['template']) {
   const { hasValidImpositionGeometry } = await import('../pdf/imposition');
   return { templatePagesPerRecord, twoUpUnavailableReason: hasValidImpositionGeometry(pages[0]!) ? undefined
     : 'imposition-invalid-page-geometry' as const };
+}
+
+async function selectPrintQr(qr: BatchQrPrintRequest | undefined, rowCount: number, custody: CustodySources, rowNumbers: readonly number[]) {
+  if (qr === undefined) return {};
+  const request = validateBatchQrPrintRequest(qr, rowCount);
+  const qrRecords = 'custodyRecord' in request ? await createCustodyQrRecords(custody, rowNumbers) : undefined;
+  const { placement, sizePt } = request;
+  const qrStamp: QrPrintRequest = { placement, sizePt,
+    payloads: 'payloads' in request ? rowNumbers.map((number) => request.payloads[number - 1]!) : qrRecords!.map(({ payload }) => payload) };
+  return { qrStamp, qrRecords };
 }
 
 export function createBatchProcessor() {
@@ -80,9 +90,12 @@ export function createBatchProcessor() {
       if (!pdfBytes) throw new Error('batch-render-failed');
       return pdfBytes;
     };
+    const approvalSeal = command.approvalSeal === undefined ? undefined : { settings: command.approvalSeal, fonts: input.options.fonts };
     if (phase === 'preview') {
-      if (results[command.rowIndex]?.status === 'pass') return getPdfBytes(command.rowIndex);
-      return undefined;
+      if (results[command.rowIndex]?.status !== 'pass') return undefined;
+      if (!approvalSeal) return getPdfBytes(command.rowIndex);
+      const { qrStamp } = await selectPrintQr(command.qrStamp, results.length, custody, [command.rowIndex + 1]);
+      return createStampedPreview(await getPdfBytes(command.rowIndex), approvalSeal, qrStamp);
     }
 
     const coverSheet = phase === 'zip' ? undefined : command.coverSheet;
@@ -98,22 +111,13 @@ export function createBatchProcessor() {
     const outputRows = (rowNumbers: readonly number[], names: readonly string[]) =>
       rowNumbers.map((number, index) => ({ filename: names[index]!, getPdfBytes: () => getPdfBytes(number - 1) }));
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
-    let qrStamp: QrPrintRequest | undefined;
-    let qrRecords: CustodyQrRecord[] | undefined;
-    if (command.qrStamp !== undefined && (phase !== 'zip' || command.flattenZip)) {
-      const request = validateBatchQrPrintRequest(command.qrStamp, results.length);
-      if ('custodyRecord' in request) qrRecords = await createCustodyQrRecords(custody, selectedRowNumbers);
-      const { placement, sizePt } = request;
-      qrStamp = {
-        placement, sizePt,
-        payloads: 'payloads' in request ? selectedRowNumbers.map((number) => request.payloads[number - 1]!) : qrRecords!.map(({ payload }) => payload),
-      };
-    }
+    const { qrStamp, qrRecords } = await selectPrintQr(phase !== 'zip' || command.flattenZip ? command.qrStamp : undefined,
+      results.length, custody, selectedRowNumbers);
     if (phase === 'zip') {
       const paths = grouping && selectedRowNumbers.map((number) => grouping.rows[number - 1]!.zipPath);
       const ready = outputRows(selectedRowNumbers,
         selectedRowNumbers.map((number) => grouping?.rows[number - 1]?.filename ?? command.filenames[number - 1] ?? ''));
-      const zip = await createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp, paths);
+      const zip = await createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp, paths, approvalSeal);
       return { ...zip, ...(grouping && { groupByColumn: grouping.groupByColumn }), ...(qrRecords && { qrRecords }) };
     }
     const context = { rows: results, rowNumbers: selectedRowNumbers, coverSheet, exportedAt: new Date(), preflight: input.options, custody };
@@ -121,10 +125,10 @@ export function createBatchProcessor() {
       const groups = planSplitPrint(context, command.grouping).map(({ filenames, ...group }) => ({
         ...group, rows: outputRows(group.rowNumbers, filenames),
       }));
-      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords);
+      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords, approvalSeal);
     }
     const combined = planCombinedPrint(context);
-    const bytes = await createMergedPdf(outputRows(combined.rowNumbers, combined.filenames), progress, combined.cover, watermark, qrStamp, command.imposition);
+    const bytes = await createMergedPdf(outputRows(combined.rowNumbers, combined.filenames), progress, combined.cover, watermark, qrStamp, command.imposition, approvalSeal);
     return { bytes, mergedPdfSha256: await sha256(bytes), ...(qrRecords && { qrRecords }) };
   }
 

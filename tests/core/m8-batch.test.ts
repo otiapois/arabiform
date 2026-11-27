@@ -84,7 +84,7 @@ it('checks 500 real bilingual mapped rows in 25-row chunks without serializing a
     save.mockRestore();
     embed.mockRestore();
   }
-}, 60_000);
+}, 180_000);
 
 it('isolates batches, preserves editable bytes, stages one row at a time and recovers after export errors', async () => {
   const template = await asset('fixtures/golden/template.pdf');

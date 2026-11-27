@@ -1,10 +1,11 @@
 import type { Imposition } from '../pdf';
 import type { GroupingPlan } from '../export/grouping';
 import type { PrintEstimateRequest, PrintJobEstimate } from '../export/print-estimator';
+import { ApprovalSealError, type ApprovalSealSettings } from '../pdf/approval-seal-settings';
 import type { BatchQrPrintRequest } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { BatchCommand, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRequest, BatchResponse,
-  BatchResult, BatchSplitResult, BatchZipResult, MergeCoverSheet } from './protocol';
+  BatchResult, BatchSplitResult, BatchZipResult, MergeCoverSheet, PreviewPrintOptions } from './protocol';
 import type { RowSelection } from './row-selection';
 
 export type { BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRowResult, BatchSplitResult, BatchZipResult } from './protocol';
@@ -32,7 +33,7 @@ export function createBatchWorker() {
       return;
     }
     waiting.delete(data.id);
-    if (data.kind === 'error') request.reject(new Error(data.message));
+    if (data.kind === 'error') request.reject(data.approvalSealProblem ? new ApprovalSealError(data.approvalSealProblem) : new Error(data.message));
     else request.resolve(data.result);
   });
   worker.addEventListener('error', (event) => {
@@ -57,14 +58,14 @@ export function createBatchWorker() {
 
   return {
     preflight: (input: BatchInput, onProgress?: ProgressListener) => send({ phase: 'preflight', input }, onProgress) as Promise<BatchPreflightResult>,
-    preview: (rowIndex: number) => send({ phase: 'preview', rowIndex }) as Promise<Uint8Array | undefined>,
+    preview: (rowIndex: number, options?: PreviewPrintOptions) => send({ phase: 'preview', rowIndex, ...options }) as Promise<Uint8Array | undefined>,
     estimate: (request: PrintEstimateRequest) => send({ phase: 'estimate', ...request }) as Promise<PrintJobEstimate>,
-    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, grouping?: GroupingPlan) =>
-      send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection, qrStamp, grouping }, onProgress) as Promise<BatchZipResult>,
-    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition) =>
-      send({ phase: 'merged', coverSheet, watermark, rowSelection, qrStamp, imposition }, onProgress) as Promise<BatchMergedResult>,
-    split: (grouping: GroupingPlan, onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition) =>
-      send({ phase: 'split', grouping, coverSheet, watermark, rowSelection, qrStamp, imposition }, onProgress) as Promise<BatchSplitResult>,
+    zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, grouping?: GroupingPlan, approvalSeal?: ApprovalSealSettings) =>
+      send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection, qrStamp, grouping, approvalSeal }, onProgress) as Promise<BatchZipResult>,
+    merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition, approvalSeal?: ApprovalSealSettings) =>
+      send({ phase: 'merged', coverSheet, watermark, rowSelection, qrStamp, imposition, approvalSeal }, onProgress) as Promise<BatchMergedResult>,
+    split: (grouping: GroupingPlan, onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition, approvalSeal?: ApprovalSealSettings) =>
+      send({ phase: 'split', grouping, coverSheet, watermark, rowSelection, qrStamp, imposition, approvalSeal }, onProgress) as Promise<BatchSplitResult>,
     dispose: () => stop(new DOMException('Batch canceled', 'AbortError')),
   };
 }

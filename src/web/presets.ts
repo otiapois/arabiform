@@ -1,6 +1,8 @@
 import { validateMappingPreset, type FontMode, type MappingPreset } from '../core/draft/mapping-preset';
 import type { AlignOverride } from '../core/pdf/alignment';
+import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
+import type { FieldTypographyMap } from '../core/pdf/field-typography';
 import type { CoverLanguage, QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import { hasVirtualFilenameToken } from '../core/roster/filenames';
@@ -20,8 +22,13 @@ export function makeDraftSettings(
   virtualMappings: Record<string, VirtualColumnMapping> = {},
   qrStamp: QrStampSettings = { placement: 'none' }, coverLanguage: CoverLanguage = 'auto', imposition: Imposition = '1-up',
   groupByColumn: string | null = null,
+  fieldTypography: FieldTypographyMap = {}, approvalSeal: ApprovalSealSettings | null = null,
 ): Exclude<MappingPreset, { version: 1 | 2 | 3 }> {
   const settings = { mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides };
+  if (approvalSeal || Object.keys(fieldTypography).length) {
+    return { version: 10, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings, qrStamp, coverLanguage, imposition,
+      groupByColumn, fieldTypography, approvalSeal };
+  }
   if (groupByColumn !== null) {
     return { version: 9, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn };
   }
@@ -41,10 +48,12 @@ export function makeMappingPreset(
   virtualMappings: Record<string, VirtualColumnMapping> = {},
   qrStamp: QrStampSettings = { placement: 'none' }, coverLanguage: CoverLanguage = 'auto', imposition: Imposition = '1-up',
   groupByColumn: string | null = null,
+  fieldTypography: FieldTypographyMap = {}, approvalSeal: ApprovalSealSettings | null = null,
 ): MappingPreset {
   if ((watermark && watermark.kind !== 'none') || Object.keys(alignOverrides).length
-    || Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern) || qrStamp.placement !== 'none' || coverLanguage !== 'auto' || imposition === '2-up' || groupByColumn !== null) {
-    return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn);
+    || Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern) || qrStamp.placement !== 'none'
+    || coverLanguage !== 'auto' || imposition === '2-up' || groupByColumn !== null || approvalSeal || Object.keys(fieldTypography).length) {
+    return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, approvalSeal);
   }
   const settings = { mapping, filenamePattern, minFontSize, font };
   if (includeCoverSheet) return { version: 3, ...settings, flattenZip, includeCoverSheet };
@@ -59,10 +68,11 @@ export function presetMismatches(
   columns?: readonly string[],
   virtualMappings: Record<string, VirtualColumnMapping> = {},
   textFields = fields,
+  fieldTypography: FieldTypographyMap = {},
 ) {
   const missingFields = [...new Set([
     ...(fields ? Object.keys(mapping).filter((field) => !fields.includes(field)) : []),
-    ...(textFields ? Object.keys(virtualMappings).filter((field) => !textFields.includes(field)) : []),
+    ...(textFields ? [...Object.keys(virtualMappings), ...Object.keys(fieldTypography)].filter((field) => !textFields.includes(field)) : []),
   ])];
   const tokens = Array.from(filenamePattern.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g), (match) => match[1]!);
   const missingColumns = columns

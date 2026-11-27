@@ -13,6 +13,7 @@ export function makeBatchInput(batch: BatchSettings, fonts: BatchInput['options'
   ]));
   return {
     template: batch.template, roster: batch.roster, sheetName: batch.sheetName, rows,
-    options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides },
+    options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides,
+      fieldTypography: batch.fieldTypography },
   };
 }

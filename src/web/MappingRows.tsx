@@ -1,9 +1,25 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { AlignOverride } from '../core/pdf/alignment';
 import { VIRTUAL_COLUMNS, validateVirtualTemplate, virtualFilenameToken } from '../core/roster/virtual-columns';
 import { ChoiceList } from './Choices';
 import type { translator } from './labels';
 import type { useWorkbench } from './useWorkbench';
+import './print-formatting.css';
+
+const FieldFormatting = lazy(() => import('./FieldFormatting'));
+
+function TextFormatting({ desk, arabic, field }: { desk: ReturnType<typeof useWorkbench>; arabic: boolean; field: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="field-formatting" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary data-testid="field-formatting-toggle">{arabic ? 'تنسيق النص' : 'Text formatting'}</summary>
+      {open && <Suspense>
+        <FieldFormatting arabic={arabic} field={field} value={Object.hasOwn(desk.fieldTypography, field) ? desk.fieldTypography[field] : undefined}
+          disabled={desk.exporting} onChange={(value) => desk.changeFieldTypography(field, value)} />
+      </Suspense>}
+    </details>
+  );
+}
 
 const en = {
   mappingHelp: 'Match each PDF field to a spreadsheet column. An unmapped field keeps its original content.',
@@ -196,17 +212,20 @@ export default function MappingRows({ desk, language }: {
                     </label>
                   )}
                   {field.kind === 'text' && (binding || desk.mapping[field.name]) && (
-                    <label className="align-control">
-                      {copy.align}
-                      <select aria-label={`${copy.align} ${field.name}`} data-align-field={field.name}
-                        value={Object.hasOwn(desk.alignOverrides, field.name) ? desk.alignOverrides[field.name] : 'auto'}
-                        onChange={(event) => desk.changeAlignment(field.name, event.currentTarget.value as AlignOverride)}>
-                        <option value="auto">{copy.alignAuto}</option>
-                        <option value="rtl">{copy.alignRtl}</option>
-                        <option value="ltr">{copy.alignLtr}</option>
-                        <option value="center">{copy.alignCenter}</option>
-                      </select>
-                    </label>
+                    <>
+                      <label className="align-control">
+                        {copy.align}
+                        <select aria-label={`${copy.align} ${field.name}`} data-align-field={field.name}
+                          value={Object.hasOwn(desk.alignOverrides, field.name) ? desk.alignOverrides[field.name] : 'auto'}
+                          onChange={(event) => desk.changeAlignment(field.name, event.currentTarget.value as AlignOverride)}>
+                          <option value="auto">{copy.alignAuto}</option>
+                          <option value="rtl">{copy.alignRtl}</option>
+                          <option value="ltr">{copy.alignLtr}</option>
+                          <option value="center">{copy.alignCenter}</option>
+                        </select>
+                      </label>
+                      <TextFormatting desk={desk} arabic={arabic} field={field.name} />
+                    </>
                   )}
                   {field.choices && !desk.mapping[field.name] && <small className="quiet">{copy.preserved}</small>}
                 </div>

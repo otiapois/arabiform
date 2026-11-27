@@ -486,6 +486,66 @@ def check_qr_stamp(spec, directory):
     return {"pdf": spec["pdf"], "zip": spec["zip"], "coverPagesUnchanged": cover, "pages": pages}
 
 
+def check_m20_proof(spec, directory):
+    seal = spec["seal"]
+    pages = []
+    with fitz.open(directory / spec["filled"]) as filled, fitz.open(directory / spec["original"]) as legacy, \
+            fitz.open(directory / spec["pdf"]) as stamped, fitz.open(directory / spec["preview"]) as preview, \
+            fitz.open(directory / spec["qrReference"]) as qr, ZipFile(directory / spec["zip"]) as archive, \
+            fitz.open(stream=archive.read(spec["filled"]), filetype="pdf") as member:
+        assert len(filled) == len(legacy) == len(stamped) == len(preview) == len(qr) == len(member) == 2
+        for index, current in enumerate(filled):
+            reference = legacy[index]
+            overlay = stamped[index]
+            base_widgets = {widget.field_name: widget for widget in reference.widgets()}
+            widgets = {widget.field_name: widget for widget in current.widgets()}
+            assert [widgets[name].field_value for name in ("Date", "ID", "Sentinel")] == ["٠٠١٢٣", "00123", "KEEP 00109"]
+            assert [base_widgets[name].field_value for name in ("Date", "ID")] == ["00123", "00123"]
+            boxes = {name: tuple((widget.rect * current.rotation_matrix * SCALE).irect) for name, widget in widgets.items()}
+            actual, before = render(current), render(reference)
+            assert_same_outside(before, actual, [boxes["Date"], boxes["Notes"]], "M20 only Date and Notes can change")
+            assert ink_bounds(before, actual, boxes["Date"])[1] > 0, "Eastern and Western numerals are pixel-identical"
+            assert ink_bounds(before, actual, boxes["Notes"])[1] > 0, "Notes line-height and padding did not change pixels"
+
+            def notes_gap(doc, widget):
+                stream = doc.xref_stream(appearance_xref(doc, widget))
+                runs = re.findall(rb"\bBT\n(.*?)\bET\n", stream, re.S)
+                assert len(runs) == 2, "M20 Notes must retain both lines"
+                baselines = [min(float(y) for y in re.findall(rb"1 0 0 1 [\d.\-]+ ([\d.\-]+) Tm", run)) for run in runs]
+                assert all(b" 12 Tf" in run for run in runs)
+                return baselines[0] - baselines[1]
+
+            old_gap = notes_gap(legacy, base_widgets["Notes"])
+            new_gap = notes_gap(filled, widgets["Notes"])
+            # Diacritic offsets are unchanged at the held font size. At least 1 em separates the baselines.
+            assert new_gap - old_gap >= 12 * 0.3 - 1e-8, (old_gap, new_gap)
+
+            width, height, _ = print_pixels = render(overlay)
+            assert print_pixels == render(member[index]) == render(preview[index]), "Preview, merged and flattened ZIP seal pixels differ"
+            assert not list(overlay.widgets()) and not overlay.get_images(), "Approval seal output must stay vector"
+            inset = 9 * 4
+            stamp_width, stamp_height = spec["widthPt"] * 4, spec["heightPt"] * 4
+            allowed = (inset, inset, inset + stamp_width, inset + stamp_height)
+            assert allowed[2] < width and allowed[3] < height
+            qr_only = render(qr[index])
+            assert_same_outside(qr_only, print_pixels, [allowed], f"M20 approval seal page {index + 1}, including all QR modules")
+            bounds, pixels = ink_bounds(qr_only, print_pixels, allowed)
+            assert pixels > 500 and min(bounds[0] - allowed[0], bounds[1] - allowed[1], allowed[2] - bounds[2], allowed[3] - bounds[3]) >= 0
+            for left, top, right, bottom in boxes.values():
+                assert min(allowed[2], right) <= max(allowed[0], left) or min(allowed[3], bottom) <= max(allowed[1], top)
+            spans = [bytes.fromhex(value.decode("ascii")).decode("utf-16") for value, _ in COVER_SPAN.findall(overlay.read_contents())]
+            assert spans == [seal["labelEn"], seal["labelAr"], seal["issueDate"]], spans
+            border = [drawing for drawing in overlay.get_drawings() if drawing["type"] == "s" and drawing["color"]
+                      and all(abs(actual - expected) < 1e-5 for actual, expected in zip(drawing["color"], (0.12, 0.23, 0.29), strict=True))]
+            assert len(border) == 2, "Missing vector double border"
+            pages.append({"rotation": overlay.rotation, "pageSizePt": [overlay.rect.width, overlay.rect.height],
+                          "sealBoundsAt4x": allowed, "sealInkBoundsAt4x": bounds, "sealInkPixelsAt4x": pixels,
+                          "notesBaselineGapBefore": old_gap, "notesBaselineGapAfter": new_gap,
+                          "logicalSealText": spans, "widgetOverlapPixels": 0, "qrPixelsChanged": 0, "pixelsChangedOutsideSeal": 0})
+    return {"pages": pages, "easternDate": "٠٠١٢٣", "westernId": "00123", "unmapped": "KEEP 00109",
+            "blockedWidget": spec["overlapWithWidget"], "blockedQr": spec["overlapWithQr"]}
+
+
 def record_boxes(width, height):
     # Recalculate placement from the reference page's displayed dimensions.
     candidates = []
@@ -665,12 +725,14 @@ def main():
     qr_proofs = [check_qr_stamp(spec, path.parent) for spec in manifest.get("qrProofs", [])]
     imposition_proofs = [check_imposition(spec, path.parent) for spec in manifest.get("impositionProofs", [])]
     studio_proofs = [check_studio(spec, path.parent) for spec in manifest.get("studioProofs", [])]
+    m20 = check_m20_proof(manifest["m20Proof"], path.parent) if "m20Proof" in manifest else None
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
         "flattenedZipPagesPixelIdentical": zipped,
         "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs, "impositionProofs": imposition_proofs,
         "studioProofs": studio_proofs,
+        **({"m20Proof": m20} if m20 else {}),
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -702,6 +764,9 @@ def main():
     if studio_proofs:
         print(f"Template studio: {len(studio_proofs)} bilingual one-page designs with four clear 72 pt QR corners, "
               "9 pt vertical print margins, and both Arabic and English fills.")
+    if m20:
+        print(f"M20: {len(m20['pages'])} preview/ZIP/merged seal pages (including rotated UserUnit 2), Eastern ٠٠١٢٣ and Western 00123, "
+              "custom typography, unchanged QR modules, 0 widget overlap, and both collisions blocked.")
 
 
 if __name__ == "__main__":

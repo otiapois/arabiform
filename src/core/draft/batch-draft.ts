@@ -77,7 +77,7 @@ function validateBatchDraft(data: unknown): BatchDraft {
   if (!settings || settings.version === 1 || settings.version === 2 || settings.version === 3
     || Object.entries(settings.mapping).some(([field, column]) => !fieldNames.has(field) || column !== '' && !columns.has(column))
     || 'virtualMappings' in settings && Object.keys(settings.virtualMappings).some((field) => !fieldNames.has(field))
-    || settings.version === 9 && settings.groupByColumn !== null && !columns.has(settings.groupByColumn)) throw invalid();
+    || 'groupByColumn' in settings && settings.groupByColumn !== null && !columns.has(settings.groupByColumn)) throw invalid();
 
   const edits: [number, Record<string, string>][] = [];
   for (const [index, values] of Object.entries(data.edits)) {

@@ -1,10 +1,12 @@
 import { PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
+import { applyNumeralPolicy } from '../shaping/numerals';
 import { explicitQuadding, type AlignOverride } from './alignment';
 import { installAppearance, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { copyBundledFont } from './bundled-fonts';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
+import type { FieldTypographyMap } from './field-typography';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
 import { key, number, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
 
@@ -49,6 +51,7 @@ export interface PreflightOptions {
   preferredFont?: 'auto' | keyof FontBytes;
   customFont?: Uint8Array;
   alignOverrides?: Readonly<Record<string, AlignOverride>>;
+  fieldTypography?: FieldTypographyMap;
 }
 
 export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<TemplateMetadata> {
@@ -59,14 +62,14 @@ export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<
 type OpenTemplate = Awaited<ReturnType<typeof openTemplate>>;
 type CheckedRow = Omit<RowPreflightResult, 'pdfBytes'>;
 
-function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {} }: PreflightOptions) {
+function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {}, fieldTypography = {} }: PreflightOptions) {
   if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
-  return { fonts, minFontSize, preferredFont, custom: customFont && loadCustomFont(customFont), alignOverrides };
+  return { fonts, minFontSize, preferredFont, custom: customFont && loadCustomFont(customFont), alignOverrides, fieldTypography };
 }
 
 function planRow(
   { fields, pages }: OpenTemplate, valuesByField: Record<string, string>,
-  { fonts, minFontSize, preferredFont, custom, alignOverrides }: ReturnType<typeof layoutOptions>,
+  { fonts, minFontSize, preferredFont, custom, alignOverrides, fieldTypography }: ReturnType<typeof layoutOptions>,
 ) {
   let shaper: ReturnType<typeof createShaper> | undefined;
   const knownFields = new Set(fields.map(({ meta }) => meta.name));
@@ -117,6 +120,7 @@ function planRow(
       continue;
     }
     if (!mapped) continue;
+    const typography = field instanceof PDFTextField && Object.hasOwn(fieldTypography, name) ? fieldTypography[name] : undefined;
     if (field instanceof PDFRadioGroup) {
       if (!completeWidgetList) {
         flag({ code: 'unsupported-radio-appearance' });
@@ -157,6 +161,7 @@ function planRow(
       if (canonical.has(key('I')) || widgets.some(({ widget }) => widget.dict.has(key('I')))
         || choices.some((choice, ordinal) => ordinal !== index && choice.value === selected.value)) choiceIndex = index;
     } else if (field instanceof PDFTextField) {
+      value = applyNumeralPolicy(value, typography?.numeralPolicy);
       const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
       const unsupportedMode = !meta.supportsTextCapacity;
       if (excess > 0) flag({ code: 'exceeds-maxlen', maxLengthExcess: excess });
@@ -174,15 +179,22 @@ function planRow(
     const quadding = alignOverride && alignOverride !== 'auto' ? explicitQuadding[alignOverride] : undefined;
     const placed: { widget: WidgetTarget; placement: Placement }[] = [];
     for (const [widgetIndex, widget] of widgets.entries()) {
-      const { rotation, defaultFontSize, innerWidth, innerHeight, usable } = widget.meta;
-      const { padding } = widget;
+      const { rotation, defaultFontSize, usable, width, height, pageIndex } = widget.meta;
+      let { innerWidth, innerHeight } = widget.meta;
+      let { padding } = widget;
+      if (usable && typography?.paddingPt !== undefined) {
+        padding = widget.border + typography.paddingPt / pages[pageIndex]!.userUnit;
+        const quarterTurn = rotation % 180 !== 0;
+        innerWidth = Math.max(0, (quarterTurn ? height : width) - 2 * padding);
+        innerHeight = Math.max(0, (quarterTurn ? width : height) - 2 * padding);
+      }
       let placement;
       try {
         placement = !usable || !Number.isFinite(padding) ? { code: 'unsupported-widget' as const }
           : rotation % 90 !== 0 ? { code: 'widget-rotated-unsupported' as const }
           : fitText(shaper ??= createShaper(fonts, preferredFont, custom?.face), value, meta.multiline, {
             innerWidth: innerWidth!, innerHeight: innerHeight!,
-            padding, alignment, alignOverride, min: minFontSize, max: defaultFontSize,
+            padding, alignment, alignOverride, min: minFontSize, max: defaultFontSize, lineHeightScale: typography?.lineHeightScale,
           });
       } catch (cause) {
         if (custom) throw new Error('invalid-custom-font', { cause });

@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { decodePDFRawStream, degrees, rgb, PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRawStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
+import type { ApprovalSealSettings } from '../src/core/pdf/approval-seal-settings';
+import type { FieldTypographyMap } from '../src/core/pdf/field-typography';
 import { inspectRosterWorkbook, makeFilenames, readRoster } from '../src/core/roster';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, virtualFilenameToken } from '../src/core/roster/virtual-columns';
 import { createBatchProcessor } from '../src/core/worker/batch';
@@ -131,11 +133,11 @@ async function snapshotSource(source: Uint8Array) {
 }
 
 async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
-  { customFont, expected = values, alignments, designer, ...choices }: ExpectedChoices & {
-    customFont?: Uint8Array; expected?: Record<string, string>; alignments?: ExpectedAlignment; designer?: DesignerProof;
+  { customFont, expected = values, alignments, designer, fieldTypography, ...choices }: ExpectedChoices & {
+    customFont?: Uint8Array; expected?: Record<string, string>; alignments?: ExpectedAlignment; designer?: DesignerProof; fieldTypography?: FieldTypographyMap;
   } = {}) {
   const alignOverrides = !designer && alignments ? Object.fromEntries(Object.entries(alignments).map(([name, { mode }]) => [name, mode])) : undefined;
-  const options = { ...settings, minFontSize, customFont, alignOverrides };
+  const options = { ...settings, minFontSize, customFont, alignOverrides, fieldTypography };
   const result = await preflightRow(source, values, options);
   assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
   assert(result.pdfBytes);
@@ -926,6 +928,56 @@ for (const [templateIndex, id] of STUDIO_TEMPLATE_IDS.entries()) {
   impositionProofs.push(imposed);
 }
 
+const m20 = await PDFDocument.create({ updateMetadata: false });
+const m20Pages = [m20.addPage([360, 320]), m20.addPage([360, 320])];
+for (const page of m20Pages) page.setCropBox(14, 20, 300, 260);
+m20Pages[1]!.setRotation(degrees(90));
+m20Pages[1]!.node.set(key('UserUnit'), m20.context.register(m20.context.obj(2)));
+const m20Form = m20.getForm();
+for (const [name, x, y, width, height] of [['Date', 100, 130, 92, 22], ['ID', 220, 130, 62, 22], ['Notes', 92, 60, 152, 51], ['Sentinel', 120, 170, 103, 20]] as const) {
+  const field = m20Form.createTextField(name);
+  if (name === 'Notes') field.enableMultiline();
+  if (name === 'Sentinel') field.setText('KEEP 00109');
+  for (const page of m20Pages) field.addToPage(page, { x, y, width, height, borderWidth: 0.8 });
+  field.setFontSize(12);
+}
+const m20Source = Buffer.from(await m20.save());
+const numeralValues = { Date: '00123', ID: '۰۰١2٣', Notes: 'مُحَمَّد سَالِم\nبَنِي يَمَن' };
+const m20Typography: FieldTypographyMap = { Date: { numeralPolicy: 'eastern-arabic', paddingPt: 4 },
+  ID: { numeralPolicy: 'western-ascii' }, Notes: { lineHeightScale: 1.3, paddingPt: 6 } };
+const eastWest = await passingCase(m20Source, numeralValues, 'm20-eastern-and-western.pdf', 'M20 numeral policy and typography', 8, {
+  fieldTypography: m20Typography, expected: { ...numeralValues, Date: '٠٠١٢٣', ID: '00123' },
+});
+const m20Legacy = await passingCase(m20Source, { ...numeralValues, ID: '00123' }, 'm20-typography-default.pdf', 'M20 default typography reference');
+const m20Approval: ApprovalSealSettings = { placement: 'top-left', labelEn: 'Records Office', labelAr: 'مَكْتَبُ السِّجِلَّاتِ', issueDate: '2028-02-29' };
+const m20Seal = { settings: m20Approval, fonts: settings.fonts };
+const m20Qr = { placement: 'bottom-right', sizePt: 48, payloads: ['00123'] } as const;
+const m20QrReference = { pdf: 'm20-qr-only.pdf', plainPdf: 'm20-unmarked.pdf', zip: 'm20-qr-only.zip', member: eastWest.filename,
+  coverPages: 0, corner: m20Qr.placement, sizePt: m20Qr.sizePt, modules: encodeQr('00123').modules };
+const m20Proof = { filled: eastWest.filename, original: m20Legacy.filename, pdf: 'm20-approved.pdf', preview: 'm20-approved-preview.pdf',
+  zip: 'm20-approved.zip', qrReference: m20QrReference.pdf, seal: m20Approval, widthPt: 126, heightPt: 44,
+  overlapWithWidget: 'approval-seal-widget-overlap', overlapWithQr: 'approval-seal-qr-overlap' };
+const m20Batch = createBatchProcessor();
+const m20Idle = () => {};
+await m20Batch({ phase: 'preflight', input: { template: m20Source, roster: new Uint8Array(), rows: [numeralValues],
+  options: { ...settings, fieldTypography: m20Typography } } }, m20Idle);
+const m20Preview = await m20Batch({ phase: 'preview', rowIndex: 0, approvalSeal: m20Approval, qrStamp: m20Qr }, m20Idle);
+assert(m20Preview instanceof Uint8Array);
+await writeFile(resolve(root, m20Proof.preview), m20Preview);
+await writeFile(resolve(root, m20Proof.pdf), await createMergedPdf([eastWest], undefined, undefined, undefined, m20Qr, '1-up', m20Seal));
+await writeFile(resolve(root, m20Proof.zip), await createFlattenedZip([eastWest], undefined, undefined, m20Qr, m20Seal));
+await writeFile(resolve(root, m20QrReference.pdf), await createMergedPdf([eastWest], undefined, undefined, undefined, m20Qr));
+await writeFile(resolve(root, m20QrReference.plainPdf), await createMergedPdf([eastWest]));
+await writeFile(resolve(root, m20QrReference.zip), await createFlattenedZip([eastWest], undefined, undefined, m20Qr));
+qrProofs.push(m20QrReference);
+await assert.rejects(createMergedPdf([eastWest], undefined, undefined, undefined, { ...m20Qr, placement: 'top-left' }, '1-up', m20Seal),
+  { code: m20Proof.overlapWithQr, pageNumber: 1 });
+const m20Obstacle = m20Form.createTextField('UnmappedPrintWidget');
+m20Obstacle.addToPage(m20Pages[0]!, { x: 35, y: 243, width: 66, height: 15 });
+m20Obstacle.acroField.getWidgets()[0]!.dict.set(key('F'), m20.context.obj(36));
+await assert.rejects(createFlattenedZip([{ ...eastWest, pdfBytes: await m20.save() }], undefined, undefined, m20Qr, m20Seal),
+  { code: m20Proof.overlapWithWidget, pageNumber: 1, fieldName: 'UnmappedPrintWidget' });
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -965,5 +1017,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);
