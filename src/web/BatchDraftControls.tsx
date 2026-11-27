@@ -45,7 +45,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
   const alert = notice === 'invalid' || notice === 'sources' || notice === 'font' || notice === 'saveError' || notice === 'changed';
 
   async function run(file?: File) {
-    if (pending || desk.exporting || (!file && (desk.fontBlocked || desk.watermarkBlocked))) return;
+    if (pending || desk.exporting || (!file && (desk.fontBlocked || desk.watermarkBlocked || desk.virtualTemplateBlocked))) return;
     const current = desk.beginDraft(Boolean(file));
     const { template, roster, sheet, customFont } = desk;
     setNotice(file ? 'loading' : 'saving');
@@ -67,7 +67,9 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
       };
       if (text !== undefined) {
         const draft = engine.parseBatchDraft(text, source, fontSha256);
-        if (Object.keys(draft.settings.alignOverrides).some((field) => !desk.fields.some(({ name, kind }) => name === field && kind === 'text'))) {
+        const textFields = new Set(desk.fields.filter(({ kind }) => kind === 'text').map(({ name }) => name));
+        if (Object.keys(draft.settings.alignOverrides).some((field) => !textFields.has(field))
+          || (draft.settings.version === 6 && Object.keys(draft.settings.virtualMappings).some((field) => !textFields.has(field)))) {
           throw new Error('invalid-batch-draft');
         }
         desk.restoreDraft(draft, presetCodec);
@@ -93,7 +95,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
       <p className="quiet">{labels.help}</p>
       <div className="actions compact">
         <button type="button" className="button secondary" data-testid="draft-download" aria-label={`${labels.save} (.json)`}
-          disabled={pending || desk.exporting || desk.fontBlocked || desk.watermarkBlocked} onClick={() => void run()}>{labels.save}{'\u00A0'}<bdi dir="ltr">(.json)</bdi></button>
+          disabled={pending || desk.exporting || desk.fontBlocked || desk.watermarkBlocked || desk.virtualTemplateBlocked} onClick={() => void run()}>{labels.save}{'\u00A0'}<bdi dir="ltr">(.json)</bdi></button>
         <label className="button secondary preset-picker">
           {labels.load}{'\u00A0'}<bdi dir="ltr">(.json)</bdi>
           <input type="file" data-testid="draft-upload" aria-label={`${labels.load} (.json)`} accept=".json,application/json"

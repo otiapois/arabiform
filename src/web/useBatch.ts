@@ -4,6 +4,7 @@ import type { CustodyManifest, CustodySources } from '../core/audit/custody';
 import type { AlignOverride } from '../core/pdf/alignment';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
+import type { resolveVirtualMapping, VirtualColumnMapping } from '../core/roster/virtual-columns';
 import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import { resolveRowSelection, type RowSelection } from '../core/worker/row-selection';
@@ -27,6 +28,9 @@ type BatchSettings = {
   roster: Uint8Array;
   rows: readonly RosterRow[];
   mapping: Record<string, string>;
+  virtualMappings: Record<string, VirtualColumnMapping>;
+  localDate: string;
+  resolveVirtualMapping: typeof resolveVirtualMapping;
   alignOverrides: Record<string, AlignOverride>;
   minFontSize: number;
   font: FontMode;
@@ -97,9 +101,11 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
         client = createBatchWorker();
         worker.current = client;
         const mapped = Object.entries(batch.mapping).filter(([, column]) => column);
-        const rows = batch.rows.map(({ values }) => Object.fromEntries(
-          mapped.map(([field, column]) => [field, Object.hasOwn(values, column) ? values[column]! : '']),
-        ));
+        const virtual = Object.entries(batch.virtualMappings);
+        const rows = batch.rows.map(({ values }, index) => Object.fromEntries([
+          ...mapped.map(([field, column]) => [field, Object.hasOwn(values, column) ? values[column]! : '']),
+          ...virtual.map(([field, binding]) => [field, batch.resolveVirtualMapping(binding, index + 1, batch.localDate)]),
+        ]));
         const { rows: results, custody } = await client.preflight({
           template: batch.template, roster: batch.roster, rows,
           options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides },

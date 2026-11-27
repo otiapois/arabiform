@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { inspectPrintMargins } from '../core/pdf/margin-preflight';
 import type { TemplateMetadata } from '../core/pdf/template';
+import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
 
 const en = {
   heading: 'Print-margin advisory',
@@ -24,14 +25,15 @@ const ar: typeof en = {
   points: 'نقطة',
 };
 
-export default function PrintMarginAdvisory({ template, mapping, arabic }: {
+export default function PrintMarginAdvisory({ template, mapping, virtualMappings, arabic }: {
   template: TemplateMetadata;
   mapping: Readonly<Record<string, string>>;
+  virtualMappings: Readonly<Record<string, VirtualColumnMapping>>;
   arabic: boolean;
 }) {
   const copy = arabic ? ar : en;
   const warnings = useMemo(() => inspectPrintMargins(template,
-    Object.keys(mapping).filter((name) => Boolean(mapping[name]))), [template, mapping]);
+    Object.keys(mapping).filter((name) => Boolean(mapping[name]) || Object.hasOwn(virtualMappings, name))), [template, mapping, virtualMappings]);
   if (!warnings.length) return null;
 
   return (

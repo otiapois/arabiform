@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type ChangeEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { CapacityDisclosure } from './CapacityDisclosure';
 import { fillLabel, translator } from './labels';
 import { QueuePanel } from './QueuePanel';
 import { saveDownload } from './resources';
@@ -8,6 +7,9 @@ import { sampleWorkflows, useWorkbench } from './useWorkbench';
 import { WatermarkControls } from './WatermarkControls';
 
 const MappingRows = lazy(() => import('./MappingRows'));
+const VirtualFilenameTokens = lazy(() => import('./MappingRows').then(({ VirtualFilenameTokens }) => ({ default: VirtualFilenameTokens })));
+const PresetWarnings = lazy(() => import('./MappingRows').then(({ PresetWarnings }) => ({ default: PresetWarnings })));
+const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
 const Diagnostics = lazy(() => import('./Diagnostics').then(({ Diagnostics }) => ({ default: Diagnostics })));
 const PdfPreview = lazy(() => import('./PdfPreview'));
 const Hygiene = lazy(() => import('./Hygiene'));
@@ -103,9 +105,8 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const emptySubset = subset && desk.exportCount === 0;
   const selectedResult = desk.results?.[desk.selected];
   const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
-  const { missingFields, missingColumns } = desk.presetWarnings ?? { missingFields: [], missingColumns: [] };
-  const presetMismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
-  const textMapped = desk.fields.some(({ kind, name }) => (kind === 'text' || kind === 'dropdown') && desk.mapping[name]);
+  const textMapped = Object.keys(desk.virtualMappings).length > 0
+    || desk.fields.some(({ kind, name }) => (kind === 'text' || kind === 'dropdown') && desk.mapping[name]);
   const missingCustomGlyphs = customFont?.status === 'ready'
     && desk.results?.some((result) => result.diagnostics.some(({ code }) => code === 'missing-glyphs'));
   const fontCheck = !desk.results || !textMapped ? labels.customFontCoverage
@@ -168,7 +169,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
 
         <div className="workbench" id="workbench" tabIndex={-1}>
           {desk.template && (
-            <CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} />
+            <Suspense><CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
           )}
           <div className="workbench-grid">
             <div className="setup">
@@ -221,7 +222,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                   )}
                 </header>
                 <div className="panel-body">
-                  {desk.templateFields.length > 0 && desk.sheet
+                  {desk.templateFields.length > 0
                     ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><MappingRows desk={desk} language={language} /></Suspense>
                     : <p className="quiet">{labels.mappingWait}</p>}
                 </div>
@@ -276,6 +277,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                       disabled={desk.exporting} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                     <small>{labels.patternHelp}</small>
                   </label>
+                  {(desk.template || desk.roster) && <Suspense><VirtualFilenameTokens arabic={arabic} /></Suspense>}
                   <label className="output-mode zip-mode">
                     <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exportingZip}
                       onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
@@ -304,21 +306,11 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                         <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
                           onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
                       </label>
-                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.watermarkBlocked}
+                      <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.watermarkBlocked || desk.virtualTemplateBlocked}
                         onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                     </div>
                     {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
-                    {(missingFields.length > 0 || missingColumns.length > 0) && (
-                      <div className="alert warning preset-warning" role="status" data-testid="preset-warning">
-                        <p>{labels.presetMismatch}</p>
-                        {presetMismatches.map(([label, names]) =>
-                          names.length > 0 && (
-                            <p key={label}>{label}{' · '}
-                              {names.map((name, index) => <span key={name}>{index > 0 ? ', ' : ''}<bdi dir="auto">{name}</bdi></span>)}
-                            </p>
-                          ))}
-                      </div>
-                    )}
+                    {desk.presetWarnings && <Suspense><PresetWarnings warnings={desk.presetWarnings} labels={labels} /></Suspense>}
                   </div>
                   {desk.template && desk.sheet && (
                     <Suspense>
@@ -339,7 +331,7 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               </header>
               {desk.template && desk.hasMapping && (
                 <Suspense>
-                  <PrintMarginAdvisory template={desk.template.info} mapping={desk.mapping} arabic={arabic} />
+                  <PrintMarginAdvisory template={desk.template.info} mapping={desk.mapping} virtualMappings={desk.virtualMappings} arabic={arabic} />
                 </Suspense>
               )}
               {!!selectedResult?.diagnostics.length && (
@@ -352,8 +344,9 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               {desk.template
                 ? (
                   <Suspense fallback={<div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>}>
-                    <PdfPreview bytes={bytes} fields={desk.template.info.fields} diagnostics={selectedResult?.diagnostics}
+                    <PdfPreview bytes={bytes} fields={desk.template.info.fields} overlays={desk.template.overlays} diagnostics={selectedResult?.diagnostics}
                       minSize={desk.minFontSize} unavailable={desk.previewError} language={language}
+                      fieldSelection={desk.fieldSelection} onWidgetSelect={desk.selectWidget}
                       requestedPage={desk.previewPage} onPageChange={desk.setPreviewPage} />
                   </Suspense>
                 )

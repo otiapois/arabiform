@@ -4,6 +4,7 @@ import type { AlignOverride } from '../core/pdf/alignment';
 import { DEFAULT_WATERMARK, validateWatermarkSettings, type WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
+import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
@@ -15,6 +16,7 @@ type PdfEngine = typeof import('../core/pdf');
 export type TemplateInfo = Awaited<ReturnType<PdfEngine['inspectTemplate']>>;
 export type RowResult = BatchRowResult & FilenamePlan;
 type RosterEngine = typeof import('../core/roster');
+type VirtualEngine = typeof import('../core/roster/virtual-columns');
 type Roster = Awaited<ReturnType<RosterEngine['readRoster']>>;
 export type SourceRow = Roster['sheets'][number]['rows'][number];
 export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
@@ -46,14 +48,21 @@ type MappingSettings = {
   fromPreset: boolean;
   values: Record<string, string>;
   alignment?: Record<string, AlignOverride>;
+  virtual?: Record<string, VirtualColumnMapping>;
 };
+
+type FieldSelection = { fieldName: string; widgetIndex?: number };
 
 type Cells = Pick<BatchDraft, 'edits' | 'hygiene'>;
 type CellState = Cells & { undo?: Cells; undoExpired?: boolean; revision: number };
 
 export function useWorkbench(locale: MergeCoverSheet['locale']) {
-  const [template, setTemplate] = useState<{ name: string; bytes: Uint8Array; info: TemplateInfo }>();
-  const [roster, setRoster] = useState<{ name: string; bytes: Uint8Array; data: Roster; engine: RosterEngine }>();
+  const [template, setTemplate] = useState<{
+    name: string; bytes: Uint8Array; info: TemplateInfo; overlays: ReturnType<PdfEngine['getWidgetOverlays']>;
+  }>();
+  const [roster, setRoster] = useState<{
+    name: string; bytes: Uint8Array; data: Roster; engine: RosterEngine; virtual: VirtualEngine; localDate: string;
+  }>();
   const [loadedSample, setLoadedSample] = useState<SampleWorkflow>();
   const [busy, setBusy] = useState({ pdf: false, roster: false });
   const [errors, setErrors] = useState<{ pdf?: string; roster?: string }>({});
@@ -66,6 +75,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const { edits, hygiene, undo, undoExpired, revision: cellRevision } = cellState;
   const [selected, setSelected] = useState(0);
   const [requestedPage, setRequestedPage] = useState<number>();
+  const [fieldSelection, setFieldSelection] = useState<FieldSelection>();
   const [filter, setFilter] = useState<RowFilter>('all');
   const [rowSelection, setRowSelection] = useState<RowSelection>('all-ready');
   const [minFontSize, setMinFontSize] = useState(8);
@@ -84,21 +94,25 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const fields = useMemo(() => templateFields.filter((field) =>
     !field.readOnly && (field.kind === 'text' || field.kind === 'checkbox' || Boolean(field.choices?.length))),
   [templateFields]);
+  const virtualMappings = useMemo(() => Object.fromEntries(fields.flatMap(({ kind, name }) => {
+    const bindings = mappingSettings.virtual;
+    return kind === 'text' && bindings && Object.hasOwn(bindings, name) ? [[name, bindings[name]!] as const] : [];
+  })), [fields, mappingSettings.virtual]);
   const mapping = useMemo(() => {
     const headers = sheet?.headers ?? [];
     const autoNames = fields.filter(({ kind }) => kind === 'text' || kind === 'checkbox').map(({ name }) => name);
     const auto = mappingSettings.fromPreset ? undefined : roster?.engine.autoMap(autoNames, headers);
     const entries = fields.map(({ name: field }) => {
       const column = Object.hasOwn(mappingSettings.values, field) ? mappingSettings.values[field] : auto?.[field];
-      return [field, column && headers.includes(column) ? column : ''] as const;
+      return [field, column && !Object.hasOwn(virtualMappings, field) && headers.includes(column) ? column : ''] as const;
     });
     return Object.fromEntries(entries);
-  }, [fields, sheet, roster, mappingSettings]);
+  }, [fields, sheet, roster, mappingSettings.values, mappingSettings.fromPreset, virtualMappings]);
   const alignOverrides = useMemo(() => Object.fromEntries(fields.flatMap(({ kind, name }) => {
     const alignment = mappingSettings.alignment;
     const value = alignment && Object.hasOwn(alignment, name) ? alignment[name] : undefined;
-    return kind === 'text' && mapping[name] && value && value !== 'auto' ? [[name, value]] : [];
-  })), [fields, mapping, mappingSettings.alignment]);
+    return kind === 'text' && (mapping[name] || Object.hasOwn(virtualMappings, name)) && value && value !== 'auto' ? [[name, value]] : [];
+  })), [fields, mapping, virtualMappings, mappingSettings.alignment]);
   const rows = useMemo(() => {
     if (!sheet) return emptyRows;
     const mappedColumns = new Set(Object.values(mapping));
@@ -112,17 +126,21 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     });
   }, [sheet, mapping, edits]);
   const presetWarnings = useMemo(() => mappingSettings.fromPreset
-    ? presetCodec?.presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined, sheet?.headers)
+    ? presetCodec?.presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined,
+      sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined)
     : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template]);
   const watermarkBlocked = useMemo(() => !validateWatermarkSettings(watermark), [watermark]);
 
-  const hasMapping = fields.some((field) => Boolean(mapping[field.name]));
+  const virtualTemplateBlocked = Boolean(roster && Object.values(virtualMappings).some(({ column, template }) =>
+    template && !roster.virtual.validateVirtualTemplate(column, template)));
+  const hasMapping = Object.keys(virtualMappings).length > 0 || fields.some((field) => Boolean(mapping[field.name]));
   const fontBlocked = customFont?.status === 'loading' || customFont?.status === 'invalid';
-  const batch = useMemo(() => template && roster && rows.length && hasMapping && !fontBlocked
-    ? { template: template.bytes, roster: roster.bytes, rows, mapping, alignOverrides, minFontSize, font,
+  const batch = useMemo(() => template && roster && rows.length && hasMapping && !fontBlocked && !virtualTemplateBlocked
+    ? { template: template.bytes, roster: roster.bytes, rows, mapping, virtualMappings, localDate: roster.localDate,
+      resolveVirtualMapping: roster.virtual.resolveVirtualMapping, alignOverrides, minFontSize, font,
       customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
-    : null, [template, roster, rows, mapping, alignOverrides, minFontSize, font, customFont, hasMapping, fontBlocked]);
-  const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
+    : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked]);
+  const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern, { localDate: roster.localDate }) ?? [], [roster, rows, pattern]);
   const templateName = template?.name;
   const output = useMemo(() => ({
     filenamePlans, flattenZip, rowSelection,
@@ -137,6 +155,15 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const warningRows = useMemo(() => rows.filter((row) => row.warnings.length > 0).length, [rows]);
   const firstFlaggedPage = job.results?.[selected]?.pageNumbers[0];
   const previewPage = requestedPage ?? firstFlaggedPage ?? 1;
+
+  function focusMappingField(fieldName: string, page?: number) {
+    setFieldSelection((current) => current?.fieldName === fieldName && current.widgetIndex === undefined ? current : { fieldName });
+    if (page !== undefined) setRequestedPage(page);
+  }
+
+  function selectWidget(fieldName: string, widgetIndex: number) {
+    setFieldSelection({ fieldName, widgetIndex });
+  }
 
   function selectRow(index: number) {
     setSelected(index);
@@ -153,14 +180,14 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     invalidate();
   }
 
-  function resetRows() {
+  function resetRows(keepTemplateMapping = false) {
     request.current.draft++;
     setSheetIndex(0);
     setSelected(0);
     setRequestedPage(undefined);
     setFilter('all');
     setRowSelection('all-ready');
-    setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
+    if (!keepTemplateMapping) setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setCellState((current) => ({ edits: {}, hygiene: [], revision: current.revision + 1 }));
   }
 
@@ -171,6 +198,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setRowSelection('all-ready');
     setTemplate(undefined);
     setRequestedPage(undefined);
+    setFieldSelection(undefined);
     setLoadedSample(undefined);
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setErrors((current) => ({ ...current, pdf: undefined }));
@@ -178,7 +206,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     try {
       const [engine, bytes] = await Promise.all([import('../core/pdf'), file.arrayBuffer()]);
       const info = await engine.inspectTemplate(new Uint8Array(bytes));
-      if (request.current.pdf === id) setTemplate({ name: file.name, bytes: new Uint8Array(bytes), info });
+      if (request.current.pdf === id) setTemplate({ name: file.name, bytes: new Uint8Array(bytes), info, overlays: engine.getWidgetOverlays(info) });
     } catch (error) {
       if (request.current.pdf === id) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
     } finally {
@@ -188,16 +216,17 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   async function loadRoster(file: File) {
     const id = ++request.current.roster;
+    const openedAt = new Date();
     invalidate(true);
     setRoster(undefined);
     setLoadedSample(undefined);
-    resetRows();
+    resetRows(!roster);
     setErrors((current) => ({ ...current, roster: undefined }));
     setBusy((current) => ({ ...current, roster: true }));
     try {
-      const [parser, bytes] = await Promise.all([import('../core/roster'), file.arrayBuffer()]);
+      const [parser, virtual, bytes] = await Promise.all([import('../core/roster'), import('../core/roster/virtual-columns'), file.arrayBuffer()]);
       const data = await parser.readRoster(bytes, file.name);
-      if (request.current.roster === id) setRoster({ name: file.name, bytes: new Uint8Array(bytes), data, engine: parser });
+      if (request.current.roster === id) setRoster({ name: file.name, bytes: new Uint8Array(bytes), data, engine: parser, virtual, localDate: virtual.localVirtualDate(openedAt) });
     } catch (error) {
       if (request.current.roster === id) setErrors((current) => ({ ...current, roster: errorCode(error, 'loadError') }));
     } finally {
@@ -210,6 +239,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const sample = samples[selectedSample];
     const pdfId = ++request.current.pdf;
     const rosterId = ++request.current.roster;
+    const openedAt = new Date();
     request.current.preset++;
     invalidate(true);
     resetRows();
@@ -227,15 +257,17 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     }
     setPresetError(false);
     setTemplate(undefined);
+    setFieldSelection(undefined);
     setRoster(undefined);
     setLoadedSample(undefined);
     setErrors({});
     setBusy({ pdf: true, roster: true });
     try {
-      const [assets, engine, parser] = await Promise.all([
+      const [assets, engine, parser, virtual] = await Promise.all([
         sample.load(),
         import('../core/pdf'),
         import('../core/roster'),
+        import('../core/roster/virtual-columns'),
       ]);
       const bytes = decodeBase64(assets.template);
       const rosterBytes = decodeBase64(assets.roster);
@@ -243,8 +275,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
         engine.inspectTemplate(bytes),
         parser.readRoster(rosterBytes, sample.roster),
       ]);
-      if (request.current.pdf === pdfId) setTemplate({ name: sample.pdf, bytes, info });
-      if (request.current.roster === rosterId) setRoster({ name: sample.roster, bytes: rosterBytes, data, engine: parser });
+      if (request.current.pdf === pdfId) setTemplate({ name: sample.pdf, bytes, info, overlays: engine.getWidgetOverlays(info) });
+      if (request.current.roster === rosterId) setRoster({ name: sample.roster, bytes: rosterBytes, data, engine: parser, virtual, localDate: virtual.localVirtualDate(openedAt) });
       if (request.current.pdf === pdfId && request.current.roster === rosterId) setLoadedSample(selectedSample);
     } catch (error) {
       if (request.current.pdf === pdfId) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
@@ -264,7 +296,18 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   function changeMapping(field: string, column: string) {
     recheck();
-    setMappingSettings((current) => ({ ...current, values: { ...current.values, [field]: column } }));
+    setMappingSettings((current) => {
+      const virtual = { ...current.virtual };
+      delete virtual[field];
+      return { ...current, virtual, values: { ...current.values, [field]: column } };
+    });
+  }
+
+  function changeVirtualMapping(field: string, binding: VirtualColumnMapping) {
+    recheck();
+    setMappingSettings((current) => ({
+      ...current, values: { ...current.values, [field]: '' }, virtual: { ...current.virtual, [field]: binding },
+    }));
   }
 
   function resetMapping() {
@@ -416,24 +459,25 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }
 
   function restoreSettings(preset: MappingPreset) {
-    setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined });
+    setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
+      virtual: preset.version === 6 ? preset.virtualMappings : undefined });
     setPattern(preset.filenamePattern);
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
     setFlattenZip(preset.version !== 1 && preset.flattenZip);
     setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
     setIncludeCustody(false);
-    setWatermark(preset.version === 5 ? preset.watermark : DEFAULT_WATERMARK);
+    setWatermark('watermark' in preset ? preset.watermark : DEFAULT_WATERMARK);
   }
 
   function presetInputs() {
     const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
-      kind === 'text' || kind === 'checkbox' || mapping[name] ? [[name, mapping[name]!]] : []));
-    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark] as const;
+      !Object.hasOwn(virtualMappings, name) && (kind === 'text' || kind === 'checkbox' || mapping[name]) ? [[name, mapping[name]!]] : []));
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings] as const;
   }
 
   async function exportPreset() {
-    if (watermarkBlocked) return;
+    if (watermarkBlocked || virtualTemplateBlocked) return;
     const inputs = presetInputs();
     const { makeMappingPreset } = await import('./presets');
     const preset = makeMappingPreset(...inputs);
@@ -457,6 +501,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   return {
     template, roster, loadedSample, busy, errors, sheet, sheetIndex, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
+    virtualMappings, virtualTemplateBlocked, changeVirtualMapping, fieldSelection, focusMappingField, selectWidget,
     sourceRevision: `${request.current.roster}:${sheetIndex}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,
     presetInputs, beginDraft, restoreDraft,
