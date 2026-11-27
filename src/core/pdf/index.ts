@@ -6,9 +6,10 @@ import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { copyBundledFont } from './bundled-fonts';
 import { matchChoice, type FieldChoice } from './choice-match';
 import { embedCustomFont, loadCustomFont } from './custom-font';
+import { preparePrintWidgetCheck } from './exports';
 import type { FieldTypographyMap } from './field-typography';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
-import { key, number, openTemplate, type TemplateMetadata, type WidgetTarget } from './template';
+import { key, number, openTemplate, PdfIntakeError, type TemplateMetadata, type WidgetTarget } from './template';
 
 export type { AlignOverride } from './alignment';
 export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './exports';
@@ -260,6 +261,28 @@ export async function prepareTemplatePreflight(bytes: Uint8Array | ArrayBuffer, 
     return result;
   };
   return { check, fields: template.fields.map(({ meta }) => meta) };
+}
+
+export async function preparePacketFormPreflight(bytes: Uint8Array | ArrayBuffer, options: Pick<PreflightOptions, 'fonts'>) {
+  const template = await openTemplate(bytes);
+  const layout = layoutOptions(options);
+  let checkPrint: ReturnType<typeof preparePrintWidgetCheck>;
+  try {
+    checkPrint = preparePrintWidgetCheck(template.doc);
+  } catch (cause) {
+    throw new PdfIntakeError('invalid-pdf', cause);
+  }
+  return {
+    fields: template.fields.map(({ meta }) => meta),
+    pageCount: template.pages.length,
+    check(values: Record<string, string>) {
+      const { result, plans, buttonPlans } = planRow(template, values, layout);
+      const textWidgets = new Set(plans.flatMap(({ placed }) => placed.map(({ widget }) => widget.widget.dict)));
+      const states = new Map(buttonPlans.flatMap(({ widgets, selectedIndex, state }) => widgets.map(({ widget }, index) =>
+        [widget.dict, selectedIndex === undefined || index === selectedIndex ? state : key('Off')] as const)));
+      return { diagnostics: result.diagnostics, printProblems: checkPrint(textWidgets, states) };
+    },
+  };
 }
 
 export async function preflightRow(

@@ -147,7 +147,7 @@ function layoutText(shaper: Shaper, text: string, size: number, width: number, m
   return { text, lines, size, height: height - 2 };
 }
 
-function addText(page: PDFPage, text: CoverText, left: number, top: number, width: number, align: BaseDirection | 'center',
+export function addCoverText(page: PDFPage, text: CoverText, left: number, top: number, width: number, align: BaseDirection | 'center',
   fonts: Record<'arabic' | 'latin', { name: string; ref: PDFPage['ref'] }>) {
   const lines = text.lines.map(({ line, origin, baseline }) => {
     const remaining = width - (line.bounds.maxX - line.bounds.minX) * text.size;
@@ -162,7 +162,7 @@ type CoverEntry = { filename: string; pageCount: number };
 
 const MAX_ESTIMATE_FILENAME_LAYOUTS = 1_000;
 
-function createCoverTextLayout(fonts: FontBytes, rowLayouts?: Map<string, CoverText>) {
+export function createCoverTextLayout(fonts: FontBytes, rowLayouts?: Map<string, CoverText>) {
   let shaper: Shaper | undefined;
   return (text: string, size: number, width: number, mode: BaseDirection | 'filename') => {
     const cache = mode === 'filename' && size === FILENAME_SIZE && width === FILENAME_WIDTH ? rowLayouts : undefined;
@@ -293,11 +293,11 @@ export async function prependMergeCover(
       const cell = (text: CoverText, index: number, top: number, height: number, align: BaseDirection | 'center') => {
         const offset = COLUMNS.slice(0, index).reduce((sum, width) => sum + width, 0);
         const width = COLUMNS[index]! - 2 * CELL_PADDING;
-        addText(page, text, xAt(offset + CELL_PADDING, width), top - (height - text.height) / 2, width, align, resources);
+        addCoverText(page, text, xAt(offset + CELL_PADDING, width), top - (height - text.height) / 2, width, align, resources);
       };
       const drawPanel = ({ left, direction }: typeof panels[number], text: CoverText, offset: number, top: number, width: number) => {
         const x = left + (direction === 'rtl' ? panelWidth - offset - width : offset);
-        addText(page, text, x, top, width, direction, resources);
+        addCoverText(page, text, x, top, width, direction, resources);
       };
       for (const panel of panels) drawPanel(panel, panel.title, 0, TOP, panelWidth);
       if (!pageIndex) {
@@ -323,7 +323,7 @@ export async function prependMergeCover(
         cells.forEach((content, column) => cell(content, column, top, height, column === FILE_COLUMN ? direction : 'center'));
         rule(top - height);
       }
-      if (footer) addText(page, footer, MARGIN, MARGIN + footer.height, WIDTH, 'center', resources);
+      if (footer) addCoverText(page, footer, MARGIN, MARGIN + footer.height, WIDTH, 'center', resources);
     }
   } catch (cause) {
     if (cause instanceof CoverSheetError) throw cause;

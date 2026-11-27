@@ -175,15 +175,65 @@ export async function createGeneratedZip(
   return { bytes: zip.finish(), entries };
 }
 
-function activeAppearance(widget: PDFDict) {
+function activeAppearance(widget: PDFDict, plannedState?: PDFName) {
   const appearances = widget.lookupMaybe(key('AP'), PDFDict);
   const normal = appearances?.lookup(key('N'));
   if (normal instanceof PDFStream) return { stream: normal, ref: appearances!.get(key('N')) };
   if (!(normal instanceof PDFDict)) return undefined;
-  const state = widget.lookupMaybe(key('AS'), PDFName);
+  const state = plannedState ?? widget.lookupMaybe(key('AS'), PDFName);
   if (!state) return undefined;
   const stream = normal.lookup(state);
   return stream instanceof PDFStream ? { stream, ref: normal.get(state), stateful: true } : undefined;
+}
+
+function printWidgetPlacement(annot: PDFDict, plannedState?: PDFName) {
+  const appearance = activeAppearance(annot, plannedState);
+  // Viewers can synthesize appearances from /V or /MK. Dropping a visible
+  // widget without a reusable active stream can remove printed content.
+  if (!appearance) throw new Error('unflattenable-widget');
+  const { stream, ref } = appearance;
+  // Match the single-precision rectangle coordinates used by stateful annotation renderers.
+  const round = 'stateful' in appearance ? Math.fround : (value: number) => value;
+  const bbox = stream.dict.lookupMaybe(key('BBox'), PDFArray);
+  const matrix = stream.dict.lookupMaybe(key('Matrix'), PDFArray);
+  if (bbox?.size() !== 4 || (matrix && matrix.size() !== 6)) throw new Error('unflattenable-widget');
+  const [left, bottom, right, top] = [0, 1, 2, 3].map((i) => bbox.lookup(i, PDFNumber).asNumber()) as [number, number, number, number];
+  const [a, b, c, d, e, f] = matrix ? [0, 1, 2, 3, 4, 5].map((i) => matrix.lookup(i, PDFNumber).asNumber()) as [number, number, number, number, number, number] : [1, 0, 0, 1, 0, 0];
+  const xs = [a * left + c * bottom + e, a * right + c * bottom + e, a * right + c * top + e, a * left + c * top + e];
+  const ys = [b * left + d * bottom + f, b * right + d * bottom + f, b * right + d * top + f, b * left + d * top + f];
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const { x, y, width, height } = PDFWidgetAnnotation.fromDict(annot).getRectangle();
+  const sx = round(round(round(x + width) - round(x)) / round(round(Math.max(...xs)) - round(minX)));
+  const sy = round(round(round(y + height) - round(y)) / round(round(Math.max(...ys)) - round(minY)));
+  if (!(sx > 0 && sy > 0 && Number.isFinite(sx) && Number.isFinite(sy))) throw new Error('unflattenable-widget');
+  return { stream, ref, matrix: [sx, 0, 0, sy, round(round(x) - round(sx * minX)), round(round(y) - round(sy * minY))] };
+}
+
+export function preparePrintWidgetCheck(doc: PDFDocument) {
+  const fields = new Map(doc.getForm().getFields().flatMap((field) => field.acroField.getWidgets()
+    .map((widget) => [widget.dict, field.getName()] as const)));
+  const targets = doc.getPages().flatMap((page, index) => {
+    const widgets = page.node.Annots()?.asArray() ?? [];
+    return widgets.flatMap((value) => {
+      const annot = doc.context.lookup(value, PDFDict);
+      if (annot.lookupMaybe(key('Subtype'), PDFName) !== key('Widget')) return [];
+      const flags = widgetFlags(annot);
+      if (flags & (1 | 2 | 32)) return [];
+      return [{ annot, fieldName: fields.get(annot), pageNumber: index + 1, noRotate: Boolean(page.getRotation().angle && flags & 16) }];
+    });
+  });
+  return (replaced: ReadonlySet<PDFDict>, states: ReadonlyMap<PDFDict, PDFName>) => targets.flatMap(({ annot, fieldName, pageNumber, noRotate }) => {
+    try {
+      if (noRotate) throw new Error('unflattenable-widget');
+      // Text planning has already validated the rectangle that installAppearance uses for its new BBox.
+      if (replaced.has(annot)) annot.lookupMaybe(key('AP'), PDFDict);
+      else printWidgetPlacement(annot, states.get(annot));
+      return [];
+    } catch {
+      return [{ fieldName, pageNumbers: [pageNumber] }];
+    }
+  });
 }
 
 function flattenWidgets(doc: PDFDocument) {
@@ -199,36 +249,28 @@ function flattenWidgets(doc: PDFDocument) {
       const flags = widgetFlags(annot);
       if (flags & (1 | 2 | 32)) continue;
       if (page.getRotation().angle && flags & 16) throw new Error('unflattenable-widget');
-      const appearance = activeAppearance(annot);
-      // Viewers can synthesize appearances from /V or /MK. Dropping a visible
-      // widget without a reusable active stream can remove printed content.
-      if (!appearance) throw new Error('unflattenable-widget');
-      const { stream, ref } = appearance;
-      // PDF annotation renderers calculate stateful appearance placement with
-      // single-precision rectangle coordinates. Retain that edge alignment.
-      const round = 'stateful' in appearance ? Math.fround : (value: number) => value;
-      const bbox = stream.dict.lookupMaybe(key('BBox'), PDFArray);
-      const matrix = stream.dict.lookupMaybe(key('Matrix'), PDFArray);
-      if (bbox?.size() !== 4 || (matrix && matrix.size() !== 6)) throw new Error('unflattenable-widget');
-      const [left, bottom, right, top] = [0, 1, 2, 3].map((i) => bbox.lookup(i, PDFNumber).asNumber()) as [number, number, number, number];
-      const [a, b, c, d, e, f] = matrix ? [0, 1, 2, 3, 4, 5].map((i) => matrix.lookup(i, PDFNumber).asNumber()) as [number, number, number, number, number, number] : [1, 0, 0, 1, 0, 0];
-      const xs = [a * left + c * bottom + e, a * right + c * bottom + e, a * right + c * top + e, a * left + c * top + e];
-      const ys = [b * left + d * bottom + f, b * right + d * bottom + f, b * right + d * top + f, b * left + d * top + f];
-      const minX = Math.min(...xs);
-      const minY = Math.min(...ys);
-      const { x, y, width, height } = PDFWidgetAnnotation.fromDict(annot).getRectangle();
-      const sx = round(round(round(x + width) - round(x)) / round(round(Math.max(...xs)) - round(minX)));
-      const sy = round(round(round(y + height) - round(y)) / round(round(Math.max(...ys)) - round(minY)));
-      if (!(sx > 0 && sy > 0 && Number.isFinite(sx) && Number.isFinite(sy))) throw new Error('unflattenable-widget');
+      const { stream, ref, matrix } = printWidgetPlacement(annot);
       const resource = page.node.newXObject('ArabiFormWidget', ref instanceof PDFRef ? ref : doc.context.register(stream));
       paint.push(PDFOperator.of(Op.PushGraphicsState),
-        PDFOperator.of(Op.ConcatTransformationMatrix, [sx, 0, 0, sy, round(round(x) - round(sx * minX)), round(round(y) - round(sy * minY))].map(number)),
+        PDFOperator.of(Op.ConcatTransformationMatrix, matrix.map(number)),
         PDFOperator.of(Op.DrawObject, [resource]), PDFOperator.of(Op.PopGraphicsState));
     }
     if (paint.length) page.node.addContentStream(doc.context.register(doc.context.contentStream(paint)));
     for (const index of removed.reverse()) annots.remove(index);
   }
   doc.catalog.delete(key('AcroForm'));
+}
+
+async function appendPages(target: PDFDocument, source: PDFDocument) {
+  const pages = await target.copyPages(source, source.getPageIndices());
+  for (const page of pages) target.addPage(page);
+  return pages;
+}
+
+export async function appendFlattenedForm(target: PDFDocument, bytes: Uint8Array) {
+  const { doc } = await openTemplate(bytes);
+  flattenWidgets(doc);
+  return (await appendPages(target, doc)).length;
 }
 
 export async function createMergedPdf(
@@ -297,8 +339,7 @@ async function buildMergedPdf(
       if (hasUnsupportedPrintAnnotation(sourcePages[0]!)) throw new Error('imposition-unsupported-print-annotation');
       recordGeometry.push(geometry[0]!);
     }
-    const pages = await merged.copyPages(source, source.getPageIndices());
-    for (const page of pages) merged.addPage(page);
+    const pages = await appendPages(merged, source);
     if (layoutQr) stampQr.push(() => layoutQr.paint(pages));
     if (cover) coverEntries.push({ filename: row.filename, pageCount: sourcePages.length });
     onProgress?.(index + 1, rows.length);
