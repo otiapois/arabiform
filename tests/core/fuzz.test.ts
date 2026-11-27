@@ -12,6 +12,10 @@ import { extractBatch } from '../../src/core/extractor/extract';
 import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
 import { validateMappingPreset } from '../../src/core/draft/mapping-preset';
+import { authorFlatPdf, inspectFlatPdf, type FieldDraftSpec } from '../../src/core/designer/author';
+import { clampDisplayRect, displayToSource, sourceToDisplay, type DesignerPage, type NormalizedRect } from '../../src/core/designer/geometry';
+import { loadFieldLayout, saveFieldLayout } from '../../src/core/designer/layout';
+import { validateFieldRect } from '../../src/core/designer/spec';
 import { createAudit, createFlattenedZip, createZip, getWidgetOverlays, inspectCustomFont, inspectTemplate, matchChoice, preflightRow, prepareRowPreflight, type AlignOverride } from '../../src/core/pdf';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
@@ -63,7 +67,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(22_600);
+  expect(acceptedCases).toBeGreaterThanOrEqual(25_100);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1479,4 +1483,110 @@ describe('seeded AcroForm extraction and string-safe spreadsheet custody', () =>
         }
       }), 500);
   }, 30_000);
+});
+
+describe('seeded flat-PDF field designer', () => {
+  const turns = [0, 90, 180, 270] as const;
+  const rotations = fc.constantFrom(...turns);
+
+  it('projects 1,080 clipped viewport drags across crop offsets, quarter turns, and page units', async () => {
+    await verify(fc.asyncProperty(rotations,
+      fc.tuple(fc.integer({ min: -200, max: 200 }), fc.integer({ min: -200, max: 200 })),
+      fc.tuple(fc.integer({ min: 48, max: 1_500 }), fc.integer({ min: 48, max: 1_500 })),
+      fc.tuple(fc.integer({ min: -100, max: 120 }), fc.integer({ min: -100, max: 120 }),
+        fc.integer({ min: 1, max: 150 }), fc.integer({ min: 1, max: 150 })),
+      fc.integer({ min: 1, max: 16 }), async (rotation, [x, y], [width, height], drag, unit) => {
+        const page: DesignerPage = { visibleBox: { x: x / 3, y: y / 3, width, height }, rotation, userUnit: unit / 4 };
+        const rect = drag.map((item) => item / 100) as unknown as NormalizedRect;
+        const clipped = clampDisplayRect(rect);
+        expect(clipped.every((item) => item >= 0 && item <= 1)).toBe(true);
+        expect(clipped[0] + clipped[2]).toBeLessThanOrEqual(1 + 1e-10);
+        expect(clipped[1] + clipped[3]).toBeLessThanOrEqual(1 + 1e-10);
+        const pdf = displayToSource(clipped, page);
+        for (const [index, item] of sourceToDisplay(pdf, page).entries()) expect(item).toBeCloseTo(clipped[index]!, 10);
+        const quarter = rotation % 180 !== 0;
+        if (pdf[2] === 0 || pdf[3] === 0) {
+          expect(() => validateFieldRect(pdf, page, 'text')).toThrow('invalid-field-rect');
+        } else if ((quarter ? pdf[3] : pdf[2]) * page.userUnit < 12 - 1e-9 ||
+          (quarter ? pdf[2] : pdf[3]) * page.userUnit < 10 - 1e-9) {
+          expect(() => validateFieldRect(pdf, page, 'text')).toThrow('field-too-small');
+        } else {
+          const validated = validateFieldRect(pdf, page, 'text');
+          for (const [index, item] of sourceToDisplay(validated, page).entries()) expect(item).toBeCloseTo(clipped[index]!, 10);
+        }
+      }), 1_080);
+  });
+
+  it('rejects 780 invalid JSON, PDF placement, and colliding field-name drafts with a precise code', async () => {
+    const source = await inspectFlatPdf(await readFile('fixtures/golden/flat.pdf'));
+    await verify(fc.asyncProperty(fc.integer({ min: 0, max: 99_999 }),
+      fc.constantFrom('duplicate-field-name', 'field-name-conflict', 'invalid-field-name', 'invalid-field-rect', 'field-out-of-bounds',
+        'invalid-field-options', 'invalid-field-page', 'field-too-small', 'invalid-layout', 'layout-source-mismatch'),
+      fc.boolean(), async (id, code, reverse) => {
+        const name = `Participant${id}`;
+        const spec: FieldDraftSpec = { name, kind: 'text', pageIndex: 0, rectPdf: [20, 40, 100, 30] };
+        const fields: unknown[] = [spec];
+        if (code === 'duplicate-field-name') fields.push({ ...spec, kind: 'checkbox' });
+        if (code === 'field-name-conflict') fields.push({ ...spec, name: name + '.Child' });
+        if (code === 'invalid-field-name') fields.push({ ...spec, name: reverse ? name + '..Child' : name + '.\u202eChild' });
+        if (code === 'invalid-field-rect') fields.push({ ...spec, name: name + '-2', rectPdf: [20, 40, 0, 30] });
+        if (code === 'field-out-of-bounds') fields.push({ ...spec, name: name + '-2', rectPdf: [-1 - id, 40, 100, 30] });
+        if (code === 'invalid-field-options') fields.push({ ...spec, name: name + '-2', ...(reverse ? { maxLen: 2.5 } : { kind: 'checkbox', fontSize: 12 }) });
+        if (code === 'invalid-field-page') fields.push({ ...spec, name: name + '-2', pageIndex: id + 1 });
+        if (code === 'field-too-small') fields.push({ ...spec, name: name + '-2', rectPdf: [20, 40, 11, 10] });
+        if (reverse) fields.reverse();
+        const sourceSha256 = code === 'layout-source-mismatch' ? '0'.repeat(64) : source.sourceSha256;
+        const version = code === 'invalid-layout' ? 0 : 1;
+        await expect(loadFieldLayout(JSON.stringify({ version, sourceSha256, fields }), source)).rejects.toMatchObject({ code });
+      }), 780);
+  });
+
+  it('authors, reopens, fills, and extracts 700 exact Arabic and checkbox records from SHA-bound layouts', async () => {
+    const samples = await Promise.all(turns.map(async (rotation) => {
+      const doc = await PDFDocument.create({ updateMetadata: false });
+      const page = doc.addPage([720, 550]);
+      page.setCropBox(23.25, 17.125, 630.5, 510.25);
+      page.setRotation(degrees(rotation));
+      const bytes = await doc.save();
+      return { bytes, source: await inspectFlatPdf(bytes) };
+    }));
+    const fonts = {
+      arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+      latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+    };
+    await verify(fc.asyncProperty(
+      fc.integer({ min: 0, max: 3 }), fc.integer({ min: 0, max: 9_999 }), fc.boolean(),
+      fc.constantFrom('مُحَمَّد سَالِم', 'بَنِي يَمَن', 'اَلْعَرَبِيَّةُ', 'نَجْوَى', 'قَمَرٌ'),
+      fc.constantFrom('auto', 'rtl', 'ltr', 'center'), fc.integer({ min: 0, max: 16 }),
+      async (sampleIndex, id, checked, name, alignment, offset) => {
+        const { source, bytes } = samples[sampleIndex]!;
+        const page = source.pages[0]!;
+        const value = `${name} #0${String(id).padStart(4, '0')}`;
+        const textName = 'الشهادة.الاسم';
+        const boxName = 'الشهادة.Verified';
+        const fields: FieldDraftSpec[] = [
+          { name: textName, kind: 'text', pageIndex: 0, rectPdf: displayToSource([0.08 + offset / 1_000, 0.14, 0.58, 0.09], page),
+            alignment, multiline: true, maxLen: Array.from(value).length, fontSize: 12 },
+          { name: boxName, kind: 'checkbox', pageIndex: 0, rectPdf: displayToSource([0.75, 0.14 + offset / 1_000, 0.035, 0.04], page) },
+        ];
+        const layoutJson = await saveFieldLayout(source, fields);
+        const loaded = await loadFieldLayout(layoutJson, source);
+        expect(loaded).toEqual(fields);
+        const authored = await authorFlatPdf(bytes, loaded);
+        const template = await inspectTemplate(authored);
+        expect(template.fields.map(({ name, kind, value }) => [name, kind, value])).toEqual([
+          [textName, 'text', ''], [boxName, 'checkbox', 'Off'],
+        ]);
+        expect(template.fields[0]?.widgets[0]?.rotation).toBe(turns[sampleIndex]);
+        expect(template.fields[0]?.maxLength).toBe(Array.from(value).length);
+        const filled = await preflightRow(authored, { [textName]: value, [boxName]: checked ? 'نعم' : 'لا' }, { fonts });
+        expect(filled.diagnostics).toEqual([]);
+        expect(filled.pdfBytes).toBeDefined();
+        const readback = await extractBatch([{ filename: 'authored.pdf', bytes: filled.pdfBytes! }]);
+        expect(readback.rows[0]?.fields).toEqual({
+          [textName]: { kind: 'text', value },
+          [boxName]: { kind: 'checkbox', value: checked ? 'checked' : 'unchecked', nativeValue: checked ? 'Yes' : 'Off' },
+        });
+      }), 700);
+  }, 75_000);
 });

@@ -19,8 +19,8 @@ COVER_SPAN = re.compile(rb"/Span << /ActualText <([0-9A-F]+)> >> BDC\n(.*?)\nEMC
 DARK_PIXELS = bytes(1 if value < 128 else 0 for value in range(256))
 
 
-def render(page):
-    pix = page.get_pixmap(matrix=SCALE, colorspace=fitz.csRGB, alpha=False, annots=True)
+def render(page, annots=True):
+    pix = page.get_pixmap(matrix=SCALE, colorspace=fitz.csRGB, alpha=False, annots=annots)
     return pix.width, pix.height, pix.samples
 
 
@@ -65,7 +65,7 @@ def appearance_xref(document, widget):
     return int(raw.split()[0])
 
 
-def check_alignment(spec, document, widget, page, bounds, box, label):
+def check_alignment(spec, document, widget, page, bounds, box, label, authored=False):
     kind, value = document.xref_get_key(widget.xref, "MK/R")
     widget_rotation = int(value) if kind == "int" else 0
     direction = (page.rotation - widget_rotation) % 360
@@ -77,7 +77,7 @@ def check_alignment(spec, document, widget, page, bounds, box, label):
         assert abs(start - end) <= 3, (label, widget.field_name, start, end)
     else:
         near, far = (start, end) if spec["anchor"] == "ltr" else (end, start)
-        if spec["mode"] == "auto":
+        if spec["mode"] == "auto" or authored:
             assert near + 10 < far, (label, widget.field_name, start, end)
         else:
             kind, raw_width = document.xref_get_key(widget.xref, "BS/W")
@@ -92,6 +92,37 @@ def check_alignment(spec, document, widget, page, bounds, box, label):
     return {"alignmentMode": spec["mode"], "alignmentAnchor": spec["anchor"], "logicalHorizontalInsetsAt4x": [start, end]}
 
 
+def check_designer(proof, directory, authored, filled, label):
+    with fitz.open(directory / proof["source"]) as flat:
+        assert len(flat) == len(authored) == len(filled) == 1
+        source, template, completed = flat[0], authored[0], filled[0]
+        assert not list(source.widgets()), label
+        assert source.rotation == template.rotation == completed.rotation == proof["rotation"], label
+        assert render(source, False) == render(template, False) == render(completed, False), (
+            label, "source graphics changed without annotations"
+        )
+        allowed = []
+        widgets = list(template.widgets())
+        assert {widget.field_name for widget in widgets} == set(proof["rects"]), label
+        for widget in widgets:
+            mapped = widget.rect * template.rotation_matrix
+            actual = [mapped.x0 / template.rect.width, mapped.y0 / template.rect.height,
+                      mapped.width / template.rect.width, mapped.height / template.rect.height]
+            expected = proof["rects"][widget.field_name]
+            assert all(abs(a - b) < 1e-5 for a, b in zip(actual, expected, strict=True)), (label, actual, expected)
+            allowed.append(tuple((mapped * SCALE).irect))
+            assert authored.xref_get_key(widget.xref, "MK/R") == ("int", str(template.rotation)), label
+            if widget.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+                assert authored.xref_get_key(widget.xref, "AS") == ("name", "/Off"), label
+            else:
+                assert widget.field_type == fitz.PDF_WIDGET_TYPE_TEXT and not widget.field_value, label
+        before = render(source)
+        assert_same_outside(before, render(template), allowed, f"{label} blank authoring")
+        assert_same_outside(before, render(completed), allowed, f"{label} filled authoring")
+    return {"rotation": proof["rotation"], "originalPageGraphicsIdentical": True, "viewportRectsMatch": True,
+            "outsideOriginalFieldRectsChangedPixels": 0}
+
+
 def check_case(case, directory):
     before_path, after_path = (directory / case[key] for key in ("before", "after"))
     expected = case["values"]
@@ -102,10 +133,13 @@ def check_case(case, directory):
     label = case.get("label", after_path.name)
     seen = Counter()
     results = []
+    designer = None
     if case.get("customFont"):
         fitz.TOOLS.mupdf_warnings(reset=True)
     with fitz.open(before_path) as original, fitz.open(after_path) as filled, fitz.open(after_path) as no_text:
         assert len(original) == len(filled), label
+        if case.get("designer"):
+            designer = check_designer(case["designer"], directory, original, filled, label)
         edited = set()
         for page in filled:
             for widget in page.widgets():
@@ -168,7 +202,7 @@ def check_case(case, directory):
                     else:
                         assert not amount, f"{label}: blank {field} has visible ink"
                         inset = None
-                    measured_alignment = check_alignment(alignments[field], filled, widget, page, bounds, box, label) if field in alignments else {}
+                    measured_alignment = check_alignment(alignments[field], filled, widget, page, bounds, box, label, bool(designer)) if field in alignments else {}
                     results.append({"field": field, "page": page.number + 1, "inkBboxAt4x": bounds if amount else None,
                                     "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset, **measured_alignment,
                                     **({"dropdownLabel": display} if field in dropdowns else {})})
@@ -178,7 +212,8 @@ def check_case(case, directory):
     if case.get("customFont"):
         warnings = fitz.TOOLS.mupdf_warnings(reset=True)
         assert not warnings, f"{label}: MuPDF emitted font or appearance warnings: {warnings}"
-    return {"label": label, "outsideMappedWidgetChangedPixels": 0, "clippedInkPixels": 0, "widgets": results}
+    return {"label": label, "outsideMappedWidgetChangedPixels": 0, "clippedInkPixels": 0, "widgets": results,
+            **({"designer": designer} if designer else {})}
 
 
 def check_merged(spec, directory):
@@ -530,8 +565,9 @@ def check_imposition(spec, directory):
             assert not any(span["opacity"] < 1 for span in page.get_texttrace()), "cover was watermarked"
             check_cover_ink(page, None)
             check_bilingual_panel_ink(page)
-        assert index_cells == [cell for index, (number, name) in enumerate(zip(spec["rowNumbers"], records, strict=True))
-                               for cell in (str(index + 1), str(number), name, str(cover_count + 1 + index // 2))]
+        if cover_count:
+            assert index_cells == [cell for index, (number, name) in enumerate(zip(spec["rowNumbers"], records, strict=True))
+                                   for cell in (str(index + 1), str(number), name, str(cover_count + 1 + index // 2))]
         sheets = []
         for sheet_index, page in enumerate(list(doc)[cover_count:]):
             first = sheet_index * 2
@@ -564,7 +600,7 @@ def check_imposition(spec, directory):
                            "cutLines": 8 * len(sources), "blankSlots": 2 - len(sources), "pixelsOutsideRecordsAndCutLines": 0})
     warnings = fitz.TOOLS.mupdf_warnings(reset=True)
     assert not warnings, f"{spec['pdf']}: MuPDF emitted warnings: {warnings}"
-    return {"pdf": spec["pdf"], "coverPages": cover_count, "exactCoverIndexRows": len(records), "sheets": sheets}
+    return {"pdf": spec["pdf"], "coverPages": cover_count, "exactCoverIndexRows": len(records) if cover_count else 0, "sheets": sheets}
 
 
 def main():
@@ -573,7 +609,9 @@ def main():
     path = arguments.parse_args().manifest.resolve()
     manifest = json.loads(path.read_text(encoding="utf-8-sig"))
     assert manifest["cases"], "the pixel verification manifest has no cases"
-    for filename in {case["before"] for case in manifest["cases"]}:
+    snapshots = {case["before"] for case in manifest["cases"]}
+    snapshots.update(case["designer"]["source"] for case in manifest["cases"] if case.get("designer"))
+    for filename in snapshots:
         source = path.parent / filename
         if re.fullmatch(r"source-[0-9a-f]{64}\.pdf", source.name):
             sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -596,6 +634,9 @@ def main():
     }
     path.with_name(f"{path.stem}-verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{summary['engine']}: {len(results)} fills, {len(inks)} ink-bearing widgets, 0 clipped ink pixels, 0 changed pixels outside mapped widgets, {merged} identical merged pages, {zipped} identical flattened ZIP pages.")
+    designed = [item["designer"] for item in results if "designer" in item]
+    if designed:
+        print(f"Field designer: {len(designed)} authored fills, exact viewport rectangles, identical original page graphics, 0 changed pixels outside drawn fields.")
     if covered:
         cover_pages = sum(len(item["coverPages"]) for item in covered)
         row_pages = sum(item["rowPagesPixelIdentical"] for item in covered)
