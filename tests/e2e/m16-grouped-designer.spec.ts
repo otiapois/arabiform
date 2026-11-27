@@ -261,7 +261,11 @@ test('M16 draws native dropdown and radio widgets, fills all bilingual choices a
     const states = normal.keys().map(key => key.decodeText());
     expect(states).toHaveLength(2);
     expect(states).toContain('Off');
-    for (const key of normal.keys()) expect(normal.lookup(key, PDFRawStream).getContents().length).toBeGreaterThan(0);
+    for (const key of normal.keys()) {
+      const stream = normal.lookup(key);
+      if (!(stream instanceof PDFRawStream)) throw new Error('Radio appearance has no PDF stream: ' + key.decodeText());
+      expect(stream.getContents().length).toBeGreaterThan(0);
+    }
     expect(widget.getAppearanceState()?.decodeText()).toBe('Off');
     return states.find(s => s !== 'Off')!;
   });
