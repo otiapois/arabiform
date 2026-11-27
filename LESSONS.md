@@ -92,7 +92,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 4**（M1、M2、M5、M9，各计一次）。[M9 主线复跑](docs/reports/M9-verification.md) 在相同 D 盘输入和提交上再次定位到 tsx 初始化。此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 5**（M1、M2、M5、M9、M10，各计一次）。[M9 主线](docs/reports/M9-verification.md) 和 [M10 主线](docs/reports/M10-v1.0-verification.md) 都在 tsx 初始化时复现。M10 用相同 D 盘输入重跑，完成 34 次填充和 114 个有墨迹控件的 4 倍渲染。此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
@@ -129,3 +129,17 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **原因**　早期提交 `867ce48` 把间接引用的 2 当作 1，导致物理 8.5 pt 显示为 4.25 pt，本应通过的 9 pt 也触发了警告。另一张 PDF 的横坐标 7.08 与 16.08 相距整 9 pt，二进制浮点直接相减会落入警告范围。
 - **证据**　四个旋转方向均与 PyMuPDF 一致。十进制回归保留 8.99999999 pt 的警告，9 pt 和 9.00000001 pt 均通过。[边界及间接引用回归](tests/core/fuzz.test.ts) · [主线验收](docs/reports/M9-verification.md)
 - **Seen: 1**（ArabiForm M9 的纸边距离检查，夹具和视口合计一个周期）。
+
+### 用连续的真实按键验证原生对话框（2026-11-27）
+
+- **规则**　从帮助按钮和页面上的第二个焦点位置分别打开对话框。用 Tab 和 Shift+Tab 跨越首尾，按 Escape 关闭后立即再次按打开快捷键，并验证退出时焦点回到各自的打开位置。
+- **原因**　M10 初版能打开且能退出，但向前越过最后一个控件时焦点离开页面。补上首尾循环后，主线仍在 80 次快速重开中漏掉 62 次。Edge 已经关闭原生窗口并恢复焦点，稍后送达的 close 事件才让页面更新弹窗状态。
+- **证据**　同步更新关闭状态后，同一批 80 次操作全部成功。[双视口连续按键回归](tests/e2e/m10-keyboard.spec.ts) · [M10 独立验收](docs/reports/M10-v1.0-verification.md)
+- **Seen: 1**（M10 帮助对话框，按同一个开发周期计）。
+
+### 测控件对比度时合成透明色（2026-11-27）
+
+- **规则**　用浏览器实际绘制的前景、控件底色和相邻底色计算相对亮度。有透明度时逐层合成，并核对键盘焦点轮廓与实际原生控件的可见像素。
+- **原因**　M10 的首次搜索框测量把透明底色的 RGB 分量当作黑底，得到约 20.80∶1。还原实际底色后，旧边框仅为 1.4589∶1。调整边框后同处达到 3.9535∶1。
+- **证据**　[Edge 文字、边界与焦点测量](tests/e2e/m10-accessibility.ts) · [原生控件像素](tests/e2e/m10-native-contrast.py) · [M10 独立验收](docs/reports/M10-v1.0-verification.md)
+- **Seen: 1**（M10 首次全路由对比度验收）。
