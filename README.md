@@ -1,6 +1,6 @@
 # ArabiForm
 
-ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), extracts saved field values into a spreadsheet, and compares delivered PDFs or QR text with a batch custody manifest. Files and data are processed in your browser. [اقرأ بالعربية](#العربية)
+ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), extracts saved field values into a spreadsheet, and compares delivered PDFs or QR text with a batch custody manifest. Use the browser workbench or run repeatable batches from a local terminal. Both process files on your device. [اقرأ بالعربية](#العربية)
 
 ## Create a starter template
 
@@ -106,6 +106,16 @@ On `/arabic-pdf-form-filler` and `/ar/pdf-mail-merge`, compare a clipped baselin
 
 See the workbench with synthetic data on [desktop](docs/reports/screenshots/m3/desktop-m3-mixed-widgets.png) and [mobile](docs/reports/screenshots/m3/mobile-m3-mixed.png), the [custom-font controls](docs/reports/screenshots/m3/desktop-m3-custom-font.png), and the [synthetic demo walkthrough](docs/launch/demo-walkthrough.md).
 
+## Automate batches from the terminal
+
+Use Node.js 24 and its bundled npm. From the source checkout, install dependencies with `npm ci --ignore-scripts`. Setup can use the npm registry or a prepared cache. The CLI processes your files offline after setup, using the bundled Noto fonts and the workbench's PDF engines.
+
+```sh
+npm run arabiform-cli -- --mode studio --template certificate-bilingual --out-dir ./arabiform-demo/starter
+```
+
+`studio` creates an editable bilingual template and a matching synthetic CSV. Run `preflight` to check a CSV or Excel batch and write diagnostics, `fill` to write editable and flattened ZIPs plus a merged print PDF, `extract` to read saved form values from 1–200 PDFs, or `verify` to compare PDF bytes or a custody QR record with an unsigned receipt. In Fill PDFs, export a mapping preset and open **Local CLI command** to copy a strict fill command with the current settings. `--strict` blocks the entire export when a row fails. Exit `0` means clean, `2` means flagged or blocked, and `1` means usage or file I/O error. [Five-mode walkthrough, every flag, and output files](docs/subsystems/cli-automation.md)
+
 ## Run and verify locally
 
 CI uses Node.js 24, Python 3.13, and `PyMuPDF==1.26.7`. From the repository root, install dependencies and run the CI checks.
@@ -126,7 +136,7 @@ The committed synthetic PDFs, CSV, and workbook support offline testing after in
 
 For a local run, use `npm run dev`. Use `npm run preview` after a build to serve the production headers at `http://127.0.0.1:4173`. Run `npm run test:e2e` with Microsoft Edge installed. The Edge suite is separate from the CI checks above and uses the installed browser.
 
-The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, and custody hashes. M16 acceptance calls for at least 27,500 deterministic cases with zero discards or crashes, including adversarial group names, split print page indexes, choice authoring and extraction, and v1–v9 preset handling. The 4× PyMuPDF checks compare filled fixtures with source templates and compare flattened exports with their editable renders. Inspect the preview and a test export with your own template, font, and PDF viewer before printing a batch. [M16 acceptance criteria](docs/tasks/M16-grouped-zip-split-designer-choices.md)
+The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M18 acceptance requires at least 32,500 deterministic cases with zero discards or crashes. The 4× PyMuPDF checks compare filled fixtures with source templates and compare flattened exports with their editable renders. Inspect the preview and a test export with your own template, font, and PDF viewer before printing a batch. [M18 acceptance criteria](docs/tasks/M18-local-batch-cli-arabic-pdf-engine.md)
 
 For Windows development, keep the checkout, worktrees, dependencies, and Python environment on `D:`. Direct npm and pip caches to `D:\cache\arabiform\npm` and `D:\cache\arabiform\pip` with their `--cache` and `--cache-dir` flags. Point the local session’s `TEMP` and `TMP` to an existing `D:` directory. If you need a Playwright browser cache, set `PLAYWRIGHT_BROWSERS_PATH=D:\cache\ms-playwright`.
 
@@ -142,11 +152,11 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 
 Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Each route's entry JavaScript must be under 278,000 raw bytes and under 87,000 gzip bytes. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
 
-See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v1.7.0 release brief](docs/tasks/M17-bilingual-template-studio-qr-verifier.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v1.8.0 release brief](docs/tasks/M18-local-batch-cli-arabic-pdf-engine.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## العربية
 
-تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتستخرج قيم الحقول المحفوظة إلى جدول بيانات. يمكنك أيضًا مقارنة ملفات PDF المستلمة أو نص رمز QR بسجلّ الدفعة. تتم كل المعالجة داخل متصفحك.
+تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتستخرج قيم الحقول المحفوظة إلى جدول بيانات. يمكنك أيضًا مقارنة ملفات PDF المستلمة أو نص رمز QR بسجلّ الدفعة. استخدم واجهة المتصفح أو شغّل الدفعات المتكرّرة من الطرفية. تُعالَج الملفات على جهازك في الحالتين.
 
 ### إنشاء قالب جاهز للتعبئة
 
@@ -252,6 +262,18 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 
 راجع [واجهة العمل بالعربية مع عينة اصطناعية](docs/reports/screenshots/m3/desktop-m3-ar-rtl-filenames.png) و[سيناريو العرض بالعربية والإنجليزية](docs/launch/demo-walkthrough.md).
 
-بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة وبصمات الملفات. يتطلّب قبول M16 اجتياز 27,500 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، ومنها أسماء المجلدات غير الآمنة، وفهارس صفحات الطباعة لكل مجموعة، وإنشاء حقول الخيارات واستخراج قيمها بعد التعبئة، وإعدادات الربط من الإصدار 1 إلى 9. يقارن PyMuPDF النماذج المملوءة بالقوالب الأصلية ويقارن النسخ المسطّحة بالنسخ القابلة للتعديل بتكبير 4 أضعاف. راجع المعاينة وملفًا تجريبيًا بقالبك وخطك وبرنامج عرض PDF الذي تستخدمه قبل طباعة الدفعة.
+### تشغيل الدفعات من الطرفية
+
+استخدم Node.js 24 ونسخة npm المرفقة معه. من مجلد الشفرة المصدرية، ثبّت الحزم باستخدام `npm ci --ignore-scripts`. يمكن أن يتّصل التثبيت بمستودع npm أو يستعين بذاكرة تخزين مؤقت مُعدّة مسبقًا. بعد التثبيت، تعالج الأداة ملفاتك دون اتصال باستخدام خطوط نوتو المضمّنة ومحرّكات PDF نفسها المتاحة في واجهة العمل.
+
+```sh
+npm run arabiform-cli -- --mode studio --template certificate-bilingual --out-dir ./arabiform-demo/starter
+```
+
+ينشئ `studio` قالبًا ثنائي اللغة قابلًا للتعبئة وجدول CSV اصطناعيًا مطابقًا. يفحص `preflight` دفعة CSV أو Excel ويكتب تقارير الفحص. ينتج `fill` أرشيفَي ZIP للملفات القابلة للتعديل والمسطّحة وملف PDF مدمجًا للطباعة. يستخرج `extract` قيم الحقول المحفوظة من ملف PDF واحد إلى 200 ملف. يقارن `verify` بايتات الملف أو سجلّ رمز QR ببيان دفعة غير موقّع. من واجهة تعبئة PDF، صدّر إعدادات الربط وافتح «أمر التشغيل المحلي» لنسخ أمر التعبئة بالإعدادات الحالية. يمنع `--strict` التصدير عند إخفاق أي صف. رمز الخروج `0` للنجاح دون مشكلات، و`2` للتنبيه أو المنع، و`1` لخطأ في صيغة الأمر أو التعامل مع الملفات. [الأوضاع الخمسة والخيارات وملفات الإخراج](docs/subsystems/cli-automation.md)
+
+### التحقق محليًا
+
+بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M18 اجتياز 32,500 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار. يقارن PyMuPDF النماذج المملوءة بالقوالب الأصلية ويقارن النسخ المسطّحة بالنسخ القابلة للتعديل بتكبير 4 أضعاف. راجع المعاينة وملفًا تجريبيًا بقالبك وخطك وبرنامج عرض PDF الذي تستخدمه قبل طباعة الدفعة. [شروط قبول M18](docs/tasks/M18-local-batch-cli-arabic-pdf-engine.md)
 
 استخدم أوامر التحقق أعلاه مع Node.js 24 وPython 3.13. لمعاينة النسخة المبنية مع ترويسات الأمان، شغّل `npm run preview` بعد البناء. يتطلب `npm run test:e2e` تثبيت Microsoft Edge. على Windows، احتفظ بملفات العمل والملفات المؤقتة وذاكرات التخزين المؤقت على القرص `D:`. تُحفَظ صفحات الموقع الثابتة الخمس في `dist/`، وتُضبَط قيمة `SITE_URL` على عنوان الموقع الفعلي عند تجهيز نسخة للنشر. يجب أن يقلّ حجم JavaScript الذي تحمّله كل صفحة عند فتحها عن 278,000 بايت قبل الضغط وعن 87,000 بايت بعد ضغط gzip. [أوامر بناء الإصدار والتحقق من عنوان الموقع](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
