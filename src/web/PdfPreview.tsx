@@ -1,19 +1,13 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PRINT_MARGIN_THRESHOLD_PT } from '../core/pdf/margin-preflight';
 import type { getWidgetOverlays } from '../core/pdf/widget-overlays';
-import { Diagnostics, diagnosticText } from './Diagnostics';
-import { activeFillLabels } from './active-fill-labels';
+import { diagnosticText } from './Diagnostics';
 import { fillLabel, type translator } from './labels';
 import { openPreviewDocument } from './pdf-preview-document';
-import type { RowResult, TemplateInfo, useWorkbench } from './useWorkbench';
-
-const PrintMarginAdvisory = lazy(() => import('./PrintMarginAdvisory'));
+import type { RowResult, TemplateInfo } from './useWorkbench';
 
 const en = {
-  previewReady: 'Generated row',
-  previewFlagged: 'Original template · failed fields outlined',
-  previewTemplate: 'Original template',
   previewError: 'This PDF could not be previewed.',
   previewCanvas: 'Rendered PDF page',
   zoom: 'Preview zoom',
@@ -30,9 +24,6 @@ const en = {
 };
 
 const ar: typeof en = {
-  previewReady: 'الصف بعد التعبئة',
-  previewFlagged: 'القالب الأصلي · الحقول التي تحتاج مراجعة محاطة بإطار',
-  previewTemplate: 'القالب الأصلي',
   previewError: 'تعذّرت معاينة ملف PDF.',
   previewCanvas: 'صفحة PDF المعروضة',
   zoom: 'تكبير المعاينة',
@@ -48,45 +39,6 @@ const ar: typeof en = {
   widget: 'الصفحة {page}، المربع {index}',
 };
 
-type Desk = ReturnType<typeof useWorkbench>;
-
-export function WorkbenchPreview({ template, desk, language }: {
-  template: NonNullable<Desk['template']>;
-  desk: Desk;
-  language: ReturnType<typeof translator>;
-}) {
-  const { arabic, labels } = language;
-  const copy = arabic ? ar : en;
-  const selectedResult = desk.results?.[desk.selected];
-  const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : template.bytes;
-  const status = selectedResult?.status;
-  return (
-    <>
-      <header className="preview-heading wide-heading">
-        <div>
-          <h2 id="preview-heading">{labels.preview}</h2>
-          <p>{status === 'pass' ? copy.previewReady : status === 'flagged' ? copy.previewFlagged : copy.previewTemplate}</p>
-        </div>
-        {status && <span className={`tag tag-${status}`}>{fillLabel(activeFillLabels(arabic).selected, { row: desk.selected + 1 })}</span>}
-      </header>
-      {desk.hasMapping && (
-        <Suspense>
-          <PrintMarginAdvisory template={template.info} mapping={desk.mapping} virtualMappings={desk.virtualMappings} arabic={arabic} />
-        </Suspense>
-      )}
-      {!!selectedResult?.diagnostics.length && (
-        <div className="preview-diagnostics">
-          <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
-        </div>
-      )}
-      <PdfPreview bytes={bytes} fields={template.info.fields} overlays={template.overlays} diagnostics={selectedResult?.diagnostics}
-        minSize={desk.minFontSize} unavailable={desk.previewError} language={language}
-        fieldSelection={desk.fieldSelection} onWidgetSelect={desk.selectWidget}
-        requestedPage={desk.previewPage} onPageChange={desk.setPreviewPage} />
-    </>
-  );
-}
-
 type PreviewProps = {
   bytes?: Uint8Array;
   fields: TemplateInfo['fields'];
@@ -98,7 +50,9 @@ type PreviewProps = {
   requestedPage: number;
   onPageChange: (page: number) => void;
   fieldSelection?: { fieldName: string; widgetIndex?: number };
-  onWidgetSelect: (fieldName: string, widgetIndex: number) => void;
+  onWidgetSelect?: (fieldName: string, widgetIndex: number) => void;
+  canvasLabel?: string;
+  compact?: boolean;
 };
 
 type Position = {
@@ -111,8 +65,9 @@ type Position = {
   height: string;
 };
 
-function PdfPreview({
+export default function PdfPreview({
   bytes, fields, overlays, diagnostics, minSize, unavailable, language, requestedPage, onPageChange, fieldSelection, onWidgetSelect,
+  canvasLabel, compact = false,
 }: PreviewProps) {
   const { arabic, labels } = language;
   const copy = arabic ? ar : en;
@@ -143,7 +98,7 @@ function PdfPreview({
   const raster = rendered && rendered.pdf === pdf && rendered.page === page && rendered.size === size
     && rendered.diagnostics === diagnostics ? rendered : undefined;
   const failed = unavailable || (bytes && loaded?.bytes === bytes && !pdf) || (raster && !raster.complete);
-  const pageWidgets = raster?.complete ? overlays.filter(({ pageNumber }) => pageNumber === page) : [];
+  const pageWidgets = raster?.complete && onWidgetSelect ? overlays.filter(({ pageNumber }) => pageNumber === page) : [];
   const firstHighlight = pageWidgets.find(({ fieldName }) => fieldName === fieldSelection?.fieldName);
   const issueTitles = new Map(raster?.positions?.map(({ key, issues }) =>
     [key, issues.map((issue) => diagnosticText(issue, minSize, language)).join(' · ')]));
@@ -268,7 +223,7 @@ function PdfPreview({
 
   return (
     <>
-      <div className="preview-toolbar">
+      {(!compact || pageCount > 1) && <div className="preview-toolbar">
         <div className="page-controls" role="group" aria-label={labels.preview}>
           <button type="button" className="icon-button" aria-label={copy.previousPage} disabled={page <= 1 || !pdf} onClick={() => onPageChange(page - 1)}>
             <span aria-hidden="true" className="chevron previous" />
@@ -278,7 +233,7 @@ function PdfPreview({
             <span aria-hidden="true" className="chevron next" />
           </button>
         </div>
-        <select aria-label={copy.zoom} value={zoom} onChange={(event) => setZoom(event.currentTarget.value)}>
+        {!compact && <><select aria-label={copy.zoom} value={zoom} onChange={(event) => setZoom(event.currentTarget.value)}>
           <option value="fit">{copy.fit}</option>
           <option value="1">100%</option>
           <option value="1.25">125%</option>
@@ -288,9 +243,9 @@ function PdfPreview({
           <input type="checkbox" role="switch" checked={marginGuide} disabled={!pdf} data-testid="margin-guide-toggle"
             onChange={(event) => setMarginGuide(event.currentTarget.checked)} />
           <span>{copy.marginGuide}</span>
-        </label>
-      </div>
-      {pageCount > 0 && (
+        </label></>}
+      </div>}
+      {pageCount > (compact ? 1 : 0) && (
         <div className="preview-page-rail" ref={pageRail} role="group" aria-label={copy.previewPages} data-testid="preview-pages">
           {Array.from({ length: pageCount }, (_, index) => {
             const pageNumber = index + 1;
@@ -314,7 +269,8 @@ function PdfPreview({
         {!failed && !raster && <p className="preview-message" role="status">{labels.previewBusy}</p>}
         <div className="canvas-paper" style={{ width: raster?.width, aspectRatio: raster?.ratio }} hidden={!raster?.complete}>
           <canvas
-            aria-label={copy.previewCanvas}
+            aria-label={canvasLabel ?? copy.previewCanvas}
+            dir="ltr"
             role="img"
             data-testid="pdf-canvas"
             data-rendered={raster?.complete ? 'true' : undefined}
@@ -346,7 +302,7 @@ function PdfPreview({
                 className="widget-target" data-testid="widget-overlay" data-field={fieldName} data-widget-index={widgetIndex}
                 data-active={active || undefined}
                 style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%` }}
-                onClick={() => onWidgetSelect(fieldName, widgetIndex)} />
+                onClick={() => onWidgetSelect?.(fieldName, widgetIndex)} />
             );
           })}
         </div>

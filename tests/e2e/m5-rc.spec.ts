@@ -50,11 +50,39 @@ for (const language of ['en', 'ar'] as const) {
     await mkdir(info.outputDir, { recursive: true });
     const csvFile = info.outputPath('synthetic-filenames.csv');
     await writeFile(csvFile, roster.join('\r\n'), 'utf8');
-    const phase = page.locator('.queue p[aria-live="polite"]');
-    await Promise.all([
-      expect(phase).toHaveText(text.phase),
-      page.getByTestId('roster-upload').setInputFiles(csvFile),
-    ]);
+    const phase = await page.locator('.queue').evaluateHandle((queue, expected) => {
+      const selector = 'p[aria-live="polite"]';
+      let seen = false;
+      const observer = new MutationObserver(records => {
+        // A live region can mount, change and clear before this callback runs.
+        const phaseNodes = new Set<Node>();
+        for (const record of records) {
+          const addedOrRemoved = [...record.addedNodes, ...record.removedNodes];
+          const target = record.target instanceof Element ? record.target : record.target.parentElement;
+          if (target?.closest(selector)) {
+            phaseNodes.add(record.target);
+            for (const node of addedOrRemoved) phaseNodes.add(node);
+          }
+          for (const node of addedOrRemoved) {
+            if (!(node instanceof Element)) continue;
+            if (node.matches(selector)) phaseNodes.add(node);
+            for (const live of node.querySelectorAll(selector)) phaseNodes.add(live);
+          }
+        }
+        seen = [...phaseNodes].some(node => node.textContent?.trim() === expected)
+          || records.some(record => phaseNodes.has(record.target) && record.oldValue?.trim() === expected);
+        if (seen) observer.disconnect();
+      });
+      observer.observe(queue, { subtree: true, childList: true, characterData: true, characterDataOldValue: true });
+      return { seen: () => seen, disconnect: () => observer.disconnect() };
+    }, text.phase);
+    try {
+      await page.getByTestId('roster-upload').setInputFiles(csvFile);
+      await expect.poll(() => phase.evaluate(watch => watch.seen())).toBe(true);
+    } finally {
+      await phase.evaluate(watch => watch.disconnect());
+      await phase.dispose();
+    }
     const counts = page.locator('.queue dl[aria-live="polite"]');
     await expect(counts.getByTestId('ready-count')).toHaveText('5');
     await expect(counts.getByTestId('flagged-count')).toHaveText('0');
@@ -145,7 +173,7 @@ for (const language of ['en', 'ar'] as const) {
     expect(csv.errors).toEqual([]);
     expect(csv.meta.fields).toEqual(keys);
     expect(csv.data.map(row => row.filename)).toEqual(displayed);
-    await writeFile(info.outputPath('m5-checks.json'), JSON.stringify({ idlePaths, displayed, ring, labelGap }, null, 2));
+    await writeFile(info.outputPath('m5-checks.json'), JSON.stringify({ idlePaths, displayed, ring, labelGap, phaseObserved: text.phase }, null, 2));
     await noOverflow(page);
   });
 }

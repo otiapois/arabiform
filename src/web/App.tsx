@@ -11,7 +11,7 @@ const MappingRows = lazy(() => import('./MappingRows'));
 const VirtualFilenameTokens = lazy(() => import('./MappingRows').then(({ VirtualFilenameTokens }) => ({ default: VirtualFilenameTokens })));
 const PresetFeedback = lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback })));
 const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
-const WorkbenchPreview = lazy(() => import('./PdfPreview').then(({ WorkbenchPreview }) => ({ default: WorkbenchPreview })));
+const WorkbenchPreview = lazy(() => import('./WorkbenchPreview'));
 const Hygiene = lazy(() => import('./Hygiene'));
 const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
 const CustodyPanel = lazy(() => import('./CustodyPanel'));
@@ -34,6 +34,7 @@ const GroupingControl = lazy(() => import('./GroupedOutputs').then(({ GroupingCo
 const GroupedSummary = lazy(() => import('./GroupedOutputs').then(({ GroupedSummary }) => ({ default: GroupedSummary })));
 const SplitDownload = lazy(() => import('./GroupedOutputs').then(({ SplitDownload }) => ({ default: SplitDownload })));
 const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
+const PrintEstimate = lazy(() => import('./PrintEstimate'));
 
 const modes = ['fill', 'extract', 'design', 'create', 'verify'] as const;
 type Mode = typeof modes[number];
@@ -439,6 +440,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                   ? <Suspense><SelectedExportScope arabic={arabic} count={desk.exportCount} showEmpty={emptySubset && Boolean(desk.results)} /></Suspense>
                   : <p role="status" className="tag tag-pass" data-testid="export-scope">{fillLabel(labels.exportAll, { count: desk.exportCount })}</p>}
                 {desk.grouping && desk.results && <Suspense><GroupedSummary desk={desk} arabic={arabic} /></Suspense>}
+                {desk.checkedWorker && <Suspense><PrintEstimate worker={desk.checkedWorker} output={desk.output} arabic={arabic} /></Suspense>}
                 <div className="actions">
                   <button type="button" className="button primary" data-testid="download-zip" disabled={!desk.exportCount || desk.exporting || desk.groupingBlocked || (desk.flattenZip && desk.printSettingsBlocked)}
                     onClick={() => desk.download('zip')}>{arabic ? <span>{labels.zip} <bdi dir="ltr">(ZIP)</bdi></span> : labels.zip}</button>
