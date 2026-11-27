@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "arabiform-cli": "node --import tsx scripts/arabiform-cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:fuzz": "vitest run tests/core/fuzz.test.ts",

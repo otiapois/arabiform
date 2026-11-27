@@ -11,7 +11,7 @@ import type { PreflightOptions } from './index';
 export interface MergeCoverOptions {
   locale: 'en' | 'ar' | 'bilingual';
   templateName: string;
-  exportedAt: Date;
+  exportedAt: Date | string;
   preflight: PreflightOptions;
   rowNumbers: readonly number[];
   flagged: number;
@@ -160,7 +160,9 @@ export async function prependMergeCover(
   imposition: Imposition = '1-up',
 ) {
   const { locale, templateName, exportedAt, preflight, rowNumbers, flagged, skipped, custody } = options;
-  if ((locale !== 'en' && locale !== 'ar' && locale !== 'bilingual') || rowNumbers.length !== entries.length || !Number.isFinite(exportedAt.getTime())) {
+  const dateLabel = typeof exportedAt === 'string' ? exportedAt : localVirtualDate(exportedAt);
+  if ((locale !== 'en' && locale !== 'ar' && locale !== 'bilingual') || rowNumbers.length !== entries.length
+    || (typeof exportedAt === 'string' ? !/^\d{4}-\d{2}-\d{2}$/.test(exportedAt) : !Number.isFinite(exportedAt.getTime()))) {
     throw new CoverSheetError('cover-sheet-invalid-metadata');
   }
   try {
@@ -182,7 +184,7 @@ export async function prependMergeCover(
       const size = bilingual ? 9 : 10;
       const title = layoutText(shaper, panel.title, bilingual ? 15 : 22, panelWidth, direction);
       const details = ([
-        { label: panel.date, value: localVirtualDate(exportedAt), mode: 'ltr' },
+        { label: panel.date, value: dateLabel, mode: 'ltr' },
         { label: panel.template, value: templateName, mode: 'filename' },
       ] as const).map(({ label, value, mode }) => ({
         label: layoutText(shaper, label, size, labelWidth, direction),

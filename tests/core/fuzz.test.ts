@@ -8,6 +8,8 @@ import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createCustodyManifest, hashCustodySources, sha256 } from '../../src/core/audit/custody';
+import { isSafeLocalPath, parseCliArgs } from '../../src/core/cli/arguments';
+import { dispatchCli } from '../../src/core/cli/dispatch';
 import { createCustodyQrRecords } from '../../src/core/custody/records';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../../src/core/custody/verify';
 import { extractBatch } from '../../src/core/extractor/extract';
@@ -72,7 +74,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(30_180);
+  expect(acceptedCases).toBeGreaterThanOrEqual(32_680);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1790,4 +1792,157 @@ describe('seeded grouping plans, split cover indexes, v9 presets and authored ch
         });
       }), 250);
   }, 60_000);
+});
+
+describe('seeded offline CLI boundaries', () => {
+  const date = '2026-11-27';
+
+  it('checks 1,100 literal POSIX and Windows arguments against path aliases and flag substitutions', async () => {
+    const safeUnit = fc.constantFrom('c', 'ن', '3', 'د', 'é', 'Ö', 'X', '۴', '-', '_', "'");
+    const component = fc.array(safeUnit, { minLength: 1, maxLength: 24 }).map((parts) => 'Run ' + parts.join(''));
+    const unsafe = fc.constantFrom('..', '．．', '.. ', 'CON', ' ＮＵＬ.', 'LPT².txt', 'NUL.json', 'a:ads', 'a：ads', 'COM0.tmp',
+      'a＊b', 'a\0b', 'a\nb', 'a\uD800b', 'a\uFF0Fb', 'tail.', 'tail ', 'x//y', 'x\\\\y');
+    const prefix = fc.constantFrom('', './', 'D:\\', 'D:/', '/');
+    await verify(fc.asyncProperty(component, component, unsafe, prefix, fc.boolean(), async (outer, inner, alias, start, win) => {
+      const divider = win ? '\\' : '/';
+      const good = start + outer + divider + inner;
+      const flags = ['--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir'];
+      expect(isSafeLocalPath(good)).toBe(true);
+      expect(parseCliArgs([...flags, good])).toMatchObject({ mode: 'studio', outDir: good });
+      for (const bad of [start + outer + divider + alias + divider + inner, '//server/share/' + inner,
+        '\\\\?\\D:\\' + inner, '\\\\.\\' + inner, 'D:' + inner]) {
+        expect(isSafeLocalPath(bad)).toBe(false);
+        expect(() => parseCliArgs([...flags, bad])).toThrow('Unsafe local path');
+      }
+      const name = outer + ' $(echo NO)  & %PATH% ! ' + inner;
+      const encoded = Buffer.from(name).toString('base64url');
+      const batch = ['--mode', 'fill', '--template', 'form.pdf', '--roster', 'roster.xlsx', '--out-dir', good];
+      expect(parseCliArgs([...batch, '--sheet-base64url', encoded, '--group-by-base64url', encoded]))
+        .toMatchObject({ files: { sheet: name, groupBy: name } });
+      expect(() => parseCliArgs([...batch, '--sheet', inner, '--sheet-base64url', encoded])).toThrow('either');
+      expect(() => parseCliArgs([...batch, '--group-by-base64url', encoded + '='])).toThrow('base64url');
+      expect(() => parseCliArgs([...flags, good, '--template', 'certificate-bilingual'])).toThrow('Duplicate');
+    }), 1_100);
+  });
+
+  it('checks 1,050 actual blocked intakes and strict flagged outcomes with exit code 2 and no exports', async () => {
+    const failures = [['xfa', 'xfa-unsupported'], ['encrypted', 'encrypted-pdf'], ['signed', 'signed-pdf-warning'],
+      ['flat', 'flat-scanned-no-fields']] as const;
+    const invalid = await Promise.all(failures.map(async ([name, code]) => ({
+      template: await readFile('fixtures/golden/' + name + '.pdf'), code,
+    })));
+    const filled = await PDFDocument.create({ updateMetadata: false });
+    const field = filled.getForm().createTextField('ID');
+    field.setMaxLength(3);
+    field.addToPage(filled.addPage([200, 200]), { x: 35, y: 50, width: 110, height: 30 });
+    const keep = await filled.save();
+    const fonts = {
+      arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+      latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+    };
+    await verify(fc.asyncProperty(fc.nat({ max: 999_999 }), fc.integer({ min: 0, max: invalid.length }), fc.boolean(),
+      async (id, type, preflight) => {
+        const mode = preflight ? 'preflight' : 'fill';
+        const command = parseCliArgs(['--mode', mode, '--template', 'input.pdf', '--roster', 'records.csv', '--out-dir', 'out',
+          ...(preflight ? [] : ['--strict'])]);
+        if (command.mode !== 'fill' && command.mode !== 'preflight') throw new Error('unexpected CLI command');
+        const sample = invalid[type];
+        const result = await dispatchCli({ mode, command, sources: {
+          template: sample?.template ?? keep, roster: encoder.encode('ID\n' + id.toString().padStart(6, '0') + '\n'),
+          rosterName: 'records.csv', templateName: 'input.pdf', date, fonts,
+        } });
+        expect(result.exitCode).toBe(2);
+        if (sample) expect(result.report).toMatchObject({ status: 'blocked', issues: [{ code: sample.code }] });
+        else expect(result.report).toMatchObject({ status: 'flagged', rows: [{ diagnostics: [{ code: 'exceeds-maxlen' }] }] });
+        expect(result.artifacts.map(({ name }) => name)).toEqual(preflight ? ['arabiform-preflight.csv', 'arabiform-preflight.json'] : []);
+      }), 1_050);
+  }, 40_000);
+
+  it('checks 200 byte-exact CSV, XLSX and audit pairs from the native dispatcher and extraction engine', async () => {
+    const base = await PDFDocument.create({ updateMetadata: false });
+    base.getForm().createTextField('ID').addToPage(base.addPage([200, 200]), { x: 40, y: 45, width: 100, height: 30 });
+    const bytes = await base.save();
+    await verify(fc.asyncProperty(fc.nat({ max: 99_999 }), fc.boolean(), async (number, prefixed) => {
+      const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+      const value = number.toString().padStart(7, '0');
+      doc.getForm().getTextField('ID').setText(value);
+      const filename = (prefixed ? 'ملف-' : '') + value + '.pdf';
+      const inputs = [{ filename, bytes: await doc.save() }];
+      const expected = await extractBatch(inputs);
+      const cli = await dispatchCli({ mode: 'extract', inputs });
+      expect(expected.rows[0]?.fields.ID?.value).toBe(value);
+      expect(cli.exitCode).toBe(0);
+      expect(cli.artifacts.map(({ data }) => data)).toEqual([expected.artifacts.csv, expected.artifacts.xlsx, expected.artifacts.audit]);
+    }), 200);
+  }, 30_000);
+
+  it('checks 50 byte-exact editable, flattened and merged exports against the browser batch worker', async () => {
+    const template = await readFile('fixtures/golden/template.pdf');
+    const fonts = {
+      arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'),
+      latin: await readFile('public/fonts/NotoSans-Regular.ttf'),
+    };
+    const command = parseCliArgs(['--mode', 'fill', '--template', 'input.pdf', '--roster', 'records.csv', '--out-dir', 'out', '--strict']);
+    if (command.mode !== 'fill') throw new Error('unexpected CLI command');
+    await verify(fc.asyncProperty(fc.nat({ max: 99_999 }), fc.constantFrom('مُحَمَّد سَالِم', 'ليلى حسن', 'Riyadh', 'مازن (A 0090)'),
+      async (id, Name) => {
+        const ID = String(id).padStart(6, '0');
+        const rows = [{ Name, ID }];
+        const roster = encoder.encode(Papa.unparse(rows));
+        const cli = await dispatchCli({ mode: 'fill', command, sources: {
+          template, roster, rosterName: 'records.csv', templateName: 'input.pdf', date, fonts,
+        } });
+        expect(cli.exitCode).toBe(0);
+        const worker = createBatchProcessor();
+        const idle = () => {};
+        const filenames = makeFilenames(rows);
+        await worker({ phase: 'preflight', input: { rows, template, roster, options: { fonts } } }, idle);
+        const editable = await worker({ phase: 'zip', filenames }, idle);
+        const flattened = await worker({ phase: 'zip', filenames, flattenZip: true }, idle);
+        const merged = await worker({ phase: 'merged' }, idle);
+        if (!editable || editable instanceof Uint8Array || !('entries' in editable)
+          || !flattened || flattened instanceof Uint8Array || !('entries' in flattened)
+          || !merged || !('mergedPdfSha256' in merged)) {
+          throw new Error('Missing batch exports');
+        }
+        for (const [index, bytes] of [editable.bytes, flattened.bytes, merged.bytes].entries()) {
+          expect(Buffer.compare(cli.artifacts[index]!.data as Uint8Array, bytes)).toBe(0);
+        }
+        const receipt = await parseCustodyManifest(cli.artifacts[3]!.data as string);
+        expect(receipt.outputs.map(({ sha256 }) => sha256)).toEqual([editable.entries[0]!.sha256, flattened.entries[0]!.sha256, merged.mergedPdfSha256]);
+      }), 50);
+  }, 60_000);
+
+  it('checks 150 exact variant proofs and fails closed on cross-variant or modified PDF bytes', async () => {
+    await verify(fc.asyncProperty(fc.uint8Array({ minLength: 1, maxLength: 80 }), fc.nat({ max: 99_999 }), fc.boolean(),
+      async (content, id, grouped) => {
+        const filename = id + '.pdf';
+        const zipPath = grouped ? 'Batch/' + filename : undefined;
+        const fullName = zipPath ?? filename;
+        const editable = Uint8Array.of(1, ...content);
+        const flattened = Uint8Array.of(2, ...content);
+        const merged = Uint8Array.of(3, ...content);
+        const altered = Uint8Array.of(4, ...content);
+        const [templateSha256, rosterSha256, mergedPdfSha256] = await Promise.all([sha256(content), sha256(content), sha256(merged)]);
+        const entry = async (bytes: Uint8Array) => ({ filename, zipPath, bytes: bytes.length, sha256: await sha256(bytes) });
+        const receipt = createCustodyManifest({ templateSha256, rosterSha256 }, {
+          entries: [await entry(editable)], flattenedEntries: [await entry(flattened)], mergedPdfSha256,
+          groupByColumn: grouped ? 'Division' : undefined,
+        }, { exportScope: 'all-ready', selectedRowNumbers: [1] });
+        const check = async (bytes: Uint8Array, variant?: 'editable' | 'flattened') => dispatchCli({
+          mode: 'verify', manifestJson: receipt, source: { variant, inputs: [{ bytes, filename, parentFolder: grouped ? 'Batch' : undefined }] },
+        });
+        expect(await check(editable)).toMatchObject({ exitCode: 0, report: {
+          status: 'VERIFIED_EXACT_MATCH', verdicts: [{ variant: 'editable', memberPath: fullName }],
+        } });
+        expect(await check(flattened, 'flattened')).toMatchObject({ exitCode: 0, report: {
+          status: 'VERIFIED_EXACT_MATCH', verdicts: [{ variant: 'flattened', memberPath: fullName }],
+        } });
+        expect(await check(flattened, 'editable')).toMatchObject({ exitCode: 2, report: { status: 'TAMPERED_BYTE_MISMATCH' } });
+        expect(await check(altered)).toMatchObject({ exitCode: 2, report: { status: 'TAMPERED_BYTE_MISMATCH' } });
+        const mismatched = JSON.parse(receipt);
+        mismatched.flattenedEntries[0].filename = 'other.pdf';
+        await expect(parseCustodyManifest(JSON.stringify(mismatched))).rejects.toThrow('custody-invalid-manifest');
+      }), 150);
+  });
 });

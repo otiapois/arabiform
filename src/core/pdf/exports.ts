@@ -251,7 +251,7 @@ async function buildMergedPdf(
   rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, stamp?: PrintStamp, qr?: QrStamp,
   imposition: Imposition = '1-up',
 ): Promise<Uint8Array> {
-  let merged = await PDFDocument.create();
+  let merged = await PDFDocument.create({ updateMetadata: false });
   const twoUp = imposition === '2-up';
   const recordGeometry: TemplateMetadata['pages'] = [];
   const coverEntries: { filename: string; pageCount: number }[] = [];

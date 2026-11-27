@@ -21,8 +21,11 @@ export interface GroupedCustodyEntry extends CustodyEntry {
   rowNumbers: number[];
 }
 
+export type CustodyVariant = 'editable' | 'flattened' | 'merged';
+
 interface CustodyOutputs {
   entries?: readonly CustodyEntry[];
+  flattenedEntries?: readonly CustodyEntry[];
   mergedPdfSha256?: string;
   groupByColumn?: string;
   groups?: readonly GroupedCustodyEntry[];
@@ -30,7 +33,7 @@ interface CustodyOutputs {
 }
 
 export interface CustodyManifest extends CustodySources, CustodyOutputs, Partial<ExportScope> {
-  version: 1;
+  version: 1 | 2;
 }
 
 export const CUSTODY_PREFIX_LENGTH = 12;
@@ -49,14 +52,17 @@ export async function hashCustodySources(template: Uint8Array | ArrayBuffer, ros
 }
 
 export function createCustodyManifest(
-  { templateSha256, rosterSha256, sheetName }: CustodySources, { entries, mergedPdfSha256, groupByColumn, groups, qrRecords }: CustodyOutputs = {},
+  { templateSha256, rosterSha256, sheetName }: CustodySources,
+  { entries, flattenedEntries, mergedPdfSha256, groupByColumn, groups, qrRecords }: CustodyOutputs = {},
   scope?: ExportScope,
 ): string {
   const manifest: CustodyManifest = {
-    version: 1, templateSha256, rosterSha256,
+    version: flattenedEntries ? 2 : 1, templateSha256, rosterSha256,
     ...(sheetName !== undefined && { sheetName }),
     ...(scope && { exportScope: scope.exportScope, selectedRowNumbers: scope.selectedRowNumbers }),
     ...(entries && { entries: entries.map(({ filename, sha256, bytes, zipPath }) => ({ filename, sha256, bytes, ...(zipPath !== undefined && { zipPath }) })) }),
+    ...(flattenedEntries && { flattenedEntries: flattenedEntries.map(({ filename, sha256, bytes, zipPath }) =>
+      ({ filename, sha256, bytes, ...(zipPath !== undefined && { zipPath }) })) }),
     ...(mergedPdfSha256 && { mergedPdfSha256 }),
     ...(groupByColumn !== undefined && { groupByColumn }),
     ...(groups && { groups: groups.map(({ groupValue, folder, rowNumbers, filename, zipPath, sha256, bytes }) =>
