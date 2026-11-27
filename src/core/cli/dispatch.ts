@@ -9,6 +9,7 @@ import { ApprovalSealError, type ApprovalSealProblem } from '../pdf/approval-sea
 import { resolveQrPayload } from '../pdf/qr-encoder';
 import { DEFAULT_QR_SIZE_PT, type BatchQrPrintRequest } from '../pdf/qr-settings';
 import type { FontBytes } from '../pdf/shaping';
+import { PACKET_MANIFEST_FILENAME, PACKET_ZIP_FILENAME, preflightPacket, type PacketInput } from '../packet/assembler';
 import { PdfIntakeError } from '../pdf/template';
 import { autoMap, inspectRosterWorkbook, planFilenames, readRoster, type RosterSheet } from '../roster';
 import { filenameKey, physicalFilenameColumns } from '../roster/filenames';
@@ -31,6 +32,7 @@ type BatchSources = {
 
 export type CliJob =
   | (({ mode: 'preflight' } | { mode: 'fill' }) & { command: BatchCommandLine; sources: BatchSources })
+  | { mode: 'packet'; input: PacketInput; mappingsJson?: string }
   | { mode: 'extract'; inputs: readonly ExtractInput[] }
   | { mode: 'verify'; manifestJson: string; source: { qrPayload: string } | {
     inputs: readonly (ExtractInput & { parentFolder?: string })[];
@@ -44,6 +46,35 @@ type CliResult = { exitCode: 0 | 1 | 2; report: { status: string } & Record<stri
 const idle = () => {};
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+async function runPacket(input: PacketInput, mappingsJson?: string): Promise<CliResult> {
+  if (mappingsJson !== undefined) {
+    let mappings: unknown;
+    try {
+      mappings = JSON.parse(mappingsJson);
+    } catch {
+      // Return the same usage error for invalid JSON and invalid mapping structure.
+    }
+    if (!Array.isArray(mappings) || mappings.length !== input.templates.length ||
+      mappings.some((mapping) => mapping !== null && (typeof mapping !== 'object' || Array.isArray(mapping)
+        || Object.entries(mapping).some(([field, header]) => !field.trim() || typeof header !== 'string' || !header.trim())))) {
+      return { exitCode: 1, report: { status: 'usage-error', message: 'Use a JSON array with one field-to-header object or null per template.' },
+        artifacts: [], diagnostic: true };
+    }
+    input = { ...input, templates: input.templates.map((template, index) => ({ ...template, mapping: mappings[index] ?? undefined })) };
+  }
+  const checked = await preflightPacket(input);
+  if (checked.status === 'blocked') {
+    return { exitCode: 2, report: { ...checked, ready: 0, flagged: 0 }, artifacts: [], diagnostic: true };
+  }
+  const { ready, flagged, rows } = checked;
+  const report = { status: flagged ? 'flagged' : 'clean', ready, flagged, ...(flagged > 0 && { rows }) };
+  if (!ready) return { exitCode: 2, report, artifacts: [], diagnostic: true };
+  const { zipBytes, manifestJson } = await checked.assemble();
+  return { exitCode: flagged ? 2 : 0, report, artifacts: [
+    { name: PACKET_ZIP_FILENAME, data: zipBytes }, { name: PACKET_MANIFEST_FILENAME, data: manifestJson },
+  ] };
+}
 
 function blockedBatch(mode: BatchCommandLine['mode'], code: string, message: string, detail?: Omit<ApprovalSealProblem, 'code'>): CliResult {
   const report = { status: 'blocked', ready: 0, flagged: 0, issues: [{ code, message, ...detail }] };
@@ -198,6 +229,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
 
 export async function dispatchCli(job: CliJob): Promise<CliResult> {
   if (job.mode === 'preflight' || job.mode === 'fill') return runBatch(job.command, job.sources);
+  if (job.mode === 'packet') return runPacket(job.input, job.mappingsJson);
   if (job.mode === 'studio') {
     const { pdfBytes, csv, filename, csvFilename } = await generateStudioTemplate(job.template, {}, job.fonts);
     return { exitCode: 0, report: { status: 'clean', template: job.template }, artifacts: [

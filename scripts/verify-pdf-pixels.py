@@ -719,6 +719,78 @@ def check_studio(spec, directory):
             "verticalPrintMarginPt": 9, "editableAndPrintedPixelIdentical": equal_pages}
 
 
+def check_packet(spec, directory):
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    receipt = json.loads((directory / spec["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["kind"] == "arabiform-packet-custody" and receipt["version"] == 1
+    roster = (directory / spec["roster"]).read_bytes()
+    assert receipt["sources"]["roster"]["sha256"] == hashlib.sha256(roster).hexdigest()
+    assert receipt["sources"]["roster"]["bytes"] == len(roster)
+    with ZipFile(directory / spec["zip"]) as archive:
+        assert archive.namelist() == [spec["member"]], "a flagged recipient entered the ZIP"
+        data = archive.read(spec["member"])
+    output, = receipt["outputs"]
+    assert output["path"] == spec["member"] and output["rowNumber"] == 1
+    assert output["sha256"] == hashlib.sha256(data).hexdigest() and output["bytes"] == len(data)
+    assert len(output["documents"]) == len(spec["documents"])
+    with fitz.open(stream=data) as packet:
+        cover = packet[0]
+        assert not list(cover.widgets()) and not cover.get_images()
+        assert packet.xref_get_key(packet.pdf_catalog(), "AcroForm")[0] == "null"
+        spans = [(bytes.fromhex(value.decode("ascii")).decode("utf-16"), operators)
+                 for value, operators in COVER_SPAN.findall(cover.read_contents())]
+        assert all(b" Tj" in operators for _, operators in spans), "blank packet cover text"
+        expected_cells = spec["coverText"][:]
+        evidence = []
+        start = 2
+        for index, (document, source_entry) in enumerate(zip(spec["documents"], receipt["sources"]["templates"], strict=True), 1):
+            source = (directory / document["source"]).read_bytes()
+            assert source_entry["sha256"] == hashlib.sha256(source).hexdigest() and source_entry["bytes"] == len(source)
+            assert source_entry["title"] == document["title"] and source_entry["templateIndex"] == index
+            with (fitz.open(stream=source) as original,
+                  fitz.open(directory / document["editable"]) as editable,
+                  fitz.open(directory / document["flattened"]) as flattened):
+                assert len(original) == len(editable) == len(flattened) == source_entry["pageCount"]
+                entry = {"templateIndex": index, "title": document["title"], "startPage": start, "pageCount": len(original)}
+                assert output["documents"][index - 1] == entry
+                expected_cells.extend([document["title"], str(start)])
+                for offset, (before, filled, independent) in enumerate(zip(original, editable, flattened, strict=True)):
+                    page = packet[start - 1 + offset]
+                    image = render(page)
+                    assert not list(page.widgets()), (index, offset, "assembled page kept a widget")
+                    assert image == render(independent) == render(filled), (index, offset, "packet page changed independent 4x raster")
+                    boxes = []
+                    for widget in before.widgets():
+                        if widget.field_name not in document["fields"]:
+                            continue
+                        box = (widget.rect * before.rotation_matrix * SCALE).irect
+                        boxes.append((max(0, box.x0), max(0, box.y0), min(image[0], box.x1), min(image[1], box.y1)))
+                    assert_same_outside(render(before), image, boxes, f"packet doc {index} page {offset + 1}")
+                    streams = [packet.xref_stream(xref) for xref, name, _, _ in page.get_xobjects() if name.startswith("ArabiFormWidget")]
+                    actual = [bytes.fromhex(value.decode("ascii")).decode("utf-16")
+                              for stream in streams for value, operators in COVER_SPAN.findall(stream) if b" Tj" in operators]
+                    if offset == 0:
+                        assert set(document["visibleText"]) <= set(actual), (index, "packet lost logical Arabic or English widget text", actual)
+                evidence.append(entry)
+                start += len(original)
+        assert [text for text, _ in spans] == expected_cells
+        assert len(packet) == output["pageCount"] == start - 1
+        cover_proof = check_cover_ink(cover, None)
+        # The two title panels have separate ink in the heading band at 4×.
+        width, _, pixels = render(cover)
+        dark_heading = pixels[55 * 4 * width * CHANNELS:100 * 4 * width * CHANNELS:CHANNELS].translate(DARK_PIXELS)
+        middle = width // 2
+        panels = [sum(dark_heading[row + left:row + right].count(b"\x01") for row in range(0, len(dark_heading), width))
+                  for left, right in ((0, middle), (middle, width))]
+        assert min(panels) > 300, "the cover must show both heading panels"
+        cover_proof["englishAndArabicHeadingInkAt4x"] = panels
+    warnings = fitz.TOOLS.mupdf_warnings(reset=True)
+    assert not warnings, f"packet: MuPDF emitted warnings: {warnings}"
+    return {"member": spec["member"], "cover": cover_proof, "exactCoverText": expected_cells, "documents": evidence,
+            "formPagesIdenticalAt4x": start - 2, "clippedInkPixels": 0, "outsideMappedWidgetChangedPixels": 0,
+            "remainingWidgets": 0, "sourceAndOutputHashesMatch": True}
+
+
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
     arguments.add_argument("manifest", nargs="?", type=Path, default=Path("test-results/pdf-pixels/manifest.json"))
@@ -741,6 +813,7 @@ def main():
     imposition_proofs = [check_imposition(spec, path.parent) for spec in manifest.get("impositionProofs", [])]
     studio_proofs = [check_studio(spec, path.parent) for spec in manifest.get("studioProofs", [])]
     m20 = check_m20_proof(manifest["m20Proof"], path.parent) if "m20Proof" in manifest else None
+    packet = check_packet(manifest["packetProof"], path.parent) if "packetProof" in manifest else None
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
@@ -748,6 +821,7 @@ def main():
         "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs, "impositionProofs": imposition_proofs,
         "studioProofs": studio_proofs,
         **({"m20Proof": m20} if m20 else {}),
+        **({"packetProof": packet} if packet else {}),
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -782,6 +856,9 @@ def main():
     if m20:
         print(f"M20: {len(m20['pages'])} preview/ZIP/merged seal pages (including rotated UserUnit 2), Eastern ٠٠١٢٣ and Western 00123, "
               "custom typography, unchanged QR modules, 0 widget overlap, and both collisions blocked.")
+    if packet:
+        print(f"M21: {len(packet['documents'])} exact bilingual packet index entries, {packet['formPagesIdenticalAt4x']} individually matched form pages at 4x, "
+              "Arabic with harakat and English preserved, 0 clipped/outside pixels, 0 widgets and exact SHA-256.")
 
 
 if __name__ == "__main__":

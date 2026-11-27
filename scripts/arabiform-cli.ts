@@ -42,6 +42,19 @@ async function loadFonts() {
 }
 
 async function loadJob(command: Exclude<CliCommand, { mode: 'help' }>, date: string): Promise<{ job: CliJob; outDir?: string }> {
+  if (command.mode === 'packet') {
+    const { outDir, templates, roster, mappings, sheet, groupBy, cover } = command;
+    nativePath(outDir);
+    const [templateFiles, rosterBytes, fonts, mappingsBytes] = await Promise.all([
+      readPdfFiles(templates), readLocal(roster), loadFonts(), mappings && readLocal(mappings),
+    ]);
+    return { outDir, job: { mode: 'packet',
+      input: { templates: templateFiles.map(({ filename, bytes }) => ({ name: filename, bytes })),
+        roster: { name: basename(roster), bytes: rosterBytes, sheetName: sheet },
+        fonts, groupByColumn: groupBy, includeCover: cover, localDate: date },
+      mappingsJson: mappingsBytes ? new TextDecoder('utf-8', { fatal: true }).decode(mappingsBytes) : undefined,
+    } };
+  }
   if (command.mode === 'preflight' || command.mode === 'fill') {
     const { template, roster, preset, outDir } = command.files;
     // Validate platform-specific path spelling even when a strict job will emit no files.

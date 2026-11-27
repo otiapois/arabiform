@@ -10,6 +10,7 @@ export type BatchCommandLine =
 export type CliCommand =
   | { mode: 'help' }
   | BatchCommandLine
+  | { mode: 'packet'; templates: string[]; roster: string; outDir: string; mappings?: string; sheet?: string; groupBy?: string; cover: boolean }
   | { mode: 'extract'; outDir: string; source: { inDir: string } | { paths: string[] } }
   | { mode: 'verify'; manifest: string; source: { qrPayload: string } | { paths: string[]; variant?: CustodyVariant } }
   | { mode: 'studio'; template: StudioTemplateId; outDir: string };
@@ -19,6 +20,9 @@ export const CLI_USAGE = [
   '  [--preset <json>] [--sheet <name>] [--group-by <header>] [--date YYYY-MM-DD]',
   '  fill only: [--strict] [--imposition 1-up|2-up] [--cover] [--watermark <text>] [--qr]',
   '  --sheet-base64url and --group-by-base64url accept unpadded UTF-8 base64url instead of the literal name.',
+  'npm run arabiform-cli -- --mode packet --template <pdf> --template <pdf> [--template <pdf> ...] --roster <csv|xlsx> --out-dir <dir>',
+  '  [--mappings <json>] [--sheet <name>] [--group-by <header>] [--cover]',
+  '  Packet mappings are an ordered JSON array of field-to-header objects or null for auto-mapping.',
   'npm run arabiform-cli -- --mode studio --template <id> --out-dir <dir>',
   '  studio IDs: ' + STUDIO_TEMPLATE_IDS.join(', '),
   'npm run arabiform-cli -- --mode extract (--in-dir <dir> | <pdf>...) --out-dir <dir>',
@@ -48,6 +52,7 @@ const batchFlags = ['template', 'roster', 'out-dir', 'preset', 'sheet', 'sheet-b
 const flagsByMode = {
   preflight: batchFlags,
   fill: [...batchFlags, 'strict', 'imposition', 'cover', 'watermark', 'qr'],
+  packet: ['template', 'roster', 'out-dir', 'mappings', 'sheet', 'sheet-base64url', 'group-by', 'group-by-base64url', 'cover'],
   extract: ['in-dir', 'out-dir'],
   verify: ['manifest', 'qr-payload', 'variant'],
   studio: ['template', 'out-dir'],
@@ -81,6 +86,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
   if (args.length === 1 && args[0] === '--help') return { mode: 'help' };
   const values = new Map<string, string>();
   const paths: string[] = [];
+  const templates: string[] = [];
   let positional = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
@@ -89,12 +95,13 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     } else if (!positional && arg.startsWith('-')) {
       const flag = arg.slice(2);
       if (!arg.startsWith('--') || (!valueFlags.has(flag) && !boolFlags.has(flag))) throw new CliUsageError('Unknown option ' + arg + '.');
-      if (values.has(flag)) throw new CliUsageError('Duplicate option ' + arg + '.');
+      if (values.has(flag) && flag !== 'template') throw new CliUsageError('Duplicate option ' + arg + '.');
       if (boolFlags.has(flag)) {
         values.set(flag, '');
       } else {
         const value = args[++index];
         if (!value || value.startsWith('--')) throw new CliUsageError('Missing value for ' + arg + '.');
+        if (flag === 'template') templates.push(value);
         values.set(flag, value);
       }
     } else {
@@ -102,9 +109,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     }
   }
   const mode = values.get('mode');
-  if (mode !== 'preflight' && mode !== 'fill' && mode !== 'extract' && mode !== 'verify' && mode !== 'studio') {
-    throw new CliUsageError('Choose --mode preflight, fill, extract, verify, or studio.');
+  if (mode !== 'preflight' && mode !== 'fill' && mode !== 'packet' && mode !== 'extract' && mode !== 'verify' && mode !== 'studio') {
+    throw new CliUsageError('Choose --mode preflight, fill, packet, extract, verify, or studio.');
   }
+  if (mode !== 'packet' && templates.length > 1) throw new CliUsageError('Duplicate option --template.');
   for (const flag of values.keys()) {
     if (flag !== 'mode' && !flagsByMode[mode].includes(flag)) throw new CliUsageError('--' + flag + ' is unavailable in ' + mode + ' mode.');
   }
@@ -147,7 +155,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
       paths: paths.map((path) => pathValue(path, 'PDF', /\.pdf$/i)),
     } : { inDir } };
   }
-  const template = required('template');
+  const template = mode === 'packet' ? undefined : required('template');
   if (mode === 'studio') {
     const id = STUDIO_TEMPLATE_IDS.find((candidate) => candidate === template);
     if (!id) throw new CliUsageError('Unknown studio template ID.');
@@ -157,6 +165,11 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
   const sheet = nameOption(values.get('sheet'), values.get('sheet-base64url'), 'sheet');
   if (sheet !== undefined && !/\.xlsx$/i.test(roster)) throw new CliUsageError('--sheet applies only to .xlsx rosters.');
   const groupBy = nameOption(values.get('group-by'), values.get('group-by-base64url'), 'group-by');
+  if (mode === 'packet') {
+    if (templates.length < 2 || templates.length > 4) throw new CliUsageError('Supply 2 to 4 ordered --template paths.');
+    return { mode, templates: templates.map((path) => pathValue(path, '--template', /\.pdf$/i)),
+      roster, outDir, mappings: optionalPath('mappings', /\.json$/i), sheet, groupBy, cover: values.has('cover') };
+  }
   const date = values.get('date');
   if (date !== undefined) {
     const parsed = new Date(date + 'T00:00:00.000Z');
@@ -164,7 +177,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
       throw new CliUsageError('Expected a valid YYYY-MM-DD for --date.');
     }
   }
-  const files = { template: pathValue(template, '--template', /\.pdf$/i), roster, outDir, preset: optionalPath('preset', /\.json$/i), sheet, groupBy, date };
+  const files = { template: pathValue(template!, '--template', /\.pdf$/i), roster, outDir, preset: optionalPath('preset', /\.json$/i), sheet, groupBy, date };
   if (mode === 'preflight') return { mode, files };
   const imposition = values.get('imposition');
   if (imposition !== undefined && imposition !== '1-up' && imposition !== '2-up') throw new CliUsageError('Expected 1-up or 2-up for --imposition.');
