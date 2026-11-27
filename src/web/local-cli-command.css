@@ -1,0 +1,20 @@
+.cli-command-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .5rem;
+  margin-block-start: .65rem;
+  overflow-wrap: anywhere;
+}
+.cli-command-content textarea {
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-block-size: 14rem;
+  field-sizing: content;
+  resize: vertical;
+  text-align: left;
+  unicode-bidi: isolate;
+  font: .81rem/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cli-command-status:empty { margin-block-start: -.5rem; }
