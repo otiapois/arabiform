@@ -92,7 +92,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 7**（M1、M2、M5、M9、M10、M11、M12，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 8**（M1、M2、M5、M9、M10、M11、M12、M13，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
@@ -157,3 +157,10 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **原因**　M12 将示例选择逻辑拆为按需加载模块，生成的 `sample-workflows-*.js` 与实际样本包都命中了图库原有的 `sample-` 请求检查。四个图库场景都在一次选择后计到两个包。
 - **证据**　提交 `ddf41f2` 调整加载器名称后，保留原断言，在桌面和手机分别验证四个示例，均只观察到一个对应的样本数据包。[图库用例](tests/e2e/m6-workflows.spec.ts) · [M12 验收](docs/reports/M12-verification.md)
 - **Seen: 1**（M12 分包重命名，两种视口合计一次）。
+
+### 在收起的原生选择框里核对整条选项（2026-11-27）
+
+- **规则**　在目标视口选中最长选项，按实际字体测量文本宽度，扣除选择框内边距和原生箭头占用的空间，再查看收起状态的截图。
+- **原因**　M13 的英文两条记录拼版选项末尾被截断。页面宽度、选项 DOM 文本和无障碍名称当时均通过检查。
+- **证据**　提交 `efd19e1` 调整拼版选择框的排版。Edge 桌面以 18 px 预留箭头后有 278.32 px 可用，完整英文选项实测 258.84 px。[浏览器回归](tests/e2e/m13-workbook-print.spec.ts) · [实际截图](docs/reports/screenshots/m13/desktop-m13-xlsx-sheet-and-2up.png)
+- **Seen: 1**（M13 原生拼版选项，英阿语和两种视口合计一个周期）。
