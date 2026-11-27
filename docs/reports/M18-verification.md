@@ -35,6 +35,13 @@
 
 ## 首次失败与修正
 
+- 开发预跑有两项新增种子测试超时。优化 PDF 字节比较并调整这两项的等待时限后，专项通过 200 例，随后冻结主线全量通过 32,730 例。用例数量和断言得到保留。该类问题已在第三个独立里程碑复现，纳入代码标准。[预跑](../../test-results/m18-evidence/worker-a/fuzz-and-regressions.log) · [专项计数](../../test-results/m18-evidence/worker-a/focused-fuzz.log) · [代码标准](../code-standards.md)
 - 首次在 `7f3a02f` 运行整套单元测试时，3 项发布检查因临时测试包缺少新增的 `workbench-labels.json` 失败。保留该轮日志后停止旧进程。补入这一份文件后，原有三项断言独立复跑 3/3 通过，随后在最终冻结版本完成全套。[首次主线记录](../../test-results/m18-evidence/qa-stopped-7f3a02f/stop.json) · [缺件复现](../../test-results/m18-evidence/worker-b/release-fixture-red.log) · [修复后](../../test-results/m18-evidence/worker-b/release-fixture-green.log)
 - Windows 沙箱在 tsx 初始化时返回 `uv_os_get_passwd ENOMEM`，像素门禁与首个 CLI studio 均在读取业务输入前退出。在获准的本机环境，使用相同版本、D 盘输入及临时目录重跑原命令，像素和五模式均完成。[像素首次失败](../../test-results/m18-evidence/qa-pixels.log) · [原命令完成](../../test-results/m18-evidence/qa-pixels-native.log) · [CLI 首次 stderr](../../test-results/m18-evidence/qa-cli-9aeeb15-local/studio.stderr)
 - QA 首版网络计数器把 tsx 的本机命名管道事件记为 TCP 尝试。核对原始端点后独立标记无端口的 D 盘管道，重新执行全部 14 次调用。42 个 Node 进程合计 28 次本机管道事件，HTTP 请求、TCP 尝试及 TCP 连接均为 0。[首次观测复核](../../test-results/m18-evidence/qa-cli-9aeeb15-native/observer-first-pass.json) · [最终逐进程记录](../../test-results/m18-evidence/qa-cli-9aeeb15-native-final/network.jsonl)
+
+## 主线收尾
+
+扫描 52 个核心源文件，DOM、网络和文件 I/O API 均无命中。CLI 入口负责本地文件读写，依赖锁文件的改动仅为版本号。验收后的提交只包含报告和经验记录。[源码与依赖检查](../../test-results/m18-evidence/lead-core-invariants.json)
+
+四个已合并的 D 盘工作树及其临时分支均已清理。Windows 曾短暂占用一处空目录，核对 Git 已解除登记且目录中无文件或联接后删除。最终仅登记 `main` 工作树，42882 和 42885 均已关闭。[清理回执](../../test-results/m18-evidence/lead-worktree-cleanup.json)
