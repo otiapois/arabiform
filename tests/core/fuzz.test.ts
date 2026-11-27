@@ -8,6 +8,8 @@ import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createCustodyManifest, hashCustodySources, sha256 } from '../../src/core/audit/custody';
+import { extractBatch } from '../../src/core/extractor/extract';
+import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
 import { validateMappingPreset } from '../../src/core/draft/mapping-preset';
 import { createAudit, createFlattenedZip, createZip, getWidgetOverlays, inspectCustomFont, inspectTemplate, matchChoice, preflightRow, prepareRowPreflight, type AlignOverride } from '../../src/core/pdf';
@@ -61,7 +63,7 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(20_000);
+  expect(acceptedCases).toBeGreaterThanOrEqual(22_600);
 });
 
 describe('seeded adversarial files and PDF geometry', () => {
@@ -1358,4 +1360,123 @@ describe('seeded independent Excel tabs, two-up geometry and v8 presets', () => 
         expect(validateMappingPreset({ ...v7, version: 8 })).toBeUndefined();
       }), 1_600);
   }, 40_000);
+});
+
+
+describe('seeded AcroForm extraction and string-safe spreadsheet custody', () => {
+  const pieces = fc.array(fc.constantFrom('مُحَمَّد', 'سَالِم', 'ىَ', 'يِ', 'نُ', 'قّ', '00', '٠١٢', '𐍈', '🙂', 'é',
+    'e\u0301', '#00123', ' (A) ', '؛،', '\u061c', '\u200e', '\u200f', '\u202e', '\u2067', '\u2069',
+    '\r\n', '\n', '\r', '\"', ',', ' ', '&<>', '_x0041_', '_x000D_x000A_', '\x00', '\x1f', '\ufeff'), { maxLength: 18 });
+  const formulaStart = fc.constantFrom(
+    '\u061c=', '  ＝', '\u00a0\u200e＋', '\x01-\u202e', '\u2066＠', '\t', '\r\n', '\n', '\ufeff@', '+', '-', '=',
+  );
+  const exactDigest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+  it('checks 1,300 exact XML string cells and formula-safe CSV cells against adversarial Unicode prefixes', async () => {
+    await verify(fc.asyncProperty(pieces, formulaStart, fc.integer({ min: 0, max: 99_999 }), async (chunks, prefix, id) => {
+      const formula = prefix + '1' + chunks.join('');
+      const plain = '00' + String(id).padStart(5, '0') + chunks.join('');
+      const filename = prefix + 'private.pdf';
+      const { csv, xlsx } = makeSpreadsheets(
+        [{ name: 'ID', kind: 'text' }, { name: 'Unicode', kind: 'text' }],
+        [{ filename, sourceSha256: '0'.repeat(64), status: 'extracted',
+          fields: { ID: { kind: 'text', value: plain }, Unicode: { kind: 'text', value: formula } } }],
+      );
+      const xml = decoder.decode(unzipSync(xlsx)['xl/worksheets/sheet1.xml']!);
+      expect(xml).toContain('<c r="E2" t="inlineStr">');
+      expect(xml).not.toMatch(/<f(?:\s|>)/);
+      const { values, warnings } = inspectRosterWorkbook(xlsx).readSheet().rows[0]!;
+      expect([values.Filename, values.ID, values.Unicode, warnings]).toEqual([filename, plain, formula, []]);
+      expect([...csv.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      const parsed = Papa.parse<string[]>(decoder.decode(csv), { newline: '\r\n' });
+      expect(parsed.errors).toEqual([]);
+      expect(parsed.data[1]).toEqual(["'" + filename, '0'.repeat(64), 'extracted', plain, "'" + formula]);
+    }), 1300);
+  }, 30_000);
+
+  it('checks 700 saved AcroForm documents with exact UTF-16BE, PDFDocEncoding and native checkbox values', async () => {
+    const spellings = [
+      ['', ''], ['\\200\\223\\240', '•ﬁ€'], ['A\\(00\\)\\226', 'A(00)Œ'],
+      ['sl\\351\\202\\201', 'slé‡†'], ['\\101\\tB\\r\\nC', 'A\tB\r\nC'], ['A\\\r\nB\\fC', 'AB\fC'],
+    ] as const;
+    await verify(fc.asyncProperty(pieces, fc.integer({ min: 0, max: 99_999 }), fc.constantFrom(...spellings),
+      fc.constantFrom('Yes', 'Approved#2000007', 'Off'), fc.boolean(), async (chunks, id, [legacyRaw, legacy], state, compressed) => {
+        const doc = await PDFDocument.create({ updateMetadata: false });
+        doc.addPage();
+        const form = doc.getForm();
+        const exact = 'نُور ٠٠٧ ' + chunks.join('') + '\r\n' + String(id).padStart(7, '0');
+        form.createTextField('Text').acroField.dict.set(key('V'), PDFHexString.fromText(exact));
+        form.createTextField('Legacy').acroField.dict.set(key('V'), PDFString.of(legacy ? legacyRaw : ''));
+        form.createCheckBox('Consent').acroField.dict.set(key('V'), key(state));
+        const bytes = await doc.save({ updateFieldAppearances: false, useObjectStreams: compressed });
+        const result = await extractBatch([{ filename: 'مِلَف ' + id + '.pdf', bytes }]);
+        const row = result.rows[0]!;
+        const nativeValue = state === 'Approved#2000007' ? 'Approved 00007' : state;
+        expect(row.status).toBe('extracted');
+        expect(row.sourceSha256).toBe(exactDigest(bytes));
+        expect(row.fields).toEqual({
+          Text: { kind: 'text', value: exact }, Legacy: { kind: 'text', value: legacy },
+          Consent: { kind: 'checkbox', value: state === 'Off' ? 'unchecked' : 'checked', nativeValue },
+        });
+        const xlsx = inspectRosterWorkbook(result.artifacts.xlsx).readSheet().rows[0]!.values;
+        expect([xlsx.Text, xlsx.Legacy, xlsx['Consent (native export)']]).toEqual([exact, legacy, nativeValue]);
+        const audit = JSON.parse(decoder.decode(result.artifacts.audit));
+        expect(audit.csvSha256).toBe(exactDigest(result.artifacts.csv));
+        expect(audit.xlsxSha256).toBe(exactDigest(result.artifacts.xlsx));
+      }), 700);
+  }, 30_000);
+
+  it('checks 500 mixed batches with malformed and restricted files, distinct per-file digests and schema warnings', async () => {
+    const formats = ['flat', 'encrypted', 'xfa', 'signed'] as const;
+    const fixtures = await Promise.all(formats.map(async (format) => ({
+      filename: format + '.pdf', bytes: await readFile('fixtures/golden/' + format + '.pdf'),
+    })));
+    const ordered = await Promise.all([
+      ['Name', 'Code'], ['Name', 'Consent'], ['Code', 'Name'], ['Choice', 'Code'],
+    ].map(async (names) => {
+      const doc = await PDFDocument.create({ updateMetadata: false });
+      doc.addPage();
+      for (const name of names) {
+        if (name === 'Consent') doc.getForm().createCheckBox(name);
+        else if (name === 'Choice') doc.getForm().createDropdown(name);
+        else doc.getForm().createTextField(name).acroField.dict.set(key('V'), PDFString.of('00007'));
+      }
+      return { names, bytes: await doc.save({ updateFieldAppearances: false }) };
+    }));
+    await verify(fc.asyncProperty(
+      fc.integer({ min: 0, max: 3 }), fc.integer({ min: 0, max: 3 }),
+      fc.array(fc.integer({ min: 0, max: 3 }), { minLength: 1, maxLength: 4 }),
+      fc.uint8Array({ minLength: 1, maxLength: 44 }), fc.boolean(),
+      async (firstIndex, nextIndex, badIndices, invalidTail, reverse) => {
+        const first = ordered[firstIndex]!;
+        const next = ordered[nextIndex]!;
+        const invalid = new Uint8Array(invalidTail.length + 1);
+        invalid.set(invalidTail, 1);
+        invalid[0] = 0xff;
+        const restricted = badIndices.map((index) => fixtures[index]!);
+        const inputs = [{ filename: 'broken.pdf', bytes: invalid }, ...restricted,
+          { filename: 'first.pdf', bytes: first.bytes }, { filename: 'second.pdf', bytes: next.bytes }];
+        if (reverse) inputs.reverse();
+        const primary = reverse ? next : first;
+        const later = reverse ? first : next;
+        const missing = primary.names.filter((name) => !later.names.includes(name));
+        const extra = later.names.filter((name) => !primary.names.includes(name));
+        const result = await extractBatch(inputs);
+        expect(result.columns.map(({ name }) => name)).toEqual([...new Set([...primary.names, ...later.names])]);
+        const selected = result.rows.filter(({ status }) => status === 'extracted' || status === 'warning-schema-mismatch');
+        expect(selected[0]?.status).toBe('extracted');
+        expect(selected[1]?.status).toBe(missing.length || extra.length ? 'warning-schema-mismatch' : 'extracted');
+        if (missing.length || extra.length) expect(selected[1]?.schema).toEqual({ missing, extra, typeChanged: [] });
+        for (const [index, row] of result.rows.entries()) {
+          const input = inputs[index]!;
+          expect(row.sourceSha256).toBe(exactDigest(input.bytes));
+          if (input.filename === 'broken.pdf') expect(row.status).toBe('blocked-invalid');
+          const item = formats.find((format) => input.filename === format + '.pdf');
+          if (item) {
+            expect(row.status).toBe('blocked-' + item);
+            expect(Object.keys(row.fields)).toEqual([]);
+          }
+        }
+      }), 500);
+  }, 30_000);
 });
