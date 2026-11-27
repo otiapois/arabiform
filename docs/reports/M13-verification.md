@@ -1,6 +1,6 @@
 # ArabiForm v1.3.0 独立验收
 
-M13 通过本机验收。实际切换 Excel 工作表后，三行阿文姓名、前导零和草稿绑定均正确。三条记录与双语封面实际印成三页，二维码从下载文件逐枚解出。真实 Edge 通过 110/110 个场景，保留 M1–M12 的全部 102 个。固定种子实际接受 20,100 例，丢弃与失败均为 0。
+M13 通过本机验收。实际切换 Excel 工作表后，三行阿文姓名、前导零和草稿绑定均正确。下载的合并 PDF 含一张双语封面和两张记录页，三枚二维码均从 PDF 渲染结果读回。真实 Edge 通过 110/110 个场景，保留 M1–M12 的全部 102 个。固定种子实际接受 20,100 例，丢弃与失败均为 0。
 
 ## 验收版本与入口
 
@@ -20,7 +20,7 @@ M13 通过本机验收。实际切换 Excel 工作表后，三行阿文姓名、
 
 同一 Excel 的 SHA-256 为 `991b9f111f02daa71cd8af53ee88f2674374731714279592f6da8e7a8f693863`。首次上传选中 Summary，选项仅包含 Summary 和 Roster_AR。切到名单后，在界面编辑器和实际可编辑 PDF ZIP 中逐行核对了姓名与原始编号。第二行的 Excel 数值按五位格式保留为 `00007`，第三行保留公式缓存值 `Approved` 和来源提示。[合成工作簿](../../fixtures/m13/multi-sheet-roster.xlsx) · [实际可编辑 ZIP](../../test-results/m13-evidence/qa-browser/desktop/editable/arabiform-clean.zip)
 
-| 名单行 | 阿文姓名 | ID | 封面物理页 | 从纸面解出的 QR |
+| 名单行 | 阿文姓名 | ID | 封面索引的页码 | 从 PDF 正文解出的 QR |
 |---:|---|---|---:|---|
 | 1 | ليلى حسن | `00123` | 2 | `CERT-00123` |
 | 2 | أحمد سالم | `00007` | 2 | `CERT-00007` |
@@ -39,3 +39,9 @@ M13 通过本机验收。实际切换 Excel 工作表后，三行阿文姓名、
 首次桌面截图显示长选项末尾被遮住。修复后，英文选项实测 258.84 px，在桌面和手机预留箭头后分别有 278.32 px 和 300.32 px。该缺口按本周期记一次，已晋级的 Windows 像素复跑经验累计八个周期。[修复前截图](../../test-results/m13-evidence/lead-2up-select-before.png) · [桌面控件测量](../../test-results/m13-evidence/qa-browser/desktop/native-layout-en.json) · [经验记录](../../LESSONS.md)
 
 三张截图均来自真正的 Edge 操作。英文桌面保留从工作表到拼版设置的连续原始画面，宽 1440 px、高 1222 px。另两张保留完整的桌面或手机视口。[桌面英文工作表与拼版](screenshots/m13/desktop-m13-xlsx-sheet-and-2up.png) · [阿语 RTL](screenshots/m13/desktop-m13-ar-rtl-2up.png) · [390 px 手机](screenshots/m13/mobile-m13-2up.png)
+
+## 主线收口
+
+主线的补充复读覆盖四种页旋转、超宽和超窄模板。12 张双拼记录页的 18 枚二维码均读回，144 条裁线均在记录框外，允许区外的渲染墨迹为 0。[几何与载荷复读](../../test-results/m13-evidence/lead-2up-core-readback.json)
+
+4187、4193、4194 均拒绝连接后，已移除四个 D 盘工作树、对应分支和团队临时目录。Git 只登记 ArabiForm 主工作区，TypeScript 依赖仍可读取。[清理收据](../../test-results/m13-evidence/lead-worktree-cleanup.json)
