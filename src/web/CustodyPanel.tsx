@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { createCustodyManifest, CUSTODY_PREFIX_LENGTH, type CustodyManifest, type CustodySources } from '../core/audit/custody';
+import type { ExportScope } from '../core/worker/row-selection';
 import { saveDownload } from './resources';
 
 type CustodyPanelProps = {
   sources: CustodySources;
   outputs?: Pick<CustodyManifest, 'entries' | 'mergedPdfSha256'>;
+  scope: ExportScope;
   disabled: boolean;
   label: ReactNode;
   arabic: boolean;
@@ -34,7 +36,7 @@ const ar: typeof en = {
   both: 'يشمل البيان بصمات ملفات PDF داخل ملف ZIP وبصمة ملف PDF المدمج.',
 };
 
-export default function CustodyPanel({ sources, outputs, disabled, label, arabic }: CustodyPanelProps) {
+export default function CustodyPanel({ sources, outputs, scope, disabled, label, arabic }: CustodyPanelProps) {
   const copy = arabic ? ar : en;
   const [copyStatus, setCopyStatus] = useState<'copied' | 'copyFailed'>();
   const coverage = outputs?.entries ? outputs.mergedPdfSha256 ? copy.both : copy.zip
@@ -53,7 +55,7 @@ export default function CustodyPanel({ sources, outputs, disabled, label, arabic
   return (
     <>
       <button type="button" className="button secondary" data-testid="custody-download" disabled={disabled}
-        onClick={() => saveDownload(createCustodyManifest(sources, outputs), 'arabiform-custody-manifest.json', 'application/json')}>{label}</button>
+        onClick={() => saveDownload(createCustodyManifest(sources, outputs, scope), 'arabiform-custody-manifest.json', 'application/json')}>{label}</button>
       <p className="quiet" role="status" data-testid="custody-coverage">{coverage}</p>
       <dl className="custody-fingerprints">
         {([['template', sources.templateSha256], ['roster', sources.rosterSha256]] as const).map(([source, digest]) => (

@@ -208,7 +208,7 @@ export default function PdfPreview({
   return (
     <>
       <div className="preview-toolbar">
-        <div className="page-controls" aria-label={labels.preview}>
+        <div className="page-controls" role="group" aria-label={labels.preview}>
           <button type="button" className="icon-button" aria-label={copy.previousPage} disabled={page <= 1 || !pdf} onClick={() => onPageChange(page - 1)}>
             <span aria-hidden="true" className="chevron previous" />
           </button>

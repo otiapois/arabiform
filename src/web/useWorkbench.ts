@@ -6,6 +6,7 @@ import type { FilenamePlan } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
+import type { RowSelection } from '../core/worker/row-selection';
 import type { FontMode, MappingPreset } from './presets';
 import { decodeBase64, errorCode, saveDownload } from './resources';
 import { useBatch } from './useBatch';
@@ -66,6 +67,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [selected, setSelected] = useState(0);
   const [requestedPage, setRequestedPage] = useState<number>();
   const [filter, setFilter] = useState<RowFilter>('all');
+  const [rowSelection, setRowSelection] = useState<RowSelection>('all-ready');
   const [minFontSize, setMinFontSize] = useState(8);
   const [font, setFont] = useState<FontMode>('auto');
   const [customFont, setCustomFont] = useState<CustomFont>();
@@ -123,10 +125,10 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern) ?? [], [roster, rows, pattern]);
   const templateName = template?.name;
   const output = useMemo(() => ({
-    filenamePlans, flattenZip,
+    filenamePlans, flattenZip, rowSelection,
     cover: includeCoverSheet && templateName ? { locale, templateName, includeCustody } : undefined,
     watermark: watermark.kind !== 'none' ? watermark : undefined,
-  }), [filenamePlans, flattenZip, includeCoverSheet, templateName, locale, includeCustody, watermark]);
+  }), [filenamePlans, flattenZip, rowSelection, includeCoverSheet, templateName, locale, includeCustody, watermark]);
   const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output);
   const results = useMemo(() => job.results?.map((result, index): RowResult => ({
     ...result, ...filenamePlans[index]!,
@@ -157,6 +159,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setSelected(0);
     setRequestedPage(undefined);
     setFilter('all');
+    setRowSelection('all-ready');
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setCellState((current) => ({ edits: {}, hygiene: [], revision: current.revision + 1 }));
   }
@@ -165,6 +168,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     const id = ++request.current.pdf;
     request.current.draft++;
     invalidate(true);
+    setRowSelection('all-ready');
     setTemplate(undefined);
     setRequestedPage(undefined);
     setLoadedSample(undefined);
@@ -359,6 +363,12 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setPattern(value);
   }
 
+  function changeRowSelection(selection: RowSelection) {
+    if (exportLocked()) return;
+    clearExportError();
+    setRowSelection(selection);
+  }
+
   function changeFlattenZip(value: boolean) {
     clearExportError();
     request.current.draft++;
@@ -451,6 +461,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,
     presetInputs, beginDraft, restoreDraft,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
+    rowSelection, changeRowSelection,
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans, flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
     includeCustody, changeIncludeCustody,
     watermark, watermarkBlocked, changeWatermark,
@@ -462,7 +473,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     download: (kind: Parameters<typeof download>[0]) => {
       const print = kind === 'merged' || (kind === 'zip' && flattenZip);
       if (print && watermarkBlocked) return;
-      return download(kind, ready);
+      return download(kind);
     },
   };
 }
