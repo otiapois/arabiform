@@ -555,17 +555,17 @@ small { color: var(--muted); font-size: .76rem; font-weight: 430; line-height: 1
   padding: 0;
   background: transparent;
   color: #123e31;
-  box-shadow: inset 0 0 0 1px #fff9;
+  box-shadow: 0 0 0 1px #fff9;
 }
 .widget-target:hover, .widget-target[data-active="true"] {
   border-color: #123e31;
   background: #3a964d20;
-  box-shadow: inset 0 0 0 1px #123e31, inset 0 0 0 3px #fff;
+  box-shadow: 0 0 0 1px #fff, 0 0 0 2px #123e31, 0 0 0 3px #fff;
 }
 .widget-target:focus-visible {
   outline: 2px solid #123e31;
-  outline-offset: -2px;
-  box-shadow: inset 0 0 0 4px #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px #fff;
 }
 @media (forced-colors: active) {
   .widget-target, .widget-target[data-active="true"] { background: transparent; }
