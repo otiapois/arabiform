@@ -16,7 +16,7 @@ import { errorCode, loadFonts, saveDownload } from './resources';
 
 export type BatchWorker = ReturnType<typeof createBatchWorker>;
 export type ExportKind = 'zip' | 'merged' | 'split' | 'csv' | 'json';
-export type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256' | 'groupByColumn' | 'groups'>;
+export type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256' | 'groupByColumn' | 'groups' | 'qrRecords'>;
 
 export type OutputSettings = {
   filenamePlans: readonly FilenamePlan[];

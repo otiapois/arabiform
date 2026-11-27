@@ -9,7 +9,7 @@ import { WatermarkControls } from './WatermarkControls';
 
 const MappingRows = lazy(() => import('./MappingRows'));
 const VirtualFilenameTokens = lazy(() => import('./MappingRows').then(({ VirtualFilenameTokens }) => ({ default: VirtualFilenameTokens })));
-const PresetWarnings = lazy(() => import('./MappingRows').then(({ PresetWarnings }) => ({ default: PresetWarnings })));
+const PresetFeedback = lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback })));
 const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
 const WorkbenchPreview = lazy(() => import('./PdfPreview').then(({ WorkbenchPreview }) => ({ default: WorkbenchPreview })));
 const Hygiene = lazy(() => import('./Hygiene'));
@@ -24,6 +24,8 @@ const WorksheetPicker = lazy(() => import('./SourcePrintControls').then(({ Works
 const PrintLayout = lazy(() => import('./SourcePrintControls').then(({ PrintLayout }) => ({ default: PrintLayout })));
 const PdfExtractor = lazy(() => import('./PdfExtractor'));
 const FieldDesigner = lazy(() => import('./FieldDesigner'));
+const TemplateStudio = lazy(() => import('./TemplateStudio'));
+const ReceiptVerifier = lazy(() => import('./ReceiptVerifier'));
 const SourceError = lazy(() => import('./SourceError'));
 const ExportCounts = lazy(() => import('./BatchExportStatus').then(({ ExportCounts }) => ({ default: ExportCounts })));
 const SelectedExportScope = lazy(() => import('./BatchExportStatus').then(({ SelectedExportScope }) => ({ default: SelectedExportScope })));
@@ -31,6 +33,9 @@ const ExportProgress = lazy(() => import('./BatchExportStatus').then(({ ExportPr
 const GroupingControl = lazy(() => import('./GroupedOutputs').then(({ GroupingControl }) => ({ default: GroupingControl })));
 const GroupedSummary = lazy(() => import('./GroupedOutputs').then(({ GroupedSummary }) => ({ default: GroupedSummary })));
 const SplitDownload = lazy(() => import('./GroupedOutputs').then(({ SplitDownload }) => ({ default: SplitDownload })));
+
+const modes = ['fill', 'extract', 'design', 'create', 'verify'] as const;
+type Mode = typeof modes[number];
 
 type AppProps = {
   arabic: boolean;
@@ -91,27 +96,36 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
   const { labels } = language;
   const desk = useWorkbench(arabic ? 'ar' : 'en');
-  const [mode, setMode] = useState<'fill' | 'extract' | 'design'>('fill');
+  const [mode, setMode] = useState<Mode>('fill');
   const extractMode = mode === 'extract';
   const designMode = mode === 'design';
   const fillMode = mode === 'fill';
   const activeMode = useRef(mode);
   const [extractOpened, setExtractOpened] = useState(false);
+  const [studioOpened, setStudioOpened] = useState(false);
   const [design, setDesign] = useState<{ revision: number; source?: FlatSource }>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
+  const modeLabels = {
+    fill: arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs',
+    extract: arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx',
+    design: arabic ? 'تصميم الحقول' : 'Design fields',
+    create: arabic ? 'إنشاء قالب' : 'Create template',
+    verify: arabic ? 'التحقق من بيان الحيازة' : 'Verify receipt',
+  };
 
-  function openMode(next: typeof mode, source?: FlatSource) {
+  function openMode(next: Mode, source?: FlatSource) {
     activeMode.current = next;
     if (next === 'extract') setExtractOpened(true);
+    if (next === 'create') setStudioOpened(true);
     if (next === 'design') setDesign((current) => !current || source
       ? { revision: (current?.revision ?? 0) + 1, source }
       : current);
     setMode(next);
   }
 
-  function useDesignedPdf(file: File) {
-    if (activeMode.current !== 'design') return;
+  function useTemplateInFill(file: File) {
+    if (activeMode.current !== 'design' && activeMode.current !== 'create') return;
     flushSync(() => openMode('fill'));
     document.getElementById('files-heading')?.focus();
     void desk.loadPdf(file);
@@ -190,15 +204,12 @@ export function App({ arabic, heading, summary, details }: AppProps) {
 
         <div id="workbench" tabIndex={-1}>
           <div className="workbench-modes" role="group" aria-label={arabic ? 'وضع العمل' : 'Workspace mode'}>
-            <button type="button" className="button" data-testid="mode-fill" aria-pressed={fillMode} onClick={() => openMode('fill')}>
-              <span>{arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs'}</span>
-            </button>
-            <button type="button" className="button" data-testid="mode-extract" aria-pressed={extractMode} onClick={() => openMode('extract')}>
-              <span>{arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx'}</span>
-            </button>
-            <button type="button" id="mode-design" className="button" data-testid="mode-design" aria-pressed={designMode} onClick={() => openMode('design')}>
-              {arabic ? 'تصميم الحقول' : 'Design fields'}
-            </button>
+            {modes.map((name) => (
+              <button type="button" id={'mode-' + name} className="button" data-testid={'mode-' + name} key={name}
+                aria-pressed={mode === name} onClick={() => openMode(name)}>
+                <span>{modeLabels[name]}</span>
+              </button>
+            ))}
           </div>
 
           <section className="sample-gallery" hidden={!fillMode} aria-labelledby="sample-workflows-heading" data-testid="sample-gallery">
@@ -358,8 +369,9 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                         <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.printSettingsBlocked || desk.virtualTemplateBlocked}
                           onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                       </div>
-                      {desk.presetError && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
-                      {desk.presetWarnings && <Suspense><PresetWarnings warnings={desk.presetWarnings} arabic={arabic} /></Suspense>}
+                      {(desk.presetError || desk.presetWarnings) && (
+                        <Suspense><PresetFeedback invalid={desk.presetError} warnings={desk.presetWarnings} arabic={arabic} /></Suspense>
+                      )}
                     </div>
                     {desk.template && desk.sheet && (
                       <Suspense>
@@ -422,14 +434,15 @@ export function App({ arabic, heading, summary, details }: AppProps) {
                 {desk.grouping && desk.results && <Suspense><GroupedSummary desk={desk} arabic={arabic} /></Suspense>}
                 <div className="actions">
                   <button type="button" className="button primary" data-testid="download-zip" disabled={!desk.exportCount || desk.exporting || desk.groupingBlocked || (desk.flattenZip && desk.printSettingsBlocked)}
-                    onClick={() => desk.download('zip')}>{labels.zip}</button>
+                    onClick={() => desk.download('zip')}>{arabic ? <span>{labels.zip} <bdi dir="ltr">(ZIP)</bdi></span> : labels.zip}</button>
                   <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
                     onClick={() => desk.download('merged')}>{labels.merged}</button>
                   {desk.grouping && <Suspense><SplitDownload desk={desk} arabic={arabic} /></Suspense>}
                 </div>
                 <div className="actions audit-actions" role="group" aria-label={labels.audit}>
                   <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
-                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked} onClick={() => desk.download('json')}>{labels.auditJson}</button>
+                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked}
+                    onClick={() => desk.download('json')}>{arabic ? <span>{labels.auditJson} <bdi dir="ltr">(JSON)</bdi></span> : labels.auditJson}</button>
                 </div>
                 <div className="custody-controls">
                   {desk.custody ? (
@@ -450,9 +463,17 @@ export function App({ arabic, heading, summary, details }: AppProps) {
           </div>}
           {design && <div hidden={!designMode}>
             <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
-              <FieldDesigner key={design.revision} arabic={arabic} initialSource={design.source} onUseInFill={useDesignedPdf} />
+              <FieldDesigner key={design.revision} arabic={arabic} initialSource={design.source} onUseInFill={useTemplateInFill} />
             </Suspense>
           </div>}
+          {studioOpened && <div hidden={mode !== 'create'}>
+            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
+              <TemplateStudio arabic={arabic} onUseInFill={useTemplateInFill} />
+            </Suspense>
+          </div>}
+          {mode === 'verify' && <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
+            <ReceiptVerifier arabic={arabic} />
+          </Suspense>}
         </div>
 
         {details && <div className="route-details" dangerouslySetInnerHTML={details} />}

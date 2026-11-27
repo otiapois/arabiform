@@ -1,0 +1,52 @@
+.verify-body, .verify-picker, .verify-results { display: grid; gap: .65rem; min-inline-size: 0; }
+.verify-pickers, .verify-hashes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; }
+.verify-picker { align-content: start; gap: .35rem; overflow-wrap: anywhere; }
+.verify-picker .file-box { grid-template-columns: minmax(0, 1fr) auto; margin: 0; border-color: var(--control-line); }
+.verify-picker bdi, .verify-payload textarea { min-inline-size: 0; }
+.verify-picker .preset-picker bdi { white-space: nowrap; }
+.verify-filenames { margin: 0; padding-inline-start: 1.25rem; }
+.verify-picker .text-button { justify-self: start; }
+.verify-payload { max-inline-size: 45rem; }
+.verify-payload textarea { inline-size: 100%; resize: vertical; }
+.verify-results { margin-block-start: .35rem; }
+.verify-card {
+  --verdict-ink: var(--amber);
+  --verdict-surface: var(--amber-soft);
+  display: grid;
+  gap: .5rem;
+  min-inline-size: 0;
+  padding: .65rem .85rem;
+  border: 1px solid var(--line);
+  border-inline-start: .25rem solid var(--verdict-ink);
+  border-radius: .42rem;
+  overflow-wrap: anywhere;
+}
+.verify-card:is([data-status="VERIFIED_EXACT_MATCH"], [data-status="VERIFIED_QR_RECORD"]) {
+  --verdict-ink: var(--forest);
+  --verdict-surface: var(--green-soft);
+}
+.verify-card:is([data-status="TAMPERED_BYTE_MISMATCH"], [data-status="READ_ERROR"]) {
+  --verdict-ink: var(--error);
+  --verdict-surface: var(--error-soft);
+}
+.verify-card h4 { margin: 0; font-weight: 650; }
+.verify-verdict {
+  justify-self: start;
+  padding: .15rem .45rem;
+  border-radius: .25rem;
+  color: var(--verdict-ink);
+  background: var(--verdict-surface);
+  font-weight: 720;
+}
+.verify-hashes { font-size: .91rem; }
+.verify-hashes > div { min-inline-size: 0; }
+.verify-hashes dt { color: var(--muted); font-weight: 650; }
+.verify-hashes code { display: block; font-family: var(--mono); overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .verify-pickers, .verify-hashes { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 430px) {
+  .verify-picker .file-box { grid-template-columns: minmax(0, 1fr); }
+  .verify-picker .preset-picker { justify-self: start; }
+}

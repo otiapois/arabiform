@@ -53,4 +53,20 @@ describe('preparing browser-local print downloads', () => {
     await buildDownload('zip', client, onProgress, source, [], { ...settings, flattenZip: false }, scope, isCurrent);
     expect(client.zip).toHaveBeenCalledWith(['1.pdf', '2.pdf', '3.pdf'], onProgress, false, undefined, 'all-ready', undefined);
   });
+
+  it('passes custody QR selection to the worker and preserves its exported records without using the dormant pattern', async () => {
+    const client = worker();
+    const qrRecords = [{ rowNumber: 1, payload: 'printed-custody-payload' }];
+    client.zip.mockResolvedValue({ bytes: new Uint8Array(), entries: [], qrRecords });
+    const scope = { exportScope: 'all-ready' as const, selectedRowNumbers: [1, 2, 3] };
+    const settings: OutputSettings = {
+      ...output,
+      rowSelection: 'all-ready',
+      qrStamp: { placement: 'top-right', sizePt: 48, pattern: '{{ID}}', custodyRecord: true },
+    };
+    const download = await buildDownload('zip', client, onProgress, source, [], settings, scope, isCurrent);
+    expect(client.zip).toHaveBeenCalledWith(['1.pdf', '2.pdf', '3.pdf'], onProgress, true, undefined, 'all-ready',
+      { placement: 'top-right', sizePt: 48, custodyRecord: true });
+    expect(download?.digests).toMatchObject({ qrRecords });
+  });
 });

@@ -20,7 +20,7 @@ const ar: typeof en = {
   missing: 'هذا العمود غير موجود في الجدول الحالي. اختر عمودًا متاحًا أو «بلا تجميع» لتتمكن من تنزيل ملف ZIP وتقارير الفحص.',
   summary: 'الصفوف الجاهزة: {rows}، المجموعات: {groups}. يضع ملف ZIP كل مجموعة في مجلد مستقل.',
   details: 'مجلدات المجموعات وعدد صفوفها',
-  blank: 'تُحفظ الصفوف الجاهزة التي لا تحمل قيمة للمجموعة في مجلد',
+  blank: 'للصفوف الجاهزة التي لا تحمل قيمة للمجموعة مجلد خاص.',
   split: 'تنزيل ملفات PDF المدمجة لكل مجموعة',
 };
 
@@ -55,7 +55,7 @@ export function GroupedSummary({ desk, arabic }: { desk: Desk; arabic: boolean }
   return (
     <div className="grouped-summary" data-testid="grouped-export-summary">
       <p role="status">{fillLabel(copy.summary, { rows: scope.size, groups: groups.length })}</p>
-      {blank && <p>{copy.blank}{' '}<bdi dir="ltr">{blank.folder}</bdi>.</p>}
+      {blank && <p>{copy.blank}{' '}{arabic && <>اسم المجلد{' '}</>}<bdi dir="ltr">{blank.folder}</bdi>{!arabic && '.'}</p>}
       {groups.length > 0 && (
         <details>
           <summary>{copy.details}</summary>

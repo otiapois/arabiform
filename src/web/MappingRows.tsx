@@ -16,6 +16,7 @@ const en = {
   alignLtr: 'Left (LTR)',
   alignCenter: 'Center',
   preserved: 'Preserved untouched',
+  presetInvalid: 'This file is not a valid ArabiForm mapping preset. Your settings are unchanged.',
   presetMismatch: 'Check this preset against your current files. Missing mappings are skipped.',
   missingFields: 'Missing or read-only PDF fields',
   missingColumns: 'Missing roster columns',
@@ -43,6 +44,7 @@ const ar: typeof en = {
   alignLtr: 'يسار (LTR)',
   alignCenter: 'وسط',
   preserved: 'يبقى دون تغيير',
+  presetInvalid: 'تعذّر قراءة إعدادات الربط من هذا الملف. بقيت إعداداتك كما هي.',
   presetMismatch: 'راجع توافق الإعدادات مع ملفاتك الحالية. تُتخطّى الروابط غير المتاحة.',
   missingFields: 'حقول PDF مفقودة أو للقراءة فقط',
   missingColumns: 'أعمدة مفقودة في الجدول',
@@ -71,23 +73,28 @@ export function VirtualFilenameTokens({ arabic }: { arabic: boolean }) {
   );
 }
 
-export function PresetWarnings({ warnings, arabic }: {
-  warnings: NonNullable<ReturnType<typeof useWorkbench>['presetWarnings']>;
+export function PresetFeedback({ invalid, warnings, arabic }: {
+  invalid: boolean;
+  warnings: ReturnType<typeof useWorkbench>['presetWarnings'];
   arabic: boolean;
 }) {
   const labels = arabic ? ar : en;
-  const { missingFields, missingColumns } = warnings;
-  if (!missingFields.length && !missingColumns.length) return null;
-  const mismatches = [[labels.missingFields, missingFields], [labels.missingColumns, missingColumns]] as const;
+  const mismatches = warnings
+    ? [[labels.missingFields, warnings.missingFields], [labels.missingColumns, warnings.missingColumns]] as const : [];
   return (
-    <div className="alert warning preset-warning" role="status" data-testid="preset-warning">
-      <p>{labels.presetMismatch}</p>
-      {mismatches.map(([label, names]) => names.length > 0 && (
-        <p key={label}>{label}{' · '}
-          {names.map((name, index) => <span key={name}>{index > 0 ? ', ' : ''}<bdi dir="auto">{name}</bdi></span>)}
-        </p>
-      ))}
-    </div>
+    <>
+      {invalid && <p className="alert" role="alert" data-testid="preset-error">{labels.presetInvalid}</p>}
+      {mismatches.some(([, names]) => names.length > 0) && (
+        <div className="alert warning preset-warning" role="status" data-testid="preset-warning">
+          <p>{labels.presetMismatch}</p>
+          {mismatches.map(([label, names]) => names.length > 0 && (
+            <p key={label}>{label}{' · '}
+              {names.map((name, index) => <span key={name}>{index > 0 ? ', ' : ''}<bdi dir="auto">{name}</bdi></span>)}
+            </p>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
