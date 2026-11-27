@@ -72,7 +72,7 @@ function entrySize(html, route) {
     raw += bytes.length
     gzip += gzipSync(bytes).length
   }
-  requireCheck(raw < 300_000 && gzip < 95_000, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
+  requireCheck(raw < 285_000 && gzip < 89_000, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
   return { raw, gzip }
 }
 

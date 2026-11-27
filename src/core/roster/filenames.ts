@@ -1,10 +1,18 @@
 import type { RosterRow } from './index';
+import { resolveVirtualColumn, VIRTUAL_COLUMNS, type VirtualColumnId } from './virtual-columns';
 
 const illegal = /[\\/:*?"<>|\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
 const reserved = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)$/;
 const defaultPattern = '{{ID}}-{{Name}}.pdf';
 const encoder = new TextEncoder();
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const physicalTokens = /\{\{\s*([^{}]+?)\s*\}\}/g;
+const allTokens = new RegExp(`${physicalTokens.source}|\\[\\[@(${VIRTUAL_COLUMNS.join('|')})\\]\\]`, 'g');
+
+export function hasVirtualFilenameToken(pattern: string): boolean {
+  for (const match of pattern.matchAll(allTokens)) if (match[2]) return true;
+  return false;
+}
 
 export function filenameKey(filename: string): string {
   return filename.normalize('NFKC').toUpperCase().normalize('NFKC');
@@ -26,11 +34,14 @@ export type FilenamePlan = { filename: string } & (
   | { filenameAdjusted: true; filenameAdjustReason: 'sanitized' | 'reserved-name' | 'collision-dedup' }
 );
 
-export function planFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern): FilenamePlan[] {
+export function planFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern, context?: { localDate: string }): FilenamePlan[] {
   const seen = new Set<string>();
   return rows.map((row, index) => {
     const values = Array.isArray(row.warnings) ? (row as RosterRow).values : row as Record<string, string>;
-    const requested = pattern.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, token: string) => Object.hasOwn(values, token) ? values[token] ?? '' : '');
+    const requested = pattern.replace(allTokens, (token: string, physical: string | undefined, virtual: VirtualColumnId | undefined) => {
+      if (virtual) return context ? resolveVirtualColumn(virtual, index + 1, context.localDate) : token;
+      return physical !== undefined && Object.hasOwn(values, physical) ? values[physical] ?? '' : '';
+    });
     const trimmed = requested.trimEnd();
     const raw = trimmed.replace(/\.pdf$/i, '');
     const characters = Array.from(raw, (character) => illegal.test(character) || illegal.test(character.normalize('NFKC')) ? '' : character);
@@ -58,6 +69,6 @@ export function planFilenames(rows: readonly (Record<string, string> | RosterRow
   });
 }
 
-export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern): string[] {
-  return planFilenames(rows, pattern).map(({ filename }) => filename);
+export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern, context?: { localDate: string }): string[] {
+  return planFilenames(rows, pattern, context).map(({ filename }) => filename);
 }

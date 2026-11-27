@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { PRINT_MARGIN_THRESHOLD_PT } from '../core/pdf/margin-preflight';
+import type { getWidgetOverlays } from '../core/pdf/widget-overlays';
 import { diagnosticText } from './Diagnostics';
 import { fillLabel, type translator } from './labels';
 import type { RowResult, TemplateInfo } from './useWorkbench';
@@ -19,6 +20,7 @@ const en = {
   pageNumber: 'Page {page}',
   issuePageOne: 'Page {page} · {count} issue',
   issuePageMany: 'Page {page} · {count} issues',
+  widget: 'Page {page}, box {index}',
 };
 
 const ar: typeof en = {
@@ -34,6 +36,7 @@ const ar: typeof en = {
   pageNumber: 'الصفحة {page}',
   issuePageOne: 'الصفحة {page} · عدد التنبيهات {count}',
   issuePageMany: 'الصفحة {page} · عدد التنبيهات {count}',
+  widget: 'الصفحة {page}، المربع {index}',
 };
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -41,12 +44,15 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 type PreviewProps = {
   bytes?: Uint8Array;
   fields: TemplateInfo['fields'];
+  overlays: ReturnType<typeof getWidgetOverlays>;
   diagnostics?: RowResult['diagnostics'];
   minSize: number;
   unavailable: boolean;
   language: ReturnType<typeof translator>;
   requestedPage: number;
   onPageChange: (page: number) => void;
+  fieldSelection?: { fieldName: string; widgetIndex?: number };
+  onWidgetSelect: (fieldName: string, widgetIndex: number) => void;
 };
 
 type Position = {
@@ -60,7 +66,7 @@ type Position = {
 };
 
 export default function PdfPreview({
-  bytes, fields, diagnostics, minSize, unavailable, language, requestedPage, onPageChange,
+  bytes, fields, overlays, diagnostics, minSize, unavailable, language, requestedPage, onPageChange, fieldSelection, onWidgetSelect,
 }: PreviewProps) {
   const { arabic, labels } = language;
   const copy = arabic ? ar : en;
@@ -83,6 +89,7 @@ export default function PdfPreview({
   const pageRail = useRef<HTMLDivElement>(null);
   const activePill = useRef<HTMLButtonElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const firstHighlightedWidget = useRef<HTMLButtonElement>(null);
   const pdf = loaded && loaded.bytes === bytes ? loaded.pdf : undefined;
   const page = Math.min(requestedPage, pdf?.numPages ?? requestedPage);
   const pageCount = pdf?.numPages ?? 0;
@@ -90,6 +97,10 @@ export default function PdfPreview({
   const raster = rendered && rendered.pdf === pdf && rendered.page === page && rendered.size === size
     && rendered.diagnostics === diagnostics ? rendered : undefined;
   const failed = unavailable || (bytes && loaded?.bytes === bytes && !pdf) || (raster && !raster.complete);
+  const pageWidgets = raster?.complete ? overlays.filter(({ pageNumber }) => pageNumber === page) : [];
+  const firstHighlight = pageWidgets.find(({ fieldName }) => fieldName === fieldSelection?.fieldName);
+  const issueTitles = new Map(raster?.positions?.map(({ key, issues }) =>
+    [key, issues.map((issue) => diagnosticText(issue, minSize, language)).join(' · ')]));
   const issuePages = new Map<number, number>();
   for (const issue of diagnostics ?? []) {
     for (const pageNumber of issue.pageNumbers) {
@@ -108,6 +119,19 @@ export default function PdfPreview({
     const right = pillBox.right - railBox.right + 8;
     if (left < 0 || right > 0) rail.scrollBy({ left: left < 0 ? left : right });
   }, [page, pageCount]);
+
+  useEffect(() => {
+    const host = frame.current;
+    const target = firstHighlightedWidget.current;
+    if (!host || !target || fieldSelection?.widgetIndex !== undefined) return;
+    const bed = host.getBoundingClientRect();
+    const widget = target.getBoundingClientRect();
+    const left = widget.left - bed.left - 5;
+    const top = widget.top - bed.top - 5;
+    const right = widget.right - bed.left - host.clientWidth + 5;
+    const bottom = widget.bottom - bed.top - host.clientHeight + 5;
+    host.scrollBy({ left: left < 0 ? left : Math.max(0, right), top: top < 0 ? top : Math.max(0, bottom) });
+  }, [fieldSelection, raster]);
 
   useEffect(() => {
     const host = frame.current!;
@@ -263,16 +287,31 @@ export default function PdfPreview({
             <span className="margin-guide" style={{ inset: raster.marginInset }} aria-hidden="true" data-testid="margin-guide"
               data-inset-pt={PRINT_MARGIN_THRESHOLD_PT} data-all-margin={raster.marginInset === '0' || undefined} />
           )}
-          {raster?.positions?.map(({ key, field, issues, ...style }) => (
+          {raster?.positions?.map(({ key, field, left, top, width, height }) => (
             <span
               key={key}
               className="widget-overlay"
               data-testid="flagged-widget"
               data-field={field}
-              title={issues.map((issue) => diagnosticText(issue, minSize, language)).join(' · ')}
-              style={style}
+              title={issueTitles.get(key)}
+              style={{ left, top, width, height }}
             />
           ))}
+          {pageWidgets.map((widget) => {
+            const { fieldName, widgetIndex, rect: [x, y, width, height] } = widget;
+            const active = fieldName === fieldSelection?.fieldName;
+            return (
+              <button type="button" key={JSON.stringify([fieldName, widgetIndex])}
+                ref={widget === firstHighlight ? firstHighlightedWidget : undefined}
+                aria-label={`${fieldName} · ${fillLabel(copy.widget, { page, index: widgetIndex })}`}
+                title={issueTitles.get(`${fieldName}-${widgetIndex - 1}`)}
+                aria-pressed={active && (fieldSelection?.widgetIndex === undefined || fieldSelection.widgetIndex === widgetIndex)}
+                className="widget-target" data-testid="widget-overlay" data-field={fieldName} data-widget-index={widgetIndex}
+                data-active={active || undefined}
+                style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%` }}
+                onClick={() => onWidgetSelect(fieldName, widgetIndex)} />
+            );
+          })}
         </div>
       </div>
     </>

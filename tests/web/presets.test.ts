@@ -89,4 +89,20 @@ describe('local mapping preset boundary', () => {
     });
     expect(presetMismatches(preset.mapping, preset.filenamePattern)).toEqual({ missingFields: [], missingColumns: [] });
   });
+
+  it('uses v6 for virtual-only mappings or filename tokens and preserves literal physical headers', () => {
+    const virtual = { Serial: { column: 'PADDED_ROW_001', template: 'CERT-{{PADDED_ROW_001}}' } } as const;
+    const aligned = makeMappingPreset({}, 'serial.pdf', 8, 'auto', false, false, { Serial: 'center' }, undefined, virtual);
+    expect(aligned).toEqual({
+      version: 6, mapping: {}, filenamePattern: 'serial.pdf', minFontSize: 8, font: 'auto',
+      flattenZip: false, includeCoverSheet: false, alignOverrides: { Serial: 'center' }, watermark: { kind: 'none' }, virtualMappings: virtual,
+    });
+    expect(parseMappingPreset(JSON.stringify(aligned))).toEqual(aligned);
+    expect(makeDraftSettings({}, 'serial.pdf', 8, 'auto', false, false, { Serial: 'center' }, undefined, virtual)).toEqual(aligned);
+    expect(makeMappingPreset({}, '[[@PADDED_ROW_001]].pdf', 8, 'auto').version).toBe(6);
+    expect(makeMappingPreset({}, '{{[[@PADDED_ROW_001]]}}.pdf', 8, 'auto').version).toBe(1);
+    expect(presetMismatches({}, '[[@PADDED_ROW_001]]-{{Name}}.pdf', ['Serial'], [], virtual, [])).toEqual({
+      missingFields: ['Serial'], missingColumns: ['Name'],
+    });
+  });
 });

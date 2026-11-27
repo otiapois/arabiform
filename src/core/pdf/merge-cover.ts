@@ -1,6 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, PDFOperator, PDFOperatorNames as Op, type PDFPage } from 'pdf-lib';
 import { CUSTODY_PREFIX_LENGTH, type CustodySources } from '../audit/custody';
+import { localVirtualDate } from '../roster/virtual-columns';
 import { appendPositionedText } from './appearances';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, textInputDiagnostic, type PlacedLine } from './shaping';
 import { key, number } from './template';
@@ -131,10 +132,6 @@ function addText(page: PDFPage, text: CoverText, left: number, top: number, widt
   page.pushOperators(...operators);
 }
 
-function localDate(date: Date) {
-  return [String(date.getFullYear()).padStart(4, '0'), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
-}
-
 export async function prependMergeCover(
   doc: PDFDocument, entries: readonly { filename: string; pageCount: number }[], options: MergeCoverOptions,
 ) {
@@ -152,7 +149,7 @@ export async function prependMergeCover(
       `Template SHA-256 ${custody.templateSha256.slice(0, CUSTODY_PREFIX_LENGTH)}   ·   Roster SHA-256 ${custody.rosterSha256.slice(0, CUSTODY_PREFIX_LENGTH)}`,
       8, WIDTH, 'ltr');
     const details = ([
-      { label: copy.date, value: localDate(exportedAt), mode: 'ltr' },
+      { label: copy.date, value: localVirtualDate(exportedAt), mode: 'ltr' },
       { label: copy.template, value: templateName, mode: 'filename' },
     ] as const).map(({ label, value, mode }) => ({
       label: layoutText(shaper, label, 10, 110, direction),
