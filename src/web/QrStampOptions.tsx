@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CustodySources } from '../core/audit/custody';
 import { createCustodyQrRecords } from '../core/custody/records';
 import { encodeQr, resolveQrPayload } from '../core/pdf/qr-encoder';
-import { DEFAULT_QR_SIZE_PT, DEFAULT_QR_STAMP, type QrStampSettings } from '../core/pdf/qr-settings';
+import { DEFAULT_QR_SIZE_PT, DEFAULT_QR_STAMP, validateQrStampSettings, type QrStampSettings } from '../core/pdf/qr-settings';
 import { printProblem } from './ExportError';
 import { errorCode } from './resources';
 import type { useWorkbench } from './useWorkbench';
@@ -16,7 +16,8 @@ const placements = {
 } satisfies Record<QrStampSettings['placement'], readonly [string, string]>;
 
 export default function QrStampOptions({ desk, arabic }: { desk: ReturnType<typeof useWorkbench>; arabic: boolean }) {
-  const { qrStamp, selected, changeQrStamp, qrSettingsBlocked, custody } = desk;
+  const { qrStamp, selected, qrSettingsBlocked, custody } = desk;
+  const changeQrStamp = (value: QrStampSettings) => desk.changeQrStamp(value, Boolean(validateQrStampSettings(value)));
   const values = desk.rows[selected]?.values;
   const date = desk.roster?.localDate;
   const options = qrStamp.placement === 'none' ? undefined : qrStamp;

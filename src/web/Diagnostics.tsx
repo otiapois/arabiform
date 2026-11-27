@@ -47,7 +47,7 @@ const problems: Record<string, readonly [string, string]> = {
   'excel-number-format-warning': ['Excel uses a number format that cannot be reproduced. Check the raw value against the workbook.', 'يستخدم Excel تنسيق أرقام يتعذّر استعادته. قارن القيمة الخام بما يظهر في المصنف.'],
 };
 
-export function diagnosticProblem(code: string, { arabic }: Language) {
+export function diagnosticProblem(code: string, { arabic }: Pick<Language, 'arabic'>) {
   return problems[code]?.[arabic ? 1 : 0] ?? sourceProblem(code, arabic);
 }
 

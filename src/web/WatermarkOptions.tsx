@@ -1,15 +1,16 @@
-import { MAX_WATERMARK_CHARACTERS, type WatermarkSettings } from '../core/pdf/watermark-settings';
+import { MAX_WATERMARK_CHARACTERS, validateWatermarkSettings, type WatermarkSettings } from '../core/pdf/watermark-settings';
 
 type Stamp = Exclude<WatermarkSettings, { kind: 'none' }>;
 
-export default function WatermarkOptions({ settings, change, disabled, invalid, arabic }: {
+export default function WatermarkOptions({ settings, change: setSettings, disabled, invalid, arabic }: {
   settings: Stamp;
-  change: (settings: Stamp) => void;
+  change: (settings: Stamp, valid: boolean) => void;
   disabled: boolean;
   invalid: boolean;
   arabic: boolean;
 }) {
   const opacity = Number((settings.opacity * 100).toPrecision(15));
+  const change = (value: Stamp) => setSettings(value, Boolean(validateWatermarkSettings(value)));
 
   return (
     <fieldset className="watermark-options" disabled={disabled}

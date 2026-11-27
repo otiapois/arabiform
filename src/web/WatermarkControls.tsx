@@ -5,19 +5,20 @@ const WatermarkOptions = lazy(() => import('./WatermarkOptions'));
 
 export function WatermarkControls({ settings, change, disabled, invalid, arabic }: {
   settings: WatermarkSettings;
-  change: (settings: WatermarkSettings) => void;
+  change: (settings: WatermarkSettings, valid: boolean) => void;
   disabled: boolean;
   invalid: boolean;
   arabic: boolean;
 }) {
   function selectKind(kind: WatermarkSettings['kind']) {
     if (kind === 'none') {
-      change(DEFAULT_WATERMARK);
+      change(DEFAULT_WATERMARK, true);
       return;
     }
     const opacity = settings.kind === 'none' ? DEFAULT_WATERMARK_OPACITY : settings.opacity;
     const angle = settings.kind === 'none' ? DEFAULT_WATERMARK_ANGLE : settings.angle;
-    change(kind === 'custom' ? { kind, opacity, angle, text: '' } : { kind, opacity, angle });
+    if (kind === 'custom') change({ kind, opacity, angle, text: '' }, false);
+    else change({ kind, opacity, angle }, true);
   }
 
   return (

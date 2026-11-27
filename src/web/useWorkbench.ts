@@ -1,22 +1,22 @@
 import { useMemo, useRef, useState } from 'react';
 import type { BatchDraft } from '../core/draft/batch-draft';
 import type { AlignOverride } from '../core/pdf/alignment';
-import { validateApprovalSealSettings, type ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
+import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
 import type { FieldTypography, FieldTypographyMap } from '../core/pdf/field-typography';
-import { DEFAULT_QR_STAMP, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../core/pdf/qr-settings';
-import { DEFAULT_WATERMARK, validateWatermarkSettings, type WatermarkSettings } from '../core/pdf/watermark-settings';
+import { DEFAULT_QR_STAMP, type CoverLanguage, type QrStampSettings } from '../core/pdf/qr-settings';
+import { DEFAULT_WATERMARK, type WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
+import type { BatchPublication } from './BatchSession';
 import type { FillTemplate, FlatSource } from './fill-template-source';
 import type { FontMode, MappingPreset } from './presets';
 import { errorCode, saveDownload } from './resources';
 import type { RosterSource } from './roster-source';
-import { useBatch } from './useBatch';
 
 type PdfEngine = typeof import('../core/pdf');
 export type TemplateInfo = Awaited<ReturnType<PdfEngine['inspectTemplate']>>;
@@ -26,6 +26,8 @@ export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
 
 const emptyRows: SourceRow[] = [];
 const emptyFields: TemplateInfo['fields'] = [];
+const noop = () => undefined;
+const idleRenderRecord = async () => undefined;
 const samplePatterns = {
   workshop: '{{ID}}-{{Name}}.pdf',
   clinic: '{{ID}}-{{Name}}.pdf',
@@ -80,12 +82,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [coverLanguage, setCoverLanguage] = useState<CoverLanguage>('auto');
   const [imposition, setImposition] = useState<Imposition>('1-up');
   const [includeCustody, setIncludeCustody] = useState(false);
-  const [watermark, setWatermark] = useState<WatermarkSettings>(DEFAULT_WATERMARK);
-  const [qrStamp, setQrStamp] = useState<QrStampSettings>(DEFAULT_QR_STAMP);
+  const [watermarkState, setWatermark] = useState({ value: DEFAULT_WATERMARK, valid: true });
+  const [qrState, setQrStamp] = useState({ value: DEFAULT_QR_STAMP, valid: true });
   const [qrOpen, setQrOpen] = useState(false);
-  const [approvalSeal, setApprovalSeal] = useState<ApprovalSealSettings | null>(null);
+  const [sealState, setApprovalSeal] = useState<{ value: ApprovalSealSettings | null; valid: boolean }>({ value: null, valid: true });
   const [presetError, setPresetError] = useState(false);
   const [presetCodec, setPresetCodec] = useState<typeof import('./presets')>();
+  const [publication, publishBatch] = useState<BatchPublication>();
 
   const sheet = roster?.sheet;
   const templateFields = template?.info.fields ?? emptyFields;
@@ -115,10 +118,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined,
       mappingSettings.typography)
     : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template]);
-  const watermarkBlocked = useMemo(() => !validateWatermarkSettings(watermark), [watermark]);
-  const qrSettingsBlocked = useMemo(() => !validateQrStampSettings(qrStamp), [qrStamp]);
-  const validSeal = useMemo(() => validateApprovalSealSettings(approvalSeal), [approvalSeal]);
-  const sealSettingsBlocked = validSeal === undefined;
+  const { value: watermark, valid: validWatermark } = watermarkState;
+  const { value: qrStamp, valid: validQrStamp } = qrState;
+  const { value: approvalSeal, valid: validApprovalSeal } = sealState;
+  const watermarkBlocked = !validWatermark;
+  const qrSettingsBlocked = !validQrStamp;
+  const sealSettingsBlocked = !validApprovalSeal;
+  const validSeal = validApprovalSeal ? approvalSeal : null;
   const settingsSaveBlocked = watermarkBlocked || qrSettingsBlocked || sealSettingsBlocked;
 
   const virtualTemplateBlocked = Boolean(roster && Object.values(virtualMappings).some(({ column, template }) =>
@@ -148,14 +154,17 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     approvalSeal: validSeal ?? undefined,
     imposition: printLayout,
   }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, validSeal, activeCoverLanguage, printLayout]);
-  const { invalidate, clearExportError, download, cancel, exportLocked, ...job } = useBatch(batch, selected, output, sealSettingsBlocked || Boolean(approvalSeal && qrSettingsBlocked));
-  const printSettingsBlocked = settingsSaveBlocked || job.sealPrintBlocked;
-  const results = useMemo(() => job.results?.map((result, index): RowResult => ({
+  const sealPreviewBlocked = sealSettingsBlocked || Boolean(approvalSeal && qrSettingsBlocked);
+  const batchSession = batch || publication ? { batch, selected, output, sealPreviewBlocked, publish: publishBatch } : undefined;
+  const { invalidate = noop, clearExportError = noop, download, cancel = noop, exportLocked = noop } = publication?.job ?? {};
+  const job = publication?.batch === batch ? publication?.job : undefined;
+  const printSettingsBlocked = settingsSaveBlocked || Boolean(job?.sealPrintBlocked);
+  const results = useMemo(() => job?.results?.map((result, index): RowResult => ({
     ...result, ...(grouping?.rows[index] ?? filenamePlans[index]!),
-  })), [job.results, grouping, filenamePlans]);
-  const ready = useMemo(() => job.results?.filter(({ status }) => status === 'pass').length ?? 0, [job.results]);
+  })), [job?.results, grouping, filenamePlans]);
+  const ready = useMemo(() => job?.results?.filter(({ status }) => status === 'pass').length ?? 0, [job?.results]);
   const warningRows = useMemo(() => rows.filter((row) => row.warnings.length > 0).length, [rows]);
-  const firstFlaggedPage = job.results?.[selected]?.pageNumbers[0];
+  const firstFlaggedPage = job?.results?.[selected]?.pageNumbers[0];
   const previewPage = requestedPage ?? firstFlaggedPage ?? 1;
 
   function focusMappingField(fieldName: string, page?: number) {
@@ -169,7 +178,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   function selectRow(index: number) {
     setSelected(index);
-    setRequestedPage(job.results ? job.results[index]?.pageNumbers[0] ?? previewPage : undefined);
+    setRequestedPage(results ? results[index]?.pageNumbers[0] ?? previewPage : undefined);
   }
 
   function retainPreviewPage() {
@@ -262,10 +271,10 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setCoverLanguage('auto');
       setImposition('1-up');
       setIncludeCustody(false);
-      setWatermark(DEFAULT_WATERMARK);
-      setQrStamp(DEFAULT_QR_STAMP);
+      setWatermark({ value: DEFAULT_WATERMARK, valid: true });
+      setQrStamp({ value: DEFAULT_QR_STAMP, valid: true });
       setQrOpen(false);
-      setApprovalSeal(null);
+      setApprovalSeal({ value: null, valid: true });
     }
     setPresetError(false);
     setTemplate(undefined);
@@ -459,25 +468,25 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setIncludeCustody(value);
   }
 
-  function changeWatermark(value: WatermarkSettings) {
+  function changeWatermark(value: WatermarkSettings, valid: boolean) {
     if (exportLocked()) return;
     clearExportError();
     request.current.draft++;
-    setWatermark(value);
+    setWatermark({ value, valid });
   }
 
-  function changeQrStamp(value: QrStampSettings) {
+  function changeQrStamp(value: QrStampSettings, valid: boolean) {
     if (exportLocked()) return;
     clearExportError();
     request.current.draft++;
-    setQrStamp(value);
+    setQrStamp({ value, valid });
   }
 
-  function changeApprovalSeal(value: ApprovalSealSettings | null) {
+  function changeApprovalSeal(value: ApprovalSealSettings | null, valid: boolean) {
     if (exportLocked()) return;
     clearExportError();
     request.current.draft++;
-    setApprovalSeal(value);
+    setApprovalSeal({ value, valid });
   }
 
   function changeCoverLanguage(value: CoverLanguage) {
@@ -525,11 +534,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setGroupByColumn('groupByColumn' in preset ? preset.groupByColumn : null);
     setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
     setIncludeCustody(false);
-    setWatermark('watermark' in preset ? preset.watermark : DEFAULT_WATERMARK);
+    setWatermark({ value: 'watermark' in preset ? preset.watermark : DEFAULT_WATERMARK, valid: true });
     const stamp = 'qrStamp' in preset ? preset.qrStamp : DEFAULT_QR_STAMP;
-    setQrStamp(stamp);
+    setQrStamp({ value: stamp, valid: true });
     setQrOpen(stamp.placement !== 'none');
-    setApprovalSeal('approvalSeal' in preset ? preset.approvalSeal : null);
+    setApprovalSeal({ value: 'approvalSeal' in preset ? preset.approvalSeal : null, valid: true });
     setCoverLanguage('coverLanguage' in preset ? preset.coverLanguage : 'auto');
     setImposition('imposition' in preset ? preset.imposition : '1-up');
   }
@@ -581,15 +590,21 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage, printLayout, impositionUnavailable, changeImposition,
     watermark, watermarkBlocked, changeWatermark,
     qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked, changeQrStamp,
-    ...job, results, ready, flagged: results ? results.length - ready : 0, warningRows,
+    ...job, batchSession, results, ready, flagged: results ? results.length - ready : 0, warningRows,
+    exportScope: job?.exportScope ?? { exportScope: rowSelection === 'all-ready' ? 'all-ready' as const : 'selected-subset' as const, selectedRowNumbers: [] },
+    exportCount: job?.exportCount ?? 0,
+    exporting: job?.exporting ?? false,
+    previewError: job?.previewError ?? sealPreviewBlocked,
+    sealPreviewBlocked,
+    renderRecord: job?.renderRecord ?? idleRenderRecord,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
     rowEdit: edits[selected], restoreRowEdit,
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
-    download: (kind: Parameters<typeof download>[0]) => {
+    download: (kind: Parameters<NonNullable<typeof download>>[0]) => {
       const print = kind === 'merged' || kind === 'split' || (kind === 'zip' && flattenZip);
       if (print && printSettingsBlocked) return;
-      return download(kind);
+      return download?.(kind);
     },
   };
 }
