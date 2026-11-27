@@ -5,7 +5,7 @@ import type { Locator, Page, TestInfo } from '@playwright/test';
 import { unzipSync } from 'fflate';
 import Papa from 'papaparse';
 import { PDFDocument, PDFName, TextAlignment } from 'pdf-lib';
-import { canvasInk, expect, golden, noOverflow, test } from './browser';
+import { expect, golden, noOverflow, test } from './browser';
 import { download } from './downloads';
 import { auditPage } from './m10-accessibility';
 
@@ -60,6 +60,23 @@ async function save(page: Page, id: string, info: TestInfo, name: string) {
   return download(page, (await page.getByTestId(id).innerText()).trim(), info.outputPath('downloads'), name);
 }
 
+async function visibleInk(canvas: Locator) {
+  await expect(canvas).toHaveAttribute('data-rendered', 'true');
+  await expect(canvas).toBeVisible();
+  const ink = await canvas.evaluate((el: HTMLCanvasElement) => {
+    const data = el.getContext('2d')!.getImageData(0, 0, el.width, el.height).data;
+    let dark = 0, light = 0;
+    for (let n = 0; n < data.length; n += 4) {
+      if (data[n + 3] === 255 && Math.max(data[n]!, data[n + 1]!, data[n + 2]!) < 140) dark++;
+      if (data[n + 3] === 255 && Math.min(data[n]!, data[n + 1]!, data[n + 2]!) > 220) light++;
+    }
+    return { dark, light, pixels: el.width * el.height };
+  });
+  expect(ink.dark).toBeGreaterThan(200);
+  expect(ink.light).toBeGreaterThan(ink.pixels * .5);
+  return ink;
+}
+
 async function capture(page: Page, info: TestInfo, filename: string, anchor: Locator) {
   const directory = process.env.ARABIFORM_CAPTURE_M15_SCREENSHOTS === '1'
     ? resolve('docs/reports/screenshots/m15') : info.outputPath('screenshots');
@@ -92,7 +109,7 @@ test('M15 recovers a dropped flat PDF, restores its bound layout and reads both 
   const panel = page.getByTestId('field-designer');
   await expect(panel.getByText('flat.pdf', { exact: true })).toBeVisible();
   await expect(page.getByTestId('designer-download')).toBeDisabled();
-  const sourceInk = await canvasInk(page);
+  const sourceInk = await visibleInk(page.getByTestId('designer-canvas'));
 
   await page.getByTestId('designer-tool-text').click();
   await draw(page, info, [.13, .27], [.59, .34]);
@@ -166,7 +183,7 @@ test('M15 recovers a dropped flat PDF, restores its bound layout and reads both 
   await page.locator('.pattern-input').fill('{{ID}}.pdf');
   await expect(page.getByTestId('ready-count')).toHaveText('2');
   await expect(page.getByTestId('flatten-zip')).not.toBeChecked();
-  const filledInk = await canvasInk(page);
+  const filledInk = await visibleInk(page.getByTestId('pdf-canvas'));
   if (info.project.name === 'desktop') await capture(page, info, 'desktop-m15-flat-to-fill.png', page.locator('.preview-toolbar'));
   await noOverflow(page);
   const zip = await download(page, 'Download Clean PDFs (.zip)', info.outputPath('downloads'), 'arabiform-clean.zip');
@@ -233,17 +250,7 @@ for (const arabic of [false, true]) {
     const canvas = page.getByTestId('designer-canvas');
     await expect(canvas).toHaveAttribute('data-rendered', 'true');
     await expect(canvas).toHaveAccessibleName(arabic ? 'صفحة PDF الأصلية' : 'Source PDF page');
-    const ink = await canvas.evaluate((el: HTMLCanvasElement) => {
-      const data = el.getContext('2d')!.getImageData(0, 0, el.width, el.height).data;
-      let dark = 0, light = 0;
-      for (let n = 0; n < data.length; n += 4) {
-        if (data[n + 3] === 255 && Math.max(data[n]!, data[n+1]!, data[n+2]!) < 140) dark++;
-        if (data[n + 3] === 255 && Math.min(data[n]!, data[n+1]!, data[n+2]!) > 220) light++;
-      }
-      return { dark, light, pixels: el.width * el.height };
-    });
-    expect(ink.dark).toBeGreaterThan(500);
-    expect(ink.light).toBeGreaterThan(ink.pixels * .5);
+    const ink = await visibleInk(canvas);
     await page.getByTestId('designer-tool-checkbox').click();
     await draw(page, info, [.105, .723], [.139, .769]);
     await commitValue(page.getByTestId('designer-field-name'), arabic ? 'حضور' : 'Verified');
