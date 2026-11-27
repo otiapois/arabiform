@@ -50,7 +50,8 @@
 - **Rule** — Test direct slashless static route URLs on production preview and measure mobile overflow against the configured viewport (`390px`), keeping wide preview tables inside positioned scroll containers.
 - **Why** — Vite preview can fall back to `/` on slashless directory routes, and screen-reader absolute text outside scroll containers silently expands mobile document width past `390px`.
 - **Evidence** — Caught and fixed during ImportMedic M1 (`d9c31bc`, `e0f97fd`).
-- **Seen: 1** (2026-11-26)
+- M15 的设计器打开真实 PDF 后，390 px 视口的页面宽度增到 715 px。允许画布所在网格列收缩后，英阿两种界面在设计、恢复布局和填表阶段均保持 390 px。检查页面宽度时要先载入内容。[实测溢出](test-results/m15-evidence/implementation-checks/mobile-overflow-before.log) · [双语触屏回归](tests/e2e/m15-designer.spec.ts)
+- **Seen: 2**（移动页面宽度检查，ImportMedic M1、ArabiForm M15 各一次）。
 
 ### M2 文本与导出回归（2026-11-26）
 
@@ -92,7 +93,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 9**（M1、M2、M5、M9、M10、M11、M12、M13、M14，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[本次启动错误](test-results/m14-evidence/qa-pixels.log) 此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 10**（M1、M2、M5、M9、M10、M11、M12、M13、M14、M15，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[M14 启动错误](test-results/m14-evidence/qa-pixels.log)。M15 在冻结主线上复现，使用同一提交及 D 盘输入重跑原命令。[M15 启动错误](test-results/m15-evidence/qa-pixels.log) · [原命令重跑](test-results/m15-evidence/qa-pixels-native.log)。此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
