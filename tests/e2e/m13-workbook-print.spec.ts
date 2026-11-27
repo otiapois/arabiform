@@ -81,6 +81,18 @@ async function settings(page: Page) {
 }
 
 async function screenshot(page: Page, info: TestInfo, arabic = false) {
+  const measure = await page.getByTestId('imposition').evaluate(async element => {
+    await document.fonts.ready;
+    const select = element as HTMLSelectElement;
+    const css = getComputedStyle(select);
+    const canvas = document.createElement('canvas').getContext('2d')!;
+    canvas.font = css.fontWeight + ' ' + css.fontSize + ' ' + css.fontFamily;
+    const text = select.selectedOptions[0]!.text;
+    const available = select.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight) - 18;
+    return { text, textWidth: canvas.measureText(text).width, available, caretAllowance: 18 };
+  });
+  expect(measure.textWidth, 'the closed native select shows the complete option beside the Edge caret').toBeLessThanOrEqual(measure.available);
+  await writeFile(info.outputPath('native-layout.json'), JSON.stringify(measure));
   if (process.env.ARABIFORM_CAPTURE_M13_SCREENSHOTS !== '1' || arabic && info.project.name === 'mobile') return;
   const dir = resolve('docs/reports/screenshots/m13');
   const name = arabic ? 'desktop-m13-ar-rtl-2up' : info.project.name === 'mobile' ? 'mobile-m13-2up' : 'desktop-m13-xlsx-sheet-and-2up';
