@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { suggestBatchFontSize } from '../core/pdf/batch-font-suggestion';
 import { matchChoice } from '../core/pdf/choice-match';
 import { choiceText, editableChoices } from './Choices';
@@ -20,6 +20,11 @@ const en = {
   filterEmpty: 'No rows match this filter.',
   row: 'Row',
   showRow: 'Select row {row}',
+  includeRow: 'Include row {row} in export',
+  selectFilteredReady: 'Select filtered ready',
+  clearSelection: 'Clear selection',
+  useAllReady: 'Use all ready',
+  selection: 'Export row selection',
   editRow: 'Edit row {row}',
   filename: 'Filename',
   filenameAdjusted: 'Filename adjusted',
@@ -53,6 +58,11 @@ const ar: typeof en = {
   filterEmpty: 'لا توجد صفوف تطابق هذه التصفية.',
   row: 'الصف',
   showRow: 'اختر الصف {row}',
+  includeRow: 'أدرج الصف {row} في التصدير',
+  selectFilteredReady: 'حدّد الصفوف الجاهزة المطابقة',
+  clearSelection: 'امسح التحديد',
+  useAllReady: 'استخدم كل الصفوف الجاهزة',
+  selection: 'تحديد الصفوف للتصدير',
   editRow: 'عدّل الصف {row}',
   filename: 'اسم الملف',
   filenameAdjusted: 'تم تعديل اسم الملف',
@@ -76,6 +86,7 @@ const ar: typeof en = {
 type QueueProps = {
   desk: ReturnType<typeof useWorkbench>;
   language: ReturnType<typeof translator>;
+  characterKeys: boolean;
 };
 
 const pageSize = 20;
@@ -87,7 +98,7 @@ function searchable(value: string) {
   return value.normalize('NFKD').toLowerCase().replace(/\p{M}/gu, '');
 }
 
-export default function Queue({ desk, language }: QueueProps) {
+export default function Queue({ desk, language, characterKeys }: QueueProps) {
   const { labels, arabic } = language;
   const copy = arabic ? ar : en;
   const [editSession, setEditSession] = useState<{
@@ -95,8 +106,11 @@ export default function Queue({ desk, language }: QueueProps) {
   }>();
   const [search, setSearch] = useState('');
   const [pageIndex, setPageIndex] = useState(0);
-  const searchInput = useRef<HTMLInputElement>(null);
+  const tableRegion = useRef<HTMLDivElement>(null);
+  const nextFocusRow = useRef<number>(undefined);
+  const selectFilteredButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
+  const checkedRows = useMemo(() => new Set(desk.rowSelection === 'all-ready' ? [] : desk.rowSelection), [desk.rowSelection]);
   const activeEdit = editSession?.sheet === desk.sheet && editSession?.row === desk.selected
     && editSession.revision === desk.cellRevision ? editSession : undefined;
   const editing = activeEdit !== undefined;
@@ -107,21 +121,6 @@ export default function Queue({ desk, language }: QueueProps) {
     'reserved-name': copy.filenameReserved,
     'collision-dedup': copy.filenameCollision,
   };
-
-  useEffect(() => {
-    function focusQueueSearch(event: KeyboardEvent) {
-      const input = searchInput.current;
-      if (!input || event.key !== '/' || event.defaultPrevented || event.isComposing
-        || event.altKey || event.ctrlKey || event.metaKey || document.designMode === 'on') return;
-      const target = event.target;
-      if (target instanceof HTMLElement && target.isContentEditable) return;
-      if (target instanceof Element && target.closest('form, input, textarea, select, [role="textbox"]')) return;
-      event.preventDefault();
-      input.focus();
-    }
-    document.addEventListener('keydown', focusQueueSearch);
-    return () => document.removeEventListener('keydown', focusQueueSearch);
-  }, []);
 
   function beginEdit() {
     setEditSession({ sheet: desk.sheet, row: desk.selected, revision: desk.cellRevision, original: desk.rowEdit });
@@ -164,6 +163,38 @@ export default function Queue({ desk, language }: QueueProps) {
   const page = Math.min(pageIndex, Math.max(0, pageCount - 1));
   const firstMatch = page * pageSize;
   const visibleRows = matches.slice(firstMatch, firstMatch + pageSize);
+
+  function focusRow(index: number) {
+    tableRegion.current?.querySelector<HTMLButtonElement>(`[data-row="${index + 1}"] .row-link`)?.focus();
+  }
+
+  useLayoutEffect(() => {
+    if (nextFocusRow.current === undefined) return;
+    focusRow(nextFocusRow.current);
+    nextFocusRow.current = undefined;
+  }, [page]);
+
+  function navigateRows(event: KeyboardEvent<HTMLDivElement>) {
+    if ((event.key !== 'ArrowUp' && event.key !== 'ArrowDown') || !visibleRows.length
+      || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing) return;
+    const focusedRow = (event.target as Element).closest<HTMLElement>('[data-row]');
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    const position = focusedRow ? matches.indexOf(Number(focusedRow.dataset.row) - 1) + direction
+      : visibleRows.includes(desk.selected) ? matches.indexOf(desk.selected)
+      : direction === 1 ? firstMatch : firstMatch + visibleRows.length - 1;
+    event.preventDefault();
+    const nextRow = matches[position];
+    if (nextRow === undefined) return;
+    desk.selectRow(nextRow);
+    setEditSession(undefined);
+    const nextPage = Math.floor(position / pageSize);
+    if (nextPage === page) focusRow(nextRow);
+    else {
+      nextFocusRow.current = nextRow;
+      setPageIndex(nextPage);
+    }
+  }
+
   return (
     <>
       {batchSize && (
@@ -178,7 +209,7 @@ export default function Queue({ desk, language }: QueueProps) {
       <div className="queue-controls">
         <label className="queue-search">
           <span className="sr-only">{copy.queueSearch}</span>
-          <input ref={searchInput} type="search" dir="auto" data-testid="queue-search" aria-keyshortcuts="/"
+          <input id="queue-search" type="search" dir="auto" data-testid="queue-search" aria-keyshortcuts={characterKeys ? '/' : undefined}
             placeholder={copy.queueSearchHint} value={search}
             onChange={(event) => { setSearch(event.currentTarget.value); setPageIndex(0); }} />
         </label>
@@ -191,7 +222,27 @@ export default function Queue({ desk, language }: QueueProps) {
           ))}
         </div>
       </div>
-      <div className="table-scroll" tabIndex={0} aria-label={labels.queue}>
+      <div className="queue-selection actions compact" role="group" aria-label={copy.selection}>
+        <button ref={selectFilteredButton} type="button" className="button secondary" data-testid="select-filtered-ready"
+          disabled={!desk.results || desk.exporting}
+          onClick={() => desk.changeRowSelection(matches.filter((index) => desk.results?.[index]?.status === 'pass').map((index) => index + 1))}>
+          {copy.selectFilteredReady}
+        </button>
+        <button type="button" className="button secondary" data-testid="clear-selection"
+          disabled={desk.rowSelection === 'all-ready' || desk.exporting} onClick={() => desk.changeRowSelection([])}>
+          {copy.clearSelection}
+        </button>
+        {desk.rowSelection !== 'all-ready' && (
+          <button type="button" className="text-button" data-testid="use-all-ready" disabled={desk.exporting}
+            onClick={() => {
+              if (selectFilteredButton.current?.disabled) tableRegion.current?.focus();
+              else selectFilteredButton.current?.focus();
+              desk.changeRowSelection('all-ready');
+            }}>{copy.useAllReady}</button>
+        )}
+      </div>
+      <div className="table-scroll" ref={tableRegion} role="region" tabIndex={0} aria-label={labels.queue}
+        aria-keyshortcuts="ArrowUp ArrowDown" onKeyDown={navigateRows}>
         <table>
           <thead><tr><th scope="col">{copy.row}</th><th scope="col">{copy.filename}</th><th scope="col">{copy.status}</th><th scope="col">{copy.issues}</th></tr></thead>
           <tbody>
@@ -202,18 +253,29 @@ export default function Queue({ desk, language }: QueueProps) {
               const adjustmentReason = filenamePlan.filenameAdjusted
                 ? adjustmentReasons[filenamePlan.filenameAdjustReason] : undefined;
               const issue = result?.diagnostics[0];
+              const rowNumber = index + 1;
+              const checked = checkedRows.has(rowNumber);
               return (
-                <tr key={index} data-testid="queue-row" data-row={index + 1} data-selected={desk.selected === index}>
+                <tr key={index} data-testid="queue-row" data-row={rowNumber} data-selected={desk.selected === index}>
                   <th scope="row">
-                    <button
-                      type="button"
-                      className="row-link"
-                      aria-label={fillLabel(copy.showRow, { row: index + 1 })}
-                      aria-pressed={desk.selected === index}
-                      onClick={() => { desk.selectRow(index); setEditSession(undefined); }}
-                    >
-                      {String(index + 1).padStart(2, '0')}
-                    </button>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="row-link"
+                        aria-label={fillLabel(copy.showRow, { row: rowNumber })}
+                        aria-pressed={desk.selected === index}
+                        onClick={() => { desk.selectRow(index); setEditSession(undefined); }}
+                      >
+                        {String(rowNumber).padStart(2, '0')}
+                      </button>
+                      <label className="row-export-check">
+                        <input type="checkbox" data-testid="queue-row-select" checked={checked}
+                          aria-label={fillLabel(copy.includeRow, { row: rowNumber })}
+                          disabled={desk.exporting || !desk.results || (!checked && result?.status !== 'pass')}
+                          onChange={(event) => desk.changeRowSelection(event.currentTarget.checked
+                            ? [...checkedRows, rowNumber] : [...checkedRows].filter((selected) => selected !== rowNumber))} />
+                      </label>
+                    </div>
                   </th>
                   <td>
                     <Filename name={filenamePlan.filename} />

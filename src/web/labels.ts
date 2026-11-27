@@ -101,6 +101,10 @@ const en = {
   exceedsChars: 'Exceeds MaxLen by {count} chars',
   export: 'Download batch',
   exportHelp: 'PDF downloads include ready rows ({ready}) and skip flagged rows ({flagged}). The audit includes every checked row.',
+  exportSubsetHelp: 'PDFs, audits and the custody manifest cover the ready rows selected for export.',
+  exportAll: 'All ready ({count})',
+  exportSelected: 'Selected only ({count})',
+  exportSubsetEmpty: 'This selection has no ready rows. Select a ready row or choose “Use all ready” to switch back.',
   exportWait: 'Run preflight to prepare the downloads.',
   zip: 'Download Clean PDFs (.zip)',
   merged: 'Download Merged Printable PDF',
@@ -115,6 +119,7 @@ const en = {
   checklistSummary: 'Use the scope checklist to document your template, data rules and review process before the next run.',
   checklist: 'Download scope checklist',
   footer: 'ArabiForm · Local PDF mail merge',
+  shortcuts: 'Shortcuts (?)',
 };
 
 const ar: Record<keyof typeof en, string> = {
@@ -220,6 +225,10 @@ const ar: Record<keyof typeof en, string> = {
   exceedsChars: 'عدد الأحرف الزائدة على الحد الأقصى للحقل (MaxLen) هو {count}',
   export: 'تنزيل الدفعة',
   exportHelp: 'الصفوف الجاهزة للتنزيل بصيغة PDF: {ready}. الصفوف المستبعدة: {flagged}. يشمل تقرير الفحص كل الصفوف المفحوصة.',
+  exportSubsetHelp: 'تقتصر ملفات PDF وتقارير الفحص وبيان سلسلة الحيازة على الصفوف الجاهزة المحددة للتصدير.',
+  exportAll: 'كل الصفوف الجاهزة ({count})',
+  exportSelected: 'الصفوف المحددة فقط ({count})',
+  exportSubsetEmpty: 'لا توجد صفوف جاهزة ضمن التحديد. حدّد صفًا جاهزًا أو اختر «استخدم كل الصفوف الجاهزة».',
   exportWait: 'افحص الصفوف لإتاحة التنزيلات.',
   zip: 'نزّل ملفات PDF الجاهزة (ZIP)',
   merged: 'نزّل ملف PDF مدمجًا للطباعة',
@@ -234,6 +243,7 @@ const ar: Record<keyof typeof en, string> = {
   checklistSummary: 'استخدم قائمة التحقق لتوثيق القالب وقواعد البيانات وخطوات المراجعة قبل الدفعة التالية.',
   checklist: 'نزّل قائمة التحقق',
   footer: 'أرابي فورم · دمج بيانات PDF داخل المتصفح',
+  shortcuts: 'اختصارات لوحة المفاتيح (؟)',
 };
 
 const problems: Record<string, readonly [string, string]> = {

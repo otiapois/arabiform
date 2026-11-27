@@ -4,9 +4,10 @@ import type { useWorkbench } from './useWorkbench';
 
 const Queue = lazy(() => import('./Queue'));
 
-export function QueuePanel({ desk, language }: {
+export function QueuePanel({ desk, language, characterKeys }: {
   desk: ReturnType<typeof useWorkbench>;
   language: ReturnType<typeof translator>;
+  characterKeys: boolean;
 }) {
   const { labels, problem } = language;
   const { ready, flagged, warningRows, progress } = desk;
@@ -54,7 +55,7 @@ export function QueuePanel({ desk, language }: {
       {desk.template && desk.rows.length > 0 && !desk.hasMapping && <p className="queue-note">{labels.addMapping}</p>}
       {desk.rows.length > 0 ? (
         <Suspense fallback={<p className="quiet empty-queue" role="status">{labels.loading}</p>}>
-          <Queue desk={desk} language={language} />
+          <Queue desk={desk} language={language} characterKeys={characterKeys} />
         </Suspense>
       ) : <p className="quiet empty-queue">{desk.sheet ? labels.emptySheet : labels.noRows}</p>}
     </section>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ChangeEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type ChangeEvent, type ReactNode } from 'react';
 import { CapacityDisclosure } from './CapacityDisclosure';
 import { fillLabel, translator } from './labels';
 import { QueuePanel } from './QueuePanel';
@@ -13,6 +13,7 @@ const Hygiene = lazy(() => import('./Hygiene'));
 const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
 const CustodyPanel = lazy(() => import('./CustodyPanel'));
 const PrintMarginAdvisory = lazy(() => import('./PrintMarginAdvisory'));
+const ShortcutsDialog = lazy(() => import('./ShortcutsDialog'));
 
 type AppProps = {
   arabic: boolean;
@@ -68,7 +69,36 @@ export function App({ arabic, heading, summary, details }: AppProps) {
   const language = translator(arabic);
   const { labels, problem } = language;
   const desk = useWorkbench(arabic ? 'ar' : 'en');
+  const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
+  const [characterKeys, setCharacterKeys] = useState(true);
+  useEffect(() => {
+    if (!characterKeys || shortcutTrigger) return;
+    function handleCharacterShortcut(event: KeyboardEvent) {
+      const helpKey = event.key === '?' || (arabic && event.key === '؟');
+      if ((!helpKey && event.key !== '/') || event.defaultPrevented || event.isComposing || event.repeat
+        || event.altKey || event.ctrlKey || event.metaKey || document.designMode === 'on') return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.isContentEditable) return;
+      if (target instanceof Element && target.closest('input, textarea, select, [role="textbox"], [role="combobox"], :modal')) return;
+      if (helpKey) {
+        const trigger = document.activeElement;
+        if (!(trigger instanceof HTMLElement)) return;
+        event.preventDefault();
+        setShortcutTrigger(trigger);
+      } else {
+        const search = document.getElementById('queue-search');
+        if (!search) return;
+        event.preventDefault();
+        search.focus();
+      }
+    }
+    document.addEventListener('keydown', handleCharacterShortcut);
+    return () => document.removeEventListener('keydown', handleCharacterShortcut);
+  }, [arabic, characterKeys, shortcutTrigger]);
+
   const { ready, flagged, customFont } = desk;
+  const subset = desk.exportScope.exportScope === 'selected-subset';
+  const emptySubset = subset && desk.exportCount === 0;
   const selectedResult = desk.results?.[desk.selected];
   const bytes = selectedResult?.status === 'pass' ? desk.previewBytes : desk.template?.bytes;
   const { missingFields, missingColumns } = desk.presetWarnings ?? { missingFields: [], missingColumns: [] };
@@ -346,28 +376,33 @@ export function App({ arabic, heading, summary, details }: AppProps) {
               <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
             </Suspense>
           )}
-          <QueuePanel key={desk.roster?.name + ':' + desk.sheetIndex} desk={desk} language={language} />
+          <QueuePanel key={desk.sourceRevision} desk={desk} language={language} characterKeys={characterKeys} />
 
           <section className="panel exports" aria-labelledby="export-heading">
             <header>
               <h2 id="export-heading">{labels.export}</h2>
-              <p data-testid="export-counts">{desk.results ? fillLabel(labels.exportHelp, { ready, flagged }) : labels.exportWait}</p>
+              <p data-testid="export-counts">{!desk.results ? labels.exportWait
+                : subset ? labels.exportSubsetHelp : fillLabel(labels.exportHelp, { ready, flagged })}</p>
             </header>
             <div className="panel-body export-actions">
+              <p role="status" className={subset ? 'tag tag-subset' : 'tag tag-pass'} data-testid="export-scope">
+                {fillLabel(subset ? labels.exportSelected : labels.exportAll, { count: desk.exportCount })}
+              </p>
+              {emptySubset && desk.results && <p className="alert warning" data-testid="export-subset-empty">{labels.exportSubsetEmpty}</p>}
               <div className="actions">
-                <button type="button" className="button primary" disabled={!ready || desk.exporting || (desk.flattenZip && desk.watermarkBlocked)}
+                <button type="button" className="button primary" disabled={!desk.exportCount || desk.exporting || (desk.flattenZip && desk.watermarkBlocked)}
                   onClick={() => desk.download('zip')}>{labels.zip}</button>
-                <button type="button" className="button secondary" disabled={!ready || desk.exporting || desk.watermarkBlocked}
+                <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.watermarkBlocked}
                   onClick={() => desk.download('merged')}>{labels.merged}</button>
               </div>
-              <div className="actions audit-actions" aria-label={labels.audit}>
-                <button type="button" className="button secondary" disabled={!desk.results || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
-                <button type="button" className="button secondary" disabled={!desk.results || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
+              <div className="actions audit-actions" role="group" aria-label={labels.audit}>
+                <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
+                <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting} onClick={() => desk.download('json')}>{labels.auditJson}</button>
               </div>
               <div className="custody-controls">
                 {desk.custody ? (
                   <Suspense fallback={custodyPending}>
-                    <CustodyPanel sources={desk.custody} outputs={desk.custodyOutputs} disabled={desk.exporting}
+                    <CustodyPanel sources={desk.custody} outputs={desk.custodyOutputs} scope={desk.exportScope} disabled={emptySubset || desk.exporting}
                       label={custodyLabel} arabic={arabic} />
                   </Suspense>
                 ) : custodyPending}
@@ -390,8 +425,23 @@ export function App({ arabic, heading, summary, details }: AppProps) {
         </section>
       </main>
       <footer className="site-footer">
-        <div className="shell footer-inner"><span>{labels.footer}</span><p>{labels.privacyPolicy}</p></div>
+        <div className="shell footer-inner">
+          <span>{labels.footer}</span>
+          <p>{labels.privacyPolicy}</p>
+          <button type="button" className="text-button shortcuts-trigger" data-testid="shortcuts-open" aria-haspopup="dialog"
+            aria-keyshortcuts={characterKeys ? (arabic ? '? ؟' : '?') : undefined}
+            onClick={(event) => setShortcutTrigger(event.currentTarget)}>{labels.shortcuts}</button>
+        </div>
       </footer>
+      {shortcutTrigger && (
+        <Suspense>
+          <ShortcutsDialog arabic={arabic} characterKeys={characterKeys} onChangeCharacterKeys={setCharacterKeys}
+            onClose={() => {
+              setShortcutTrigger(undefined);
+              shortcutTrigger.focus({ preventScroll: true });
+            }} />
+        </Suspense>
+      )}
     </>
   );
 }
