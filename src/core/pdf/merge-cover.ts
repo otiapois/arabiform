@@ -3,6 +3,7 @@ import { PDFDocument, PDFOperator, PDFOperatorNames as Op, type PDFPage } from '
 import { CUSTODY_PREFIX_LENGTH, type CustodySources } from '../audit/custody';
 import { localVirtualDate } from '../roster/virtual-columns';
 import { appendPositionedText } from './appearances';
+import { twoUpSheetCount } from './two-up-sheets';
 import type { Imposition } from './exports';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, textInputDiagnostic, type PlacedLine } from './shaping';
 import { key, number } from './template';
@@ -60,7 +61,7 @@ export function paginateCoverRows(rows: readonly CoverRowGeometry[], firstTop: n
       top = nextTop;
     }
     if (top - row.height < bottom) throw new CoverSheetError('cover-sheet-layout-overflow');
-    const sheet = Math.floor(index / 2) + 1;
+    const sheet = twoUpSheetCount(index + 1);
     pages.at(-1)!.push({ index, top, startPage: imposition === '2-up' ? sheet : precedingPages + 1,
       endPage: imposition === '2-up' ? sheet : precedingPages + row.pageCount });
     top -= row.height;
@@ -155,10 +156,9 @@ function addText(page: PDFPage, text: CoverText, left: number, top: number, widt
   page.pushOperators(...operators);
 }
 
-export async function prependMergeCover(
-  doc: PDFDocument, entries: readonly { filename: string; pageCount: number }[], options: MergeCoverOptions,
-  imposition: Imposition = '1-up',
-) {
+type CoverEntry = { filename: string; pageCount: number };
+
+function planMergeCover(entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition) {
   const { locale, templateName, exportedAt, preflight, rowNumbers, flagged, skipped, custody } = options;
   const dateLabel = typeof exportedAt === 'string' ? exportedAt : localVirtualDate(exportedAt);
   if ((locale !== 'en' && locale !== 'ar' && locale !== 'bilingual') || rowNumbers.length !== entries.length
@@ -168,7 +168,7 @@ export async function prependMergeCover(
   try {
     const bilingual = locale === 'bilingual';
     const copy = labels[locale === 'ar' ? 'ar' : 'en'];
-    const direction = locale === 'ar' ? 'rtl' : 'ltr';
+    const direction: BaseDirection = locale === 'ar' ? 'rtl' : 'ltr';
     const panelLocales = bilingual ? ['en', 'ar'] as const : [locale];
     const panelWidth = bilingual ? (WIDTH - BILINGUAL_GUTTER) / 2 : WIDTH;
     const labelWidth = bilingual ? 70 : 110;
@@ -208,8 +208,37 @@ export async function prependMergeCover(
         summary: summary.height, settings: settings.height,
       })), footer?.height,
     );
-    const pages = paginateCoverRows(rows, firstTable - tableHeader, afterTitle - tableHeader, bottom, imposition);
+    const pages = paginateCoverRows(rows, firstTable - tableHeader, afterTitle - tableHeader, bottom, imposition)
+      .map((page) => page.map(({ index, top, startPage, endPage }) => {
+        const { text, height } = rows[index]!;
+        const range = startPage === endPage ? String(startPage) : `${startPage}–${endPage}`;
+        const values = [String(index + 1), String(rowNumbers[index]), text.text, range];
+        const cells = values.map((value, column) => column === FILE_COLUMN ? text
+          : layoutText(shaper, value, 10, COLUMNS[column]! - 2 * CELL_PADDING, 'ltr'));
+        return { top, height, cells };
+      }));
+    return {
+      pages, fonts, footer, panels, headings, translatedHeadings, direction, bilingual, panelWidth, labelWidth, valueWidth,
+      afterTitle, detailHeights, afterDetails, summaryHeight, firstTable, tableHeader,
+    };
+  } catch (cause) {
+    if (cause instanceof CoverSheetError) throw cause;
+    throw new CoverSheetError('cover-sheet-export-failed', { cause });
+  }
+}
 
+export function countMergeCoverPages(entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition): number {
+  return planMergeCover(entries, options, imposition).pages.length;
+}
+
+export async function prependMergeCover(
+  doc: PDFDocument, entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition = '1-up',
+) {
+  const {
+    pages, fonts, footer, panels, headings, translatedHeadings, direction, bilingual, panelWidth, labelWidth, valueWidth,
+    afterTitle, detailHeights, afterDetails, summaryHeight, firstTable, tableHeader,
+  } = planMergeCover(entries, options, imposition);
+  try {
     doc.registerFontkit(fontkit);
     const [arabic, latin] = await Promise.all([
       doc.embedFont(fonts.arabic, { subset: false, customName: 'NotoNaskhArabic-Regular' }),
@@ -259,14 +288,8 @@ export async function prependMergeCover(
       if (translatedHeadings) translatedHeadings.forEach((text, index) =>
         cell(text, index + 1, table - tableHeader / 2, tableHeader / 2, index + 1 === FILE_COLUMN ? 'ltr' : 'center'));
       rule(table - tableHeader);
-      for (const { index, top, startPage, endPage } of positioned) {
-        const { text, height } = rows[index]!;
-        const pages = startPage === endPage ? String(startPage) : `${startPage}–${endPage}`;
-        const values = [String(index + 1), String(rowNumbers[index]), text.text, pages];
-        values.forEach((value, column) => {
-          const content = column === FILE_COLUMN ? text : layoutText(shaper, value, 10, COLUMNS[column]! - 2 * CELL_PADDING, 'ltr');
-          cell(content, column, top, height, column === FILE_COLUMN ? direction : 'center');
-        });
+      for (const { top, height, cells } of positioned) {
+        cells.forEach((content, column) => cell(content, column, top, height, column === FILE_COLUMN ? direction : 'center'));
         rule(top - height);
       }
       if (footer) addText(page, footer, MARGIN, MARGIN + footer.height, WIDTH, 'center', resources);
