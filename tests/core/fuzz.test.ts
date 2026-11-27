@@ -18,6 +18,7 @@ import { paginateCoverRows } from '../../src/core/pdf/merge-cover';
 import { createShaper, fitText } from '../../src/core/pdf/shaping';
 import { watermarkLayout } from '../../src/core/pdf/watermark';
 import { createBatchProcessor } from '../../src/core/worker/batch';
+import { resolveRowSelection } from '../../src/core/worker/row-selection';
 import { makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 
@@ -904,4 +905,104 @@ describe('seeded custody receipts and physical print margins', () => {
       { code: 'margin-near-edge', field: 'Below', pageNumber: 1, widgetIndex: 0, edge: 'left', clearancePt: 8.99999999 },
     ]);
   });
+});
+
+describe('seeded subset exports', () => {
+  const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+  it('checks 450 selection models across audits and paginated print indexes', async () => {
+    const geometry = fc.array(fc.record({ status: fc.constantFrom('pass' as const, 'flagged' as const),
+      height: fc.integer({ min: 8, max: 42 }), pageCount: fc.integer({ min: 1, max: 5 }) }), { maxLength: 120 });
+    const selection = fc.oneof(fc.constant('all-ready' as const), fc.array(fc.integer({ min: -4, max: 127 }), { maxLength: 140 }));
+    await verify(fc.asyncProperty(geometry, selection, async (rows, requested) => {
+      const scope = resolveRowSelection(rows, requested);
+      const modeled = rows.map((row, index) => ({ ...row, rowNumber: index + 1 }));
+      const exported = modeled.filter(({ status, rowNumber }) => status === 'pass'
+        && (requested === 'all-ready' || requested.includes(rowNumber)));
+      expect(scope).toEqual({ exportScope: requested === 'all-ready' ? 'all-ready' : 'selected-subset',
+        selectedRowNumbers: exported.map(({ rowNumber }) => rowNumber) });
+      const audit = modeled.map(({ rowNumber, status }) => ({ rowNumber, status, filename: `row-${rowNumber}.pdf`,
+        diagnostics: [], fontSizes: {} }));
+      if (requested !== 'all-ready' && !exported.length) {
+        expect(() => createAudit(audit, scope)).toThrow('empty-export');
+      } else {
+        const wanted = requested === 'all-ready' ? audit : exported.map(({ rowNumber }) => audit[rowNumber - 1]!);
+        const report = createAudit(audit, scope);
+        expect(JSON.parse(report.json)).toEqual(wanted);
+        expect(Papa.parse<string[]>(report.csv, { skipEmptyLines: true }).data.slice(1).map(([rowNumber]) => Number(rowNumber)))
+          .toEqual(wanted.map(({ rowNumber }) => rowNumber));
+      }
+
+      const firstCapacity = 46;
+      const nextCapacity = 60;
+      const covers = paginateCoverRows(exported, firstCapacity, nextCapacity, 0);
+      let firstFormPage = covers.length + 1;
+      const indexRows = covers.flat();
+      expect(indexRows).toHaveLength(exported.length);
+      for (const [index, { pageCount }] of exported.entries()) {
+        expect(indexRows[index]).toMatchObject({ index, startPage: firstFormPage, endPage: firstFormPage + pageCount - 1 });
+        firstFormPage += pageCount;
+      }
+      covers.forEach((page, index) => {
+        const capacity = index === 0 ? firstCapacity : nextCapacity;
+        const used = page.reduce((sum, entry) => sum + exported[entry.index]!.height, 0);
+        expect(used).toBeLessThanOrEqual(capacity);
+        const nextIndex = covers[index + 1]?.[0]?.index;
+        if (nextIndex !== undefined) expect(used + exported[nextIndex]!.height).toBeGreaterThan(capacity);
+      });
+    }), 450);
+  });
+
+  it('checks 60 actual subset ZIP and merged PDF job receipts against extracted bytes and source fingerprints', async () => {
+    const doc = await PDFDocument.create();
+    const field = doc.getForm().createCheckBox('Consent');
+    for (const size of [[160, 110], [200, 120]] as [number, number][]) {
+      field.addToPage(doc.addPage(size), { x: 20, y: 34 });
+    }
+    const template = await doc.save();
+    const options = { fonts: { arabic: new Uint8Array(), latin: new Uint8Array() } };
+    const rosters = fc.array(fc.constantFrom('yes', 'no', 'invalid', 'نعم', 'لا'), { minLength: 2, maxLength: 9 });
+    const selections = fc.array(fc.integer({ min: -1, max: 11 }), { maxLength: 14 });
+    await verify(fc.asyncProperty(rosters, selections, async (values, rowSelection) => {
+      const rows = values.map((Consent) => ({ Consent }));
+      const roster = encoder.encode(['Consent', ...values].join('\r\n'));
+      const filenames = makeFilenames(rows, 'Consent.pdf');
+      const expectedRows = values.flatMap((value, index) => value !== 'invalid' && rowSelection.includes(index + 1) ? [index + 1] : []);
+      const batch = createBatchProcessor();
+      const notify = () => {};
+      const checked = await batch({ phase: 'preflight', input: { rows, template, roster, options } }, notify);
+      if (!checked || !('rows' in checked)) throw new Error('Expected preflight results');
+      const scope = resolveRowSelection(checked.rows, rowSelection);
+      expect(scope.selectedRowNumbers).toEqual(expectedRows);
+      const sourceHashes = { templateSha256: digest(template), rosterSha256: digest(roster) };
+      const exportZip = () => batch({ phase: 'zip', filenames, rowSelection }, notify);
+      const exportMerged = () => batch({ phase: 'merged', rowSelection }, notify);
+      if (!expectedRows.length) {
+        await expect(exportZip()).rejects.toThrow('empty-export');
+        await expect(exportMerged()).rejects.toThrow('empty-export');
+        expect(JSON.parse(createCustodyManifest(checked.custody, undefined, scope)))
+          .toEqual({ version: 1, ...sourceHashes, exportScope: 'selected-subset', selectedRowNumbers: [] });
+        return;
+      }
+
+      const zip = await exportZip();
+      const merged = await exportMerged();
+      if (!zip || zip instanceof Uint8Array || !('entries' in zip) || !merged || !('mergedPdfSha256' in merged)) {
+        throw new Error('Expected PDF exports');
+      }
+      const members = Object.entries(unzipSync(zip.bytes));
+      expect(members.map(([filename]) => filename)).toEqual(expectedRows.map((rowNumber) => filenames[rowNumber - 1]));
+      for (const [index, [, bytes]] of members.entries()) {
+        const row = await PDFDocument.load(bytes);
+        const expectedChecked = ['yes', 'نعم'].includes(values[expectedRows[index]! - 1]!);
+        expect(row.getPageCount()).toBe(2);
+        expect(row.getForm().getCheckBox('Consent').isChecked()).toBe(expectedChecked);
+      }
+      expect((await PDFDocument.load(merged.bytes)).getPageCount()).toBe(expectedRows.length * 2);
+      expect(JSON.parse(createCustodyManifest(checked.custody, { entries: zip.entries, mergedPdfSha256: merged.mergedPdfSha256 }, scope)))
+        .toEqual({ version: 1, ...sourceHashes, exportScope: 'selected-subset', selectedRowNumbers: expectedRows,
+          entries: members.map(([filename, bytes]) => ({ filename, sha256: digest(bytes), bytes: bytes.length })),
+          mergedPdfSha256: digest(merged.bytes) });
+    }), 60);
+  }, 30_000);
 });

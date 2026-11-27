@@ -4,6 +4,7 @@ import Papa from 'papaparse';
 import { sha256, type CustodyEntry } from '../audit/custody';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
+import type { ExportScope } from '../worker/row-selection';
 import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
 import { key, number, openTemplate, widgetFlags } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
@@ -201,8 +202,14 @@ async function buildMergedPdf(
   return merged.save({ updateFieldAppearances: false });
 }
 
-export function createAudit(rows: readonly AuditRow[]): { json: string; csv: string } {
-  const ordered = rows.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => ({
+export function createAudit(rows: readonly AuditRow[], scope?: ExportScope): { json: string; csv: string } {
+  let included = rows;
+  if (scope?.exportScope === 'selected-subset') {
+    const selected = new Set(scope.selectedRowNumbers);
+    included = rows.filter(({ rowNumber, status }) => status === 'pass' && selected.has(rowNumber));
+    if (!included.length) throw new Error('empty-export');
+  }
+  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes }) => ({
     rowNumber, filename, status,
     diagnostics: diagnostics.map(({ pageNumbers, ...issue }) => issue),
     fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),

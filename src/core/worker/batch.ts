@@ -2,6 +2,7 @@ import { hashCustodySources, sha256 } from '../audit/custody';
 import { createMergedPdf, preflightRow, prepareRowPreflight } from '../pdf';
 import { createGeneratedZip } from '../pdf/exports';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
+import { resolveRowSelection } from './row-selection';
 
 export const BATCH_CHUNK_SIZE = 25;
 type ProgressListener = (progress: BatchProgress) => void;
@@ -59,10 +60,12 @@ export function createBatchProcessor() {
     if (filenames && filenames.length !== results.length) {
       throw new Error(phase === 'zip' ? 'batch-filename-count-mismatch' : 'cover-sheet-invalid-metadata');
     }
-    const ready = results.flatMap(({ status }, index) => status === 'pass' ? [{
-      filename: filenames?.[index] ?? '', getPdfBytes: () => getPdfBytes(index), rowNumber: index + 1,
-    }] : []);
-    if (!ready.length) throw new Error('empty-export');
+    const { selectedRowNumbers } = resolveRowSelection(results, command.rowSelection);
+    if (!selectedRowNumbers.length) throw new Error('empty-export');
+    const ready = selectedRowNumbers.map((rowNumber) => {
+      const index = rowNumber - 1;
+      return { filename: filenames?.[index] ?? '', getPdfBytes: () => getPdfBytes(index) };
+    });
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
     if (phase === 'zip') return createGeneratedZip(ready, progress, command.flattenZip, watermark);
     const bytes = await createMergedPdf(ready, progress, coverSheet && {
@@ -70,7 +73,7 @@ export function createBatchProcessor() {
       templateName: coverSheet.templateName,
       exportedAt: new Date(),
       preflight: input.options,
-      rowNumbers: ready.map(({ rowNumber }) => rowNumber),
+      rowNumbers: selectedRowNumbers,
       flagged: results.filter(({ status }) => status === 'flagged').length,
       skipped: results.length - ready.length,
       custody: coverSheet.includeCustody ? custody : undefined,
