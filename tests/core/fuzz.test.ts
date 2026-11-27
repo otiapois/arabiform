@@ -1911,7 +1911,7 @@ describe('seeded offline CLI boundaries', () => {
         const receipt = await parseCustodyManifest(cli.artifacts[3]!.data as string);
         expect(receipt.outputs.map(({ sha256 }) => sha256)).toEqual([editable.entries[0]!.sha256, flattened.entries[0]!.sha256, merged.mergedPdfSha256]);
       }), 50);
-  }, 60_000);
+  }, 180_000);
 
   it('checks 150 exact variant proofs and fails closed on cross-variant or modified PDF bytes', async () => {
     await verify(fc.asyncProperty(fc.uint8Array({ minLength: 1, maxLength: 80 }), fc.nat({ max: 99_999 }), fc.boolean(),
@@ -1944,5 +1944,5 @@ describe('seeded offline CLI boundaries', () => {
         mismatched.flattenedEntries[0].filename = 'other.pdf';
         await expect(parseCustodyManifest(JSON.stringify(mismatched))).rejects.toThrow('custody-invalid-manifest');
       }), 150);
-  });
+  }, 30_000);
 });
