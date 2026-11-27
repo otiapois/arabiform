@@ -52,3 +52,9 @@ M16 通过本机发布验收。8 条英阿双语记录按 6 个分组导出，�
 - 390 px 的阿语按钮曾将扩展名画成 `(zip.)`。隔离 `(.zip)` 的方向后，点位于 z 左侧，边界、字母与括号在同一行按顺序显示，页面宽度为 390 px。M3、M7、M16 三个周期的扩展名检查已纳入代码标准。[修复前](../../test-results/m16-evidence/worker-b/split-extension-before.json) · [修复后](../../test-results/m16-evidence/worker-b/split-extension-after.json) · [代码标准](../code-standards.md)
 - QA 的初版浏览器用例省略选择字段映射，预检停在未就绪。按真实界面手动映射后，聚焦测试 8/8 通过。随后正式类型检查发现测试给 pdf-lib 的 `lookup` 传入了该版本类型声明未列出的构造函数。增加运行时流类型检查，在新冻结版本从头复跑。[首轮浏览器日志](../../test-results/m16-evidence/qa-focused-a.log) · [类型检查原始收据](../../test-results/m16-evidence/qa-before-typecheck.log) · [修正后类型检查](../../test-results/m16-evidence/qa-typecheck.log)
 - Windows 沙箱在 tsx 初始化时返回 `uv_os_get_passwd ENOMEM`。按既有代码标准在获准的本机环境，从同一提交、同一 D 盘输入重跑原命令 `npm run verify:pixels`，57 次实绘全部完成。[启动错误](../../test-results/m16-evidence/qa-pixels.log) · [本机重跑](../../test-results/m16-evidence/qa-pixels-native.log)
+
+## 主线收尾
+
+主执行端扫描了 `src/core/` 下 47 个跟踪文件，DOM 和网络 API 命中均为 0。[核心扫描](../../test-results/m16-evidence/lead-core-invariants.json)
+
+四棵 M16 工作树与对应的已合并分支均已清理。Git 注销文档工作树时，Windows 暂时锁住了一个空目录。确认目录为空且已注销后重试删除。现在 Git 仅列出 `main` 工作树，D 盘 `.arabiform-wt` 已移除，主线依赖仍可用，四个验收端口均已关闭。[清理回执](../../test-results/m16-evidence/lead-worktree-cleanup.json)
