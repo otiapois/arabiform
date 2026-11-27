@@ -42,3 +42,9 @@ M19 的边界行跳转、双行预览和用纸估算通过本机验收。6 条�
 - M5 首轮观察器所依附的外层队列在上传后被替换，双语、双视口的四个测试均漏收阶段文案。修复保留了稳定队列节点，上传前开始记录真正的 live 区域变化，并核对最后 5 条就绪、0 条标记。专项和冻结主线中的原有四项均通过。该经验结合 M8、M14 的独立失败证据纳入代码标准。[首轮失败](../../test-results/m19-evidence/worker-b/m5-e2e.log) · [专项复验](../../test-results/m19-evidence/worker-b/final-m5-e2e.log) · [代码标准](../code-standards.md)
 - 首版 QA 在更改输出设置后直接查找分组明细，浏览器已把明细收起，出现控件定位超时。改为从可见的摘要重新展开，继续逐组核对屏幕上的张数与已下载文件。[首轮 QA](../../test-results/m19-evidence/qa-focused.log) · [专项复验](../../test-results/m19-evidence/qa-focused-stable-summary.json)
 - 沙箱中的 tsx 在准备临时目录时返回 `uv_os_get_passwd ENOMEM`。冻结提交、命令、模板、字体和 D 盘临时目录保持一致，获准的本机复跑完成了全部像素检查。开发工作树此前有一轮旧版本的重复模糊测试按主执行端指令中止，正式总数来自冻结主线完整运行。[首次像素启动日志](../../test-results/m19-evidence/qa-pixels.log) · [本机复跑](../../test-results/m19-evidence/qa-pixels-native.log) · [早期开发轮中止收据](../../test-results/m19-evidence/worker-a/fuzz-first-interrupted.json)
+
+## 主线收尾
+
+主执行端扫描了 56 个核心源文件，DOM、网络和文件 I/O API 命中数均为 0。锁文件只修改版本号。冻结后的提交范围为验收报告、经验与代码标准。[核心源码与依赖核查](../../test-results/m19-evidence/lead-core-invariants.json)
+
+四个已合并工作树及各自分支全部清理，D 盘 `.arabiform-wt` 已移除，Git 仅登记 `main`。两个本机预览端口 42882 和 42885 均已关闭。[清理回执](../../test-results/m19-evidence/lead-worktree-cleanup.json)
