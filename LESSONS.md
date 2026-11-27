@@ -92,7 +92,7 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　当 `npm run verify:pixels` 在 tsx 创建临时目录时出现 `uv_os_get_passwd ENOMEM`，保留错误日志。在获准的本机环境用相同主线、D 盘输入和临时目录重跑原命令，以新生成的 PyMuPDF 报告判定结果。
 - **原因**　tsx 在加载校验脚本前通过 `os.userInfo()` 命名临时目录。此时 PDF 填充、渲染和像素比较均尚未开始。
 - **证据**　[M1](docs/reports/M1-verification.md)、[M2](docs/reports/M2-verification.md) 与 [M5](docs/reports/M5-verification.md) 在受限 Windows 环境均记录了相同的系统调用错误。M5 在原主线复跑后完成 26 次填充、87 个有墨迹控件的 4 倍渲染校验。
-- **Seen: 8**（M1、M2、M5、M9、M10、M11、M12、M13，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。此项已纳入[代码标准](docs/code-standards.md)。
+- **Seen: 9**（M1、M2、M5、M9、M10、M11、M12、M13、M14，各计一次）。[M9 主线](docs/reports/M9-verification.md)、[M10 主线](docs/reports/M10-v1.0-verification.md) 和 [M11 主线](docs/reports/M11-verification.md) 均在 tsx 初始化时复现。M11 用相同提交和 D 盘输入重跑，完成 36 次填充和 120 个有墨迹控件的 4 倍渲染。[M12](docs/reports/M12-verification.md) 复跑完成 38 次填充、128 个有墨迹控件和 8 张 QR 盖章页。[M13](docs/reports/M13-verification.md) 在同一提交复跑，完成 44 次填充、140 个有墨迹控件及 4 张 A4 合版页。M14 同样在进入像素校验前收到 `uv_os_get_passwd ENOMEM`。[本次启动错误](test-results/m14-evidence/qa-pixels.log) 此项已纳入[代码标准](docs/code-standards.md)。
 
 ### 用每个语种的空载网络请求核对首屏分包（2026-11-27）
 
@@ -142,7 +142,8 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **规则**　用浏览器实际绘制的前景、控件底色和相邻底色计算相对亮度。有透明度时逐层合成，并核对键盘焦点轮廓与实际原生控件的可见像素。
 - **原因**　M10 的首次搜索框测量把透明底色的 RGB 分量当作黑底，得到约 20.80∶1。还原实际底色后，旧边框仅为 1.4589∶1。调整边框后同处达到 3.9535∶1。
 - **证据**　[Edge 文字、边界与焦点测量](tests/e2e/m10-accessibility.ts) · [原生控件像素](tests/e2e/m10-native-contrast.py) · [M10 独立验收](docs/reports/M10-v1.0-verification.md)
-- **Seen: 1**（M10 首次全路由对比度验收）。
+- M14 的新模式按钮文字通过了检查，未选中按钮的透明边界与外侧背景却只有 1∶1。两个语言和两个视口均在真实 Edge 复现。为未选中按钮指定已有的控件边框色后，原判定通过。[失败收据](test-results/m14-evidence/qa-focused-fixed.log) · [修复后测量](test-results/m14-evidence/qa-focused-final-summary.json)
+- **Seen: 2**（M10、M14，各计一次）。
 
 ### 激活 PDF 预览控件后仍要看清字段开头（2026-11-27）
 
@@ -164,3 +165,16 @@ Worker A 在实现前记录了下列四项失败。M2 独立验收复跑了对�
 - **原因**　M13 的英文两条记录拼版选项末尾被截断。页面宽度、选项 DOM 文本和无障碍名称当时均通过检查。
 - **证据**　提交 `efd19e1` 调整拼版选择框的排版。Edge 桌面以 18 px 预留箭头后有 278.32 px 可用，完整英文选项实测 258.84 px。[浏览器回归](tests/e2e/m13-workbook-print.spec.ts) · [实际截图](docs/reports/screenshots/m13/desktop-m13-xlsx-sheet-and-2up.png)
 - **Seen: 1**（M13 原生拼版选项，英阿语和两种视口合计一个周期）。
+
+### 为结果面板与可滚动表格分别命名（2026-11-27）
+
+- **规则**　如果结果面板和其中可聚焦的滚动表格都声明为区域，在浏览器无障碍树中检查两个区域名称，并在英阿界面分别读取。
+- **原因**　M14 提取结果原先将面板标题同时赋给内层滚动区域。两种语言下都读到 5 个区域、4 个不同名称。新增滚动区域的双语名称后，原有地标检查通过。
+- **证据**　[首次 Edge 失败记录](test-results/m14-evidence/qa-focused.log) · [双语提取器回归](tests/e2e/m14-extractor.spec.ts)
+- **Seen: 1**（M14，两个语言和两个视口合计一次）。
+
+### 保留工作台锚点与进度控件的包含关系（2026-11-27）
+
+- **规则**　新增模式切换时，让既有 `#workbench` 跳转目标包含两个模式的实际内容，并用原有批任务进度和取消用例复跑。
+- **原因**　M14 把这个 ID 移到模式按钮组，队列成了它的兄弟节点。首轮主线验收中 200 行已就绪，绑定在工作台内的观察器却收不到进度变化，两个原有场景相继超时。[首轮主线日志](test-results/m14-evidence/qa-edge-before-workbench.log) · [原有进度用例](tests/e2e/m2-batch.spec.ts)
+- **Seen: 1**（M14，两个受影响的场景计一次）。
