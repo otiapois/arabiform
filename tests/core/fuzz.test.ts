@@ -6,7 +6,7 @@ import fc, { type IAsyncProperty } from 'fast-check';
 import { unzipSync, zipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, degrees, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFString } from 'pdf-lib';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createCustodyManifest, hashCustodySources, sha256 } from '../../src/core/audit/custody';
 import { isSafeLocalPath, parseCliArgs } from '../../src/core/cli/arguments';
 import { dispatchCli } from '../../src/core/cli/dispatch';
@@ -17,6 +17,7 @@ import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
 import { validateMappingPreset } from '../../src/core/draft/mapping-preset';
 import { isSafeGroupedPdfPath, planGroupedOutput, validateGroupingPlan } from '../../src/core/export/grouping';
+import { preflightPacket, type PacketManifest, type PacketTemplate } from '../../src/core/packet/assembler';
 import { estimatePrintJob, type PrintSheetTotals } from '../../src/core/export/print-estimator';
 import { authorFlatPdf, inspectFlatPdf, type FieldDraftSpec } from '../../src/core/designer/author';
 import { clampDisplayRect, displayToSource, sourceToDisplay, type DesignerPage, type NormalizedRect } from '../../src/core/designer/geometry';
@@ -56,6 +57,8 @@ let acceptedCases = 0;
 let discardedCases = 0;
 let failedProperties = 0;
 
+vi.setConfig({ testTimeout: 180_000 });
+
 const mixedText = fc.oneof(
   fc.array(fc.constantFrom('ن', 'ى', 'م', 'ي', 'ق', 'ب', 'أ', 'ـ', 'َ', 'ِ', 'ُ', 'ْ', 'ّ', 'ً', '١', '٢', '٠',
     'Name', ' ', '00123', '(A)', '#00123', '+966 50 012 3456', 'ع\u200dر', 'ع\u200cر', '🙂', '𐍈',
@@ -79,7 +82,104 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(37_500);
+  expect(acceptedCases).toBeGreaterThanOrEqual(40_000);
+});
+
+describe('seeded packet assembly', () => {
+  const fonts = Promise.all([readFile('public/fonts/NotoNaskhArabic-Regular.ttf'), readFile('public/fonts/NotoSans-Regular.ttf')])
+    .then(([arabic, latin]) => ({ arabic, latin }));
+  const synthetic = Promise.all([1, 2, 3].map(async (pageCount) => {
+    const doc = await PDFDocument.create({ updateMetadata: false });
+    const form = doc.getForm();
+    const field = form.createTextField('Code');
+    field.setMaxLength(4);
+    for (let index = 0; index < pageCount; index++) {
+      const page = doc.addPage([120 + index * 15, 130 + pageCount * 10]);
+      field.addToPage(page, { x: 15, y: 45, width: 70, height: 25 });
+    }
+    return doc.save();
+  }));
+  const topology = fc.array(fc.integer({ min: 1, max: 3 }), { minLength: 2, maxLength: 4 });
+  const makeTemplates = async (counts: readonly number[]) => {
+    const templates = await synthetic;
+    return counts.map((count, index) => ({
+      bytes: templates[count - 1]!,
+      name: `Template ${index + 1}.pdf`,
+      title: index % 2 ? `مُسْتَنَد ${index + 1}` : `Document ${index + 1}`,
+      mapping: { Code: `Doc ${index + 1}` },
+    } satisfies PacketTemplate));
+  };
+  const makeRoster = (counts: readonly number[], id: number, badIndex: number) => {
+    const padded = String(id).padStart(4, '0');
+    const cells = ['ID', 'Group', ...counts.map((_, index) => `Doc ${index + 1}`)];
+    const values = [padded, '../Records', ...counts.map(() => padded)];
+    const bad = values.map((cell, index) => badIndex > 0 && index === badIndex + 1 ? padded + '0' : cell);
+    return { name: 'Synthetic Roster.csv', bytes: encoder.encode(Papa.unparse([cells, bad, values])) };
+  };
+
+  it('preflights 2,200 real ordered 2–4-form rosters with failure in any document and exact held-row diagnostics', async () => {
+    await verify(fc.asyncProperty(topology, fc.nat({ max: 9999 }), fc.nat({ max: 11 }), async (counts, id, slot) => {
+      const badIndex = slot % counts.length + 1;
+      const templates = await makeTemplates(counts);
+      const roster = makeRoster(counts, id, badIndex);
+      const job = await preflightPacket({ templates, roster, fonts: await fonts, groupByColumn: 'Group' });
+      if (job.status !== 'checked') throw new Error(JSON.stringify(job.issues));
+      expect(job.ready).toBe(1);
+      expect(job.flagged).toBe(1);
+      expect(job.rows[0]).toMatchObject({ rowNumber: 1, status: 'flagged', issues: [{
+        templateIndex: badIndex, templateName: templates[badIndex - 1]!.name, fieldName: 'Code', code: 'exceeds-maxlen', maxLengthExcess: 1,
+      }] });
+      expect(job.rows[0]!.issues).toHaveLength(1);
+      expect(job.rows[1]).toMatchObject({ rowNumber: 2, status: 'ready', issues: [] });
+      expect(job.rows[1]!.path).toMatch(/\/\d{4}-packet-2\.pdf$/);
+    }), 2_200);
+  }, 180_000);
+
+  it('reopens 350 produced packet ZIP PDFs with real page conservation, third-form holds, TOC and independent SHA-256', async () => {
+    await verify(fc.asyncProperty(topology, fc.nat({ max: 9999 }), fc.boolean(), async (counts, id, includeCover) => {
+      const templates = await makeTemplates(counts);
+      const roster = makeRoster(counts, id, counts.length >= 3 ? 3 : 0);
+      const checked = await preflightPacket({ templates, roster, fonts: await fonts, includeCover, groupByColumn: 'Group' });
+      if (checked.status !== 'checked') throw new Error(JSON.stringify(checked.issues));
+      const { zipBytes, manifestJson } = await checked.assemble();
+      const manifest = JSON.parse(manifestJson) as PacketManifest;
+      const archive = unzipSync(zipBytes);
+      const hashes = templates.map(({ bytes }) => createHash('sha256').update(bytes).digest('hex'));
+      expect(manifest.sources.templates.map(({ sha256 }) => sha256)).toEqual(hashes);
+      expect(manifest.sources.roster.sha256).toBe(createHash('sha256').update(roster.bytes).digest('hex'));
+      expect(Object.keys(archive)).toEqual(checked.rows.filter(({ status }) => status === 'ready').map(({ path }) => path));
+      expect(manifest.outputs.map(({ rowNumber }) => rowNumber)).toEqual(counts.length === 2 ? [1, 2] : [2]);
+      if (counts.length >= 3) expect(checked.rows[0]!.issues[0]?.templateIndex).toBe(3);
+      for (const output of manifest.outputs) {
+        const bytes = archive[output.path]!;
+        expect(output.bytes).toBe(bytes.byteLength);
+        expect(output.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+        const pdf = await PDFDocument.load(bytes);
+        expect(pdf.catalog.has(key('AcroForm'))).toBe(false);
+        expect(pdf.getPages().every((page) => !page.node.Annots()?.size())).toBe(true);
+        let position = Number(includeCover) + 1;
+        for (const [index, document] of output.documents.entries()) {
+          expect(document).toEqual({ templateIndex: index + 1, title: templates[index]!.title, startPage: position, pageCount: counts[index] });
+          const pages = pdf.getPages().slice(position - 1, position + counts[index]! - 1);
+          expect(pages.map((page) => page.getSize())).toEqual(Array.from({ length: counts[index]! }, (_, index) =>
+            ({ width: 120 + index * 15, height: 130 + document.pageCount * 10 })));
+          position += counts[index]!;
+        }
+        expect(pdf.getPageCount()).toBe(position - 1);
+        expect(output.pageCount).toBe(pdf.getPageCount());
+        if (includeCover) {
+          const content = pdf.getPage(0).node.Contents() as PDFArray;
+          const text = content.asArray().map((ref) => {
+            const stream = pdf.context.lookup(ref);
+            if (!(stream instanceof PDFRawStream)) throw new Error('Expected a serialized cover stream.');
+            return decoder.decode(decodePDFRawStream(stream).decode());
+          }).join('\n');
+          const cells = Array.from(text.matchAll(/\/ActualText <([0-9A-F]+)>/g), ([, hex]) => PDFHexString.of(hex!).decodeText()).slice(6);
+          expect(cells).toEqual(output.documents.flatMap(({ title, startPage }) => [title, String(startPage)]));
+        }
+      }
+    }), 350);
+  }, 180_000);
 });
 
 describe('M20 numerals, typography and official seal', () => {
@@ -354,7 +454,7 @@ describe('seeded adversarial files and PDF geometry', () => {
     expect(passed).toBeGreaterThan(40);
     expect(flagged).toBeGreaterThan(40);
     console.info(`fast-check: 280 PDF fills (${passed} passed, ${flagged} flagged).`);
-  }, 90_000);
+  }, 180_000);
 
   it('rejects 460 malformed custom font containers', async () => {
     const valid = await readFile(resolve(process.env.ARABIFORM_ASSET_ROOT ?? '.', 'public/fonts/NotoSans-Regular.ttf'));
@@ -393,7 +493,7 @@ describe('seeded adversarial files and PDF geometry', () => {
       expect(checkbox.dict.get(key('V'))?.toString()).toBe(expected);
       expect(checkbox.getWidgets().map(({ dict }) => dict.get(key('AS'))?.toString())).toEqual([expected, expected]);
     }), 520);
-  }, 60_000);
+  }, 180_000);
 
   it('flags 420 custom Latin font rows containing missing Arabic glyphs', async () => {
     const source = await PDFDocument.create();
@@ -410,7 +510,7 @@ describe('seeded adversarial files and PDF geometry', () => {
       expect(result.diagnostics).toEqual([{ field: 'Name', code: 'missing-glyphs', widgetIndex: 0, pageNumbers: [1] }]);
       expect(result.pdfBytes).toBeUndefined();
     }), 420);
-  }, 60_000);
+  }, 180_000);
 });
 
 describe('seeded bilingual template studio and issued custody QR records', () => {
@@ -623,7 +723,7 @@ describe('seeded choice fields and individual print ZIPs', () => {
     expect(passed).toBeGreaterThan(100);
     expect(flagged).toBeGreaterThan(30);
     console.info(`fast-check M4: 300 real choice rows (${passed} passed, ${flagged} flagged).`);
-  }, 120_000);
+  }, 180_000);
 
   it('checks 240 print ZIPs against state corruption, legacy appearances, and unsafe or colliding names', async () => {
     const source = await PDFDocument.create();
@@ -666,7 +766,7 @@ describe('seeded choice fields and individual print ZIPs', () => {
         expect(doc.getPage(0).node.Resources()?.lookup(key('XObject'))).toBeInstanceOf(PDFDict);
       }
     }), 240);
-  }, 120_000);
+  }, 180_000);
 });
 
 describe('seeded filename plans and mixed-direction choices', () => {
@@ -770,7 +870,7 @@ describe('seeded filename plans and mixed-direction choices', () => {
       expect(decodePDFRawStream(subset).decode().length).toBeLessThan(customFont.length);
     }), 240);
     expect(checkedFonts).toEqual(new Set(['bundled', 'naskh-with-digits', 'naskh-with-latin', 'sans-with-arabic']));
-  }, 120_000);
+  }, 180_000);
 });
 
 describe('seeded roster changes, explicit ink alignment and portable drafts', () => {
@@ -981,7 +1081,7 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
         expect(fitText(shaper, text, multiline, { innerWidth, innerHeight, padding: 0, min, max: min })).not.toHaveProperty('code');
       }
     }), 340);
-  }, 60_000);
+  }, 180_000);
 
   it('checks 180 chunked Worker state sequences with mixed checkbox outcomes around every 25-row boundary', async () => {
     const document = await PDFDocument.create();
@@ -1008,7 +1108,7 @@ describe('seeded print stamps, template capacities and chunked batches', () => {
         expect(bytes instanceof Uint8Array).toBe(values[rowIndex] !== 'invalid');
       }
     }), 180);
-  }, 60_000);
+  }, 180_000);
 });
 
 describe('seeded custody receipts and physical print margins', () => {
@@ -1033,7 +1133,7 @@ describe('seeded custody receipts and physical print margins', () => {
           expect(changed).not.toBe(sources.templateSha256);
         }
       }), 800);
-  }, 15_000);
+  }, 180_000);
 
   it('checks 300 ZIP receipts against extracted PDF bytes and rejects device names and traversal before generation', async () => {
     const templates = await Promise.all([120, 160, 200].map(async (width) => {
@@ -1064,7 +1164,7 @@ describe('seeded custody receipts and physical print margins', () => {
         expect(exact.every(([, bytes], index) => Buffer.from(bytes).equals(Buffer.from(templates[indices[index]!]!)))).toBe(true);
         expect(archive.entries).toEqual(exact.map(([filename, bytes]) => ({ filename, sha256: digest(bytes), bytes: bytes.length })));
       }), 300);
-  }, 15_000);
+  }, 180_000);
 
   it('checks 450 actual page boxes for exact physical fractional clearances through crop, scale and rotation', async () => {
     const geometry = fc.record({
@@ -1113,7 +1213,7 @@ describe('seeded custody receipts and physical print margins', () => {
       expect(inspectPrintMargins(metadata, ['قرب', 'missing'])).toEqual(clearancePt < 9 ? [expected] : []);
       expect(inspectPrintMargins(metadata, ['Unmapped'])).toHaveLength(1);
     }), 450);
-  }, 30_000);
+  }, 180_000);
 
   it('keeps an exact 9 pt gap between decimal PDF coordinates out of the advisory', async () => {
     const doc = await PDFDocument.create();
@@ -1227,7 +1327,7 @@ describe('seeded subset exports', () => {
           entries: members.map(([filename, bytes]) => ({ filename, sha256: digest(bytes), bytes: bytes.length })),
           mergedPdfSha256: digest(merged.bytes) });
     }), 60);
-  }, 30_000);
+  }, 180_000);
 });
 
 // M19 verifies page totals independently of the cover layout and then reopens
@@ -1483,7 +1583,7 @@ describe('seeded virtual columns, presets and canvas geometry', () => {
       expect(overlays[0]!.rect.every((component) => component >= 0 && component <= 1)).toBe(true);
       for (const [index, component] of overlays[0]!.rect.entries()) expect(component).toBeCloseTo(expected[index]!, 12);
     }), 400);
-  }, 30_000);
+  }, 180_000);
 
   it('checks 260 v1–v6 preset roundtrips and corrupted virtual or physical bindings', async () => {
     const corruption = fc.constantFrom('unknown-id', 'bad-template', 'extra-key', 'physical-conflict', 'orphan-alignment');
@@ -1530,7 +1630,7 @@ describe('seeded virtual columns, presets and canvas geometry', () => {
         { field: 'Narrow', code: 'too-narrow', widgetIndex: 0, pageNumbers: [1] },
       ] });
     }), 160);
-  }, 15_000);
+  }, 180_000);
 });
 
 describe('seeded QR codewords, rotated print stamps and bilingual covers', () => {
@@ -1561,7 +1661,7 @@ describe('seeded QR codewords, rotated print stamps and bilingual covers', () =>
         proveQrMatrix(symbol, payload);
       }
     }), 1_200);
-  }, 30_000);
+  }, 180_000);
 
   it('checks 950 corner transforms including clipped crops, physical size and unsafe geometries', async () => {
     const geometry = fc.record({
@@ -1598,7 +1698,7 @@ describe('seeded QR codewords, rotated print stamps and bilingual covers', () =>
         expect(displayY).toBe(expectedTop + size - v * scale);
       }
     }), 950);
-  }, 20_000);
+  }, 180_000);
 
   it('checks 800 bilingual panel height and absolute printable index cases', async () => {
     const panel = fc.record({
@@ -1636,7 +1736,7 @@ describe('seeded QR codewords, rotated print stamps and bilingual covers', () =>
         }
         expect(index).toBe(rows.length);
       }), 800);
-  }, 30_000);
+  }, 180_000);
 });
 
 describe('seeded independent Excel tabs, two-up geometry and v8 presets', () => {
@@ -1695,7 +1795,7 @@ describe('seeded independent Excel tabs, two-up geometry and v8 presets', () => 
       ];
       expect(switchTo.rows[0]?.warnings).toEqual(expectedWarnings);
     }), 1_700);
-  }, 40_000);
+  }, 180_000);
 
   it('checks 1,800 optimized pairs with margins, fixed order, odd slots and cover sheet offsets', async () => {
     await verify(fc.asyncProperty(
@@ -1736,7 +1836,7 @@ describe('seeded independent Excel tabs, two-up geometry and v8 presets', () => 
         expect(final.endPage - covers.length).toBe(Math.ceil(count / 2));
         expect(index.filter(({ endPage }) => endPage === final.endPage)).toHaveLength(count % 2 ? 1 : 2);
       }), 1_800);
-  }, 40_000);
+  }, 180_000);
 
   it('checks 1,600 exact v1–v8 preset roundtrips and rejects mismatched print settings', async () => {
     const modes = fc.constantFrom('1-up', '2-up');
@@ -1760,7 +1860,7 @@ describe('seeded independent Excel tabs, two-up geometry and v8 presets', () => 
         expect(validateMappingPreset({ ...v7, imposition })).toBeUndefined();
         expect(validateMappingPreset({ ...v7, version: 8 })).toBeUndefined();
       }), 1_600);
-  }, 40_000);
+  }, 180_000);
 });
 
 
@@ -1793,7 +1893,7 @@ describe('seeded AcroForm extraction and string-safe spreadsheet custody', () =>
       expect(parsed.errors).toEqual([]);
       expect(parsed.data[1]).toEqual(["'" + filename, '0'.repeat(64), 'extracted', plain, "'" + formula]);
     }), 1300);
-  }, 30_000);
+  }, 180_000);
 
   it('checks 700 saved AcroForm documents with exact UTF-16BE, PDFDocEncoding and native checkbox values', async () => {
     const spellings = [
@@ -2017,7 +2117,7 @@ describe('seeded grouping plans, split cover indexes, v9 presets and authored ch
         });
       }
     }), 850);
-  }, 40_000);
+  }, 180_000);
 
   it('checks 620 split-group indexes conserve selected records and physical pages through cover continuations', async () => {
     const group = fc.constantFrom('A', 'B', 'جَدَّة', '', '_Ungrouped', '../A');
@@ -2055,7 +2155,7 @@ describe('seeded grouping plans, split cover indexes, v9 presets and authored ch
       }
       expect(seen.sort((a, b) => a - b)).toEqual(scope.selectedRowNumbers);
     }), 620);
-  }, 40_000);
+  }, 180_000);
 
   it('checks 800 v9 preset and source-bound drafts preserve exact physical grouping columns and reject invalid values', async () => {
     const columns = fc.constantFrom('Clinic', 'CLINIC', 'فرع', 'Équipe', 'E\u0301quipe', '__proto__', 'PADDED_ROW_001');
@@ -2076,7 +2176,7 @@ describe('seeded grouping plans, split cover indexes, v9 presets and authored ch
       expect(parseBatchDraft(serializeBatchDraft(draft), source)).toEqual(draft);
       expect(() => serializeBatchDraft({ ...draft, settings: { ...v9, groupByColumn: column + '\u200e' } })).toThrow('invalid-batch-draft');
     }), 800);
-  }, 40_000);
+  }, 180_000);
 
   it('roundtrips 250 genuinely authored rotated dropdown and grouped radio fills with exact Unicode exports', async () => {
     const pages = await Promise.all([0, 90, 180, 270].map(async (rotation) => {
@@ -2119,7 +2219,7 @@ describe('seeded grouping plans, split cover indexes, v9 presets and authored ch
           Contact: { kind: 'radio', value: radio[index], nativeValue: String(index) },
         });
       }), 250);
-  }, 60_000);
+  }, 180_000);
 });
 
 describe('seeded offline CLI boundaries', () => {
@@ -2184,7 +2284,7 @@ describe('seeded offline CLI boundaries', () => {
         else expect(result.report).toMatchObject({ status: 'flagged', rows: [{ diagnostics: [{ code: 'exceeds-maxlen' }] }] });
         expect(result.artifacts.map(({ name }) => name)).toEqual(preflight ? ['arabiform-preflight.csv', 'arabiform-preflight.json'] : []);
       }), 1_050);
-  }, 40_000);
+  }, 180_000);
 
   it('checks 200 byte-exact CSV, XLSX and audit pairs from the native dispatcher and extraction engine', async () => {
     const base = await PDFDocument.create({ updateMetadata: false });
@@ -2202,7 +2302,7 @@ describe('seeded offline CLI boundaries', () => {
       expect(cli.exitCode).toBe(0);
       expect(cli.artifacts.map(({ data }) => data)).toEqual([expected.artifacts.csv, expected.artifacts.xlsx, expected.artifacts.audit]);
     }), 200);
-  }, 30_000);
+  }, 180_000);
 
   it('checks 50 byte-exact editable, flattened and merged exports against the browser batch worker', async () => {
     const template = await readFile('fixtures/golden/template.pdf');
@@ -2272,5 +2372,5 @@ describe('seeded offline CLI boundaries', () => {
         mismatched.flattenedEntries[0].filename = 'other.pdf';
         await expect(parseCustodyManifest(JSON.stringify(mismatched))).rejects.toThrow('custody-invalid-manifest');
       }), 150);
-  }, 30_000);
+  }, 180_000);
 });

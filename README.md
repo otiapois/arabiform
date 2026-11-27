@@ -1,6 +1,6 @@
 # ArabiForm
 
-ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), extracts saved field values into a spreadsheet, and compares delivered PDFs or QR text with a batch custody manifest. Use the browser workbench or run repeatable batches from a local terminal. Both process files on your device. [اقرأ بالعربية](#العربية)
+ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), and combines multiple forms into a printable PDF for each person. It also extracts saved field values and compares delivered PDFs or QR text with supported custody manifests. The browser workbench and the local CLI process files on your device. [اقرأ بالعربية](#العربية)
 
 ## Create a starter template
 
@@ -29,11 +29,19 @@ Use **Download CSV** for a UTF-8 file with a byte order mark (BOM) and formula-l
 
 ## Verify a batch receipt
 
-1. On `/` or `/ar/pdf-mail-merge`, open **Verify receipt**. Choose the batch custody JSON you saved after export, or the `batch-custody.json` inside a ZIP of split merged PDFs.
+1. On `/` or `/ar/pdf-mail-merge`, open **Verify receipt**. Choose the batch custody JSON you saved from **Fill PDFs**, or the `batch-custody.json` inside a ZIP of split merged PDFs.
 2. Add one or more delivered PDFs, paste the text read from a custody QR stamp, or do both. Select **Verify**. For a PDF, ArabiForm computes SHA-256 from the exact file bytes and compares it with the recorded output digest. A matching file is verified. A known filename with a different hash is reported as a byte mismatch. A file without a matching name or hash is reported as unknown.
 3. A QR result confirms that the pasted text identifies a row recorded in the supplied receipt. To check the PDF's bytes, supply the PDF itself. Both results depend on the unsigned manifest you provide. Issuer authenticity requires separate evidence.
 
 Earlier batch manifests still support byte checks when they include output hashes. QR record verification requires the optional custody QR mode and the matching post-export receipt.
+
+## Assemble packets
+
+1. On `/` or `/ar/pdf-mail-merge`, open **Assemble packets**. Choose **Try Synthetic 2-Document HR + Consent Packet Demo** to load and check fictional records, or use **Add PDFs** to select two to four fillable AcroForm PDFs. Use **Move earlier** and **Move later** to set the order in every packet. Intake blocks encrypted, signed, XFA, and flat PDFs.
+2. Use **Choose CSV or Excel** to select one shared roster. In **Worksheet**, select the visible tab you want if the workbook has more than one. Open each template's tab in **Field mapping** and map at least one editable field to a column. Choose **Leave unchanged** to preserve a field's existing appearance in print.
+3. Optionally turn on **Include bilingual cover and table of contents**. It adds an English and Arabic cover to each packet. The index lists each document and its actual first page in the packet. For example, after the cover, a two-page first document starts on page 2 and the next document starts on page 4. Use **Group packets by roster column** for ZIP folders, and **Packet filename pattern** to customize the names. With an `ID` column, the default is `{{ID}}-packet.pdf`. Otherwise the filename uses the original roster row number.
+4. Select **Check packets**. A row is **Ready** when every template passes the checks for that person. An invalid choice or text that cannot fit in even one document flags the row and holds its whole packet. Review the template, field, and reason under **Diagnostics**, then correct the inputs and check again. Other ready rows can still be exported.
+5. Download **Per-Person Packets (.zip)** and **Packet Custody Manifest (.json)**. The ZIP contains one flattened, print-ready PDF per ready person, in the template order you set. The unsigned `packet-custody-manifest.json` records SHA-256 hashes of the source templates, the shared roster, and each emitted packet. To check a file's bytes, compare its full hash with the digest for that file in a trusted copy of the manifest. Issuer authenticity requires separate evidence. [Packet format and receipt fields](docs/subsystems/pdf-engine.md#multi-template-packet-assembly)
 
 ## Fill PDFs
 
@@ -124,7 +132,7 @@ Use Node.js 24 and its bundled npm. From the source checkout, install dependenci
 npm run arabiform-cli -- --mode studio --template certificate-bilingual --out-dir ./arabiform-demo/starter
 ```
 
-`studio` creates an editable bilingual template and a matching synthetic CSV. Run `preflight` to check a CSV or Excel batch and write diagnostics, `fill` to write editable and flattened ZIPs plus a merged print PDF, `extract` to read saved form values from 1–200 PDFs, or `verify` to compare PDF bytes or a custody QR record with an unsigned receipt. In Fill PDFs, export a mapping preset and open **Local CLI command** to copy a strict fill command with the current settings. Pass that JSON with `--preset` to use the same text formatting and print seal in the CLI. `--strict` blocks the entire export when a row fails. Exit `0` means clean, `2` means flagged or blocked, and `1` means usage or file I/O error. [Five-mode walkthrough, every flag, and output files](docs/subsystems/cli-automation.md)
+`studio` creates an editable bilingual template and a matching synthetic CSV. Run `preflight` to check a CSV or Excel batch and write diagnostics, `fill` to write editable and flattened ZIPs plus a merged print PDF, `packet` to assemble two to four templates into one flattened PDF per ready recipient, `extract` to read saved form values from 1–200 PDFs, or `verify` to compare PDF bytes or a custody QR record with an unsigned batch receipt. In Fill PDFs, export a mapping preset and open **Local CLI command** to copy a strict fill command with the current settings. Pass that JSON with `--preset` to use the same text formatting and print seal in the CLI. `fill --strict` blocks the entire fill export when a row fails. Exit `0` means clean, `2` means flagged or blocked, and `1` means usage or file I/O error. A `packet` run can exit `2` with files for the ready recipients. [CLI walkthrough, options, and output files](docs/subsystems/cli-automation.md)
 
 ## Run and verify locally
 
@@ -146,7 +154,7 @@ The committed synthetic PDFs, CSV, and workbook support offline testing after in
 
 For a local run, use `npm run dev`. Use `npm run preview` after a build to serve the production headers at `http://127.0.0.1:4173`. Run `npm run test:e2e` with Microsoft Edge installed. The Edge suite is separate from the CI checks above and uses the installed browser.
 
-The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M20 acceptance requires at least 37,500 deterministic cases with zero discards or crashes, including digit conversion, field typography, seal placement, and preset compatibility. The 4× PyMuPDF checks compare filled fixtures with source templates and compare flattened exports with their editable renders. Inspect the preview and a test export with your own template, font, and PDF viewer before printing a batch. [M20 acceptance criteria](docs/tasks/M20-numeral-policy-typography-signature-stamp.md)
+The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M21 acceptance requires at least 40,000 deterministic cases with zero discards or crashes, including packet page counts, per-recipient holds, index page numbers, and custody hashes. The 4× PyMuPDF checks compare filled fixtures with source templates and check flattened output. Inspect a test export with your own templates and PDF viewer before printing a batch. [M21 acceptance criteria](docs/tasks/M21-multi-template-batch-packet-assembler.md)
 
 For Windows development, keep the checkout, worktrees, dependencies, and Python environment on `D:`. Direct npm and pip caches to `D:\cache\arabiform\npm` and `D:\cache\arabiform\pip` with their `--cache` and `--cache-dir` flags. Point the local session’s `TEMP` and `TMP` to an existing `D:` directory. If you need a Playwright browser cache, set `PLAYWRIGHT_BROWSERS_PATH=D:\cache\ms-playwright`.
 
@@ -162,11 +170,11 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 
 Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Each route's entry JavaScript must be under 274,000 raw bytes and under 85,800 gzip bytes. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
 
-See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v2.0.0 release brief](docs/tasks/M20-numeral-policy-typography-signature-stamp.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v2.1.0 release brief](docs/tasks/M21-multi-template-batch-packet-assembler.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## العربية
 
-تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتستخرج قيم الحقول المحفوظة إلى جدول بيانات. يمكنك أيضًا مقارنة ملفات PDF المستلمة أو نص رمز QR بسجلّ الدفعة. استخدم واجهة المتصفح أو شغّل الدفعات المتكرّرة من الطرفية. تُعالَج الملفات على جهازك في الحالتين.
+تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتجمع عدة نماذج في ملف PDF قابل للطباعة لكل شخص. ويمكنك استخراج قيم الحقول المحفوظة ومقارنة ملفات PDF المستلمة أو نص رمز QR ببيانات الحيازة المدعومة. تُعالَج الملفات على جهازك سواء استخدمت واجهة المتصفح أو الطرفية.
 
 ### إنشاء قالب جاهز للتعبئة
 
@@ -195,11 +203,19 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 
 ### التحقق من بيان الحيازة
 
-1. افتح `/ar/pdf-mail-merge` واختر «التحقق من بيان الحيازة». اختر ملف JSON الذي حفظته بعد تصدير الدفعة، أو ملف `batch-custody.json` الموجود داخل أرشيف ملفات PDF المدمجة حسب المجموعة.
+1. افتح `/ar/pdf-mail-merge` واختر «التحقق من بيان الحيازة». اختر ملف JSON الذي حفظته من وضع تعبئة ملفات PDF، أو ملف `batch-custody.json` الموجود داخل أرشيف ملفات PDF المدمجة حسب المجموعة.
 2. أضف ملف PDF مستلمًا أو أكثر، أو ألصق النص المقروء من رمز QR الخاص بالسجلّ. يمكنك أيضًا إدخال النوعين معًا. اضغط «تحقّق». تحسب الأداة بصمة SHA-256 من بايتات ملف PDF وتقارنها بالبصمة المسجّلة. تعرض نتيجة تطابق عند تساوي البصمتين، وتنبيهًا عند تطابق اسم الملف واختلاف البصمة. إذا غاب الاسم والبصمة عن البيان، تعرض النتيجة على أنها غير معروفة.
 3. يؤكّد تطابق رمز QR أن النص الملصق يشير إلى صف مسجّل في البيان المرفق. للتحقّق من بايتات ملف PDF نفسه، أضف الملف. تعتمد النتيجتان على البيان غير الموقّع الذي تختاره. يتطلّب إثبات هوية جهة الإصدار دليلًا مستقلًا.
 
 يمكن التحقّق من بايتات الملفات باستخدام بيانات الدفعات الأقدم إذا احتوت على بصمات المخرجات. يتطلّب التحقّق من رمز QR تفعيل وضع سجلّ الحيازة الاختياري واستخدام البيان المطابق الذي حُفظ بعد التصدير.
+
+### تجميع الحزم
+
+1. افتح `/ar/pdf-mail-merge` واختر «تجميع الحزم». اختر «جرّب عينة اصطناعية لحزمة الموارد البشرية والموافقة من مستندين» لتحميل بيانات خيالية وفحصها، أو استخدم «أضف ملفات PDF» لاختيار قالبَي AcroForm إلى أربعة قوالب قابلة للتعبئة. استخدم «قدّم القالب» و«أخّر القالب» لترتيب المستندات داخل الحزمة. تُرفض ملفات PDF المشفّرة والموقّعة والمسطّحة ونماذج XFA.
+2. استخدم «اختر ملف CSV أو Excel» لتحديد جدول واحد لجميع القوالب. إذا احتوى ملف Excel على أكثر من ورقة ظاهرة، حدّد الورقة المطلوبة من «ورقة العمل». افتح تبويب كل قالب ضمن «ربط الحقول» واربط حقلًا واحدًا قابلًا للتعديل على الأقل بأحد الأعمدة. استخدم «اتركه دون تغيير» لإبقاء مظهر الحقل عند الطباعة.
+3. يمكنك تشغيل «أضف غلافًا وفهرسًا باللغتين» لوضع غلاف بالعربية والإنجليزية لكل حزمة. يبيّن الفهرس الصفحة الفعلية التي يبدأ عندها كل مستند. مثلًا، يبدأ المستند الأول في الصفحة 2 بعد الغلاف. إذا كان من صفحتين، يبدأ المستند التالي في الصفحة 4. استخدم «جمّع الحزم حسب عمود في الجدول» لتنظيم الملفات في مجلدات داخل ZIP، و«نمط أسماء ملفات الحزم» لتخصيص أسمائها. إذا وُجد العمود `ID`، يكون نمط التسمية الافتراضي `{{ID}}-packet.pdf`. وإلا يُستخدم رقم الصف الأصلي في اسم الملف.
+4. اختر «افحص الحزم». تظهر حالة الصف «جاهز» عندما تجتاز كل قوالبه الفحص. إذا كانت إحدى القيم غير صالحة لحقل اختيار أو لم يتّسع حقل للنص، تظهر حالة «يحتاج إلى مراجعة» ويتوقّف تصدير حزمته كاملةً. راجع القالب والحقل والسبب في «نتائج الفحص»، وصحّح المدخلات، ثم أعد الفحص. يبقى تصدير الحزم الجاهزة للأشخاص الآخرين متاحًا.
+5. نزّل «حزم لكل شخص (.zip)» و«بيان سلسلة حيازة الحزم (.json)». يحتوي الأرشيف على ملف PDF مسطّح وجاهز للطباعة لكل شخص جاهز، بالمستندات مرتّبة حسب ترتيب القوالب. يسجّل بيان الحيازة غير الموقّع `packet-custody-manifest.json` بصمات SHA-256 للقوالب الأصلية والجدول المشترك وكل حزمة صُدّرت. للتحقّق من بايتات ملف، قارن بصمته الكاملة بالبصمة المقابلة في نسخة موثوقة من البيان. يتطلّب إثبات هوية الجهة المصدرة دليلًا منفصلًا. [صيغة الحزمة وحقول البيان](docs/subsystems/pdf-engine.md#multi-template-packet-assembly)
 
 ### تعبئة ملفات PDF
 
@@ -290,10 +306,10 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 npm run arabiform-cli -- --mode studio --template certificate-bilingual --out-dir ./arabiform-demo/starter
 ```
 
-ينشئ `studio` قالبًا ثنائي اللغة قابلًا للتعبئة وجدول CSV اصطناعيًا مطابقًا. يفحص `preflight` دفعة CSV أو Excel ويكتب تقارير الفحص. ينتج `fill` أرشيفَي ZIP للملفات القابلة للتعديل والمسطّحة وملف PDF مدمجًا للطباعة. يستخرج `extract` قيم الحقول المحفوظة من ملف PDF واحد إلى 200 ملف. يقارن `verify` بايتات الملف أو سجلّ رمز QR ببيان دفعة غير موقّع. من واجهة تعبئة PDF، صدّر إعدادات الربط وافتح «أمر التشغيل المحلي» لنسخ أمر التعبئة بالإعدادات الحالية. مرّر ملف JSON مع `--preset` لاستخدام تنسيق الحقول وختم الطباعة نفسيهما في الطرفية. يمنع `--strict` التصدير عند إخفاق أي صف. رمز الخروج `0` للنجاح دون مشكلات، و`2` للتنبيه أو المنع، و`1` لخطأ في صيغة الأمر أو التعامل مع الملفات. [الأوضاع الخمسة والخيارات وملفات الإخراج](docs/subsystems/cli-automation.md)
+ينشئ `studio` قالبًا ثنائي اللغة قابلًا للتعبئة وجدول CSV اصطناعيًا مطابقًا. يفحص `preflight` دفعة CSV أو Excel ويكتب تقارير الفحص. ينتج `fill` أرشيفَي ZIP للملفات القابلة للتعديل والمسطّحة وملف PDF مدمجًا للطباعة. يجمع `packet` من قالبين إلى أربعة في ملف PDF مسطّح لكل شخص جاهز. يستخرج `extract` قيم الحقول المحفوظة من ملف PDF واحد إلى 200 ملف. يقارن `verify` بايتات الملف أو سجلّ رمز QR ببيان دفعة غير موقّع. من واجهة تعبئة PDF، صدّر إعدادات الربط وافتح «أمر التشغيل المحلي» لنسخ أمر التعبئة بالإعدادات الحالية. مرّر ملف JSON مع `--preset` لاستخدام تنسيق الحقول وختم الطباعة نفسيهما في الطرفية. يمنع `fill --strict` تصدير دفعة التعبئة عند إخفاق أي صف. رمز الخروج `0` للنجاح دون مشكلات، و`2` للتنبيه أو المنع، و`1` لخطأ في صيغة الأمر أو التعامل مع الملفات. قد ينتهي `packet` بالرمز `2` مع تصدير ملفات الأشخاص الجاهزين. [أمثلة الطرفية والخيارات وملفات الإخراج](docs/subsystems/cli-automation.md)
 
 ### التحقق محليًا
 
-بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M20 اجتياز 37,500 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، بما فيها تحويل الأرقام وتنسيق الحقول وموضع الختم وتوافق إعدادات الربط. يقارن PyMuPDF النماذج المملوءة بالقوالب الأصلية ويقارن النسخ المسطّحة بالنسخ القابلة للتعديل بتكبير 4 أضعاف. راجع المعاينة وملفًا تجريبيًا بقالبك وخطك وبرنامج عرض PDF الذي تستخدمه قبل طباعة الدفعة. [شروط قبول M20](docs/tasks/M20-numeral-policy-typography-signature-stamp.md)
+بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة والأختام وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M21 اجتياز 40,000 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، بما فيها عدد صفحات الحزم، وإيقاف تصدير حزمة شخص عند إخفاق مستند واحد، وأرقام صفحات الفهرس، وبصمات الحيازة. يقارن PyMuPDF النماذج المعبّأة بالقوالب الأصلية، ويفحص المخرجات المسطّحة بتكبير 4 أضعاف. افحص ملفًا تجريبيًا بقوالبك وبرنامج عرض PDF الذي تستخدمه قبل طباعة الدفعة. [شروط قبول M21](docs/tasks/M21-multi-template-batch-packet-assembler.md)
 
 استخدم أوامر التحقق أعلاه مع Node.js 24 وPython 3.13. لمعاينة النسخة المبنية مع ترويسات الأمان، شغّل `npm run preview` بعد البناء. يتطلب `npm run test:e2e` تثبيت Microsoft Edge. على Windows، احتفظ بملفات العمل والملفات المؤقتة وذاكرات التخزين المؤقت على القرص `D:`. تُحفَظ صفحات الموقع الثابتة الخمس في `dist/`، وتُضبَط قيمة `SITE_URL` على عنوان الموقع الفعلي عند تجهيز نسخة للنشر. يجب أن يقلّ حجم JavaScript الذي تحمّله كل صفحة عند فتحها عن 274,000 بايت قبل الضغط وعن 85,800 بايت بعد ضغط gzip. [أوامر بناء الإصدار والتحقق من عنوان الموقع](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)

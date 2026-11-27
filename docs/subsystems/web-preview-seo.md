@@ -65,6 +65,13 @@
   - The `Browser-local` badge describes the local processing and production `CSP: connect-src 'none'`. Verify network behavior in DevTools.
   - `Download scope checklist` is a planning aid for recurring batches. The landing claim gate rules apply to any future pricing or customer evidence.
 
+## Assemble packets
+
+- **Assemble packets** opens a lazy-loaded mode in the existing English and Arabic workbenches. **Fill PDFs** remains the default at the same routes. On idle visits, defer packet code and the synthetic demo alongside the PDF engine, QR code, and PDF-embedding fonts.
+- Accept two to four ordered fillable templates and one shared CSV or XLSX roster. Allow moving, replacing and removing templates, and selecting the visible XLSX worksheet. Keep mapping per template in tabs, with review and reset to auto-map. The labeled synthetic demo opens a two-page HR form followed by a one-page clinic consent form with synthetic records.
+- **Check packets** runs cross-template preflight. Show each recipient's readiness, including the document, field and reason when a field fails. A failed document holds the entire recipient packet. Enable ZIP and manifest downloads for the completed ready packets.
+- Offer a bilingual cover and document index, a ZIP filename pattern, and optional grouping by a roster column. The PDFs are flattened print copies. Download one ZIP and its unsigned SHA-256 manifest from the current batch. [Packet assembly and manifest contract](pdf-engine.md#multi-template-packet-assembly)
+
 ## Local Batch Drafts
 
 - **Save Draft (.json)** downloads a local v1 file with effective cell edits, applied hygiene summaries, and mapping and output settings. It embeds v10 settings for an active text formatting override or approval seal, v9 for an active grouping column, otherwise v8 for 2-up, v7 for QR or a different cover language, v6 when virtual columns are in use, v5 with an active watermark, or v4. Each settings version loads under the same source matching rules. A draft may contain roster cell values. Source PDF, roster, and font bytes are supplied locally when restoring. The draft is persisted in the downloaded file only, with no cloud storage or `localStorage`.
@@ -72,7 +79,7 @@
 - Export row selection is a workbench control outside the saved settings.
 
 ## Static Pre-Rendered SEO Routes (Strictly <= 5 per `SEO完整策略.md`!)
-1. `/` — Main workbench for creating templates, designing fields, filling AcroForm PDFs from CSV or Excel, extracting saved values, and checking batch receipts.
+1. `/` — Main workbench for creating templates, designing fields, filling AcroForm PDFs from CSV or Excel, assembling per-person packets, extracting saved values, and checking batch receipts.
 2. `/arabic-pdf-form-filler` — Focused English landing page (`fill pdf from csv arabic`, comparison against WinAnsi/clipping failures)
 3. `/ar/pdf-mail-merge` — Clean Arabic RTL landing page (`dir="rtl"`, concise verified Arabic UI/copy, clearly marked for native reader verification before launch)
 4. `/preserve-leading-zeros-pdf` — Focused page on preserving `00123` / `00007` IDs from CSV & Excel into PDFs

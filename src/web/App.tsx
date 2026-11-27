@@ -8,36 +8,34 @@ import { sampleWorkflows, useWorkbench } from './useWorkbench';
 import { WatermarkControls } from './WatermarkControls';
 
 const MappingRows = lazy(() => import('./MappingRows'));
-const VirtualFilenameTokens = lazy(() => import('./MappingRows').then(({ VirtualFilenameTokens }) => ({ default: VirtualFilenameTokens })));
 const PresetFeedback = lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback })));
 const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
 const WorkbenchPreview = lazy(() => import('./WorkbenchPreview'));
 const Hygiene = lazy(() => import('./Hygiene'));
 const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
-const CustodyPanel = lazy(() => import('./CustodyPanel'));
+const BatchSession = lazy(() => import('./BatchSession'));
 const ShortcutsDialog = lazy(() => import('./ShortcutsDialog'));
 const QrStampOptions = lazy(() => import('./QrStampOptions'));
-const ApprovalSealControl = lazy(() => import('./ApprovalSealControl'));
 const CoverOptions = lazy(() => import('./CoverOptions'));
-const ExportError = lazy(() => import('./ExportError'));
 const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
 const WorksheetPicker = lazy(() => import('./SourcePrintControls').then(({ WorksheetPicker }) => ({ default: WorksheetPicker })));
-const PrintLayout = lazy(() => import('./SourcePrintControls').then(({ PrintLayout }) => ({ default: PrintLayout })));
 const PdfExtractor = lazy(() => import('./PdfExtractor'));
 const FieldDesigner = lazy(() => import('./FieldDesigner'));
 const TemplateStudio = lazy(() => import('./TemplateStudio'));
 const ReceiptVerifier = lazy(() => import('./ReceiptVerifier'));
 const SourceError = lazy(() => import('./SourceError'));
-const ExportCounts = lazy(() => import('./BatchExportStatus').then(({ ExportCounts }) => ({ default: ExportCounts })));
-const SelectedExportScope = lazy(() => import('./BatchExportStatus').then(({ SelectedExportScope }) => ({ default: SelectedExportScope })));
-const ExportProgress = lazy(() => import('./BatchExportStatus').then(({ ExportProgress }) => ({ default: ExportProgress })));
-const GroupingControl = lazy(() => import('./GroupedOutputs').then(({ GroupingControl }) => ({ default: GroupingControl })));
-const GroupedSummary = lazy(() => import('./GroupedOutputs').then(({ GroupedSummary }) => ({ default: GroupedSummary })));
-const SplitDownload = lazy(() => import('./GroupedOutputs').then(({ SplitDownload }) => ({ default: SplitDownload })));
+const FilenameOptions = lazy(() => import('./FillOutputExtras').then(({ FilenameOptions }) => ({ default: FilenameOptions })));
+const PrintLayout = lazy(() => import('./FillOutputExtras').then(({ PrintLayout }) => ({ default: PrintLayout })));
+const ApprovalSealControl = lazy(() => import('./FillOutputExtras').then(({ ApprovalSealControl }) => ({ default: ApprovalSealControl })));
+const CheckedExportCounts = lazy(() => import('./FillOutputExtras').then(({ CheckedExportCounts }) => ({ default: CheckedExportCounts })));
+const ExportDetails = lazy(() => import('./FillOutputExtras').then(({ ExportDetails }) => ({ default: ExportDetails })));
+const ExportFeedback = lazy(() => import('./FillOutputExtras').then(({ ExportFeedback }) => ({ default: ExportFeedback })));
+const SplitDownload = lazy(() => import('./FillOutputExtras').then(({ SplitDownload }) => ({ default: SplitDownload })));
+const CompletedCustody = lazy(() => import('./FillOutputExtras').then(({ CompletedCustody }) => ({ default: CompletedCustody })));
 const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
-const PrintEstimate = lazy(() => import('./PrintEstimate'));
+const PacketWorkbench = lazy(() => import('./PacketWorkbench'));
 
-const modes = ['fill', 'extract', 'design', 'create', 'verify'] as const;
+const modes = ['fill', 'extract', 'design', 'create', 'verify', 'packet'] as const;
 type Mode = typeof modes[number];
 
 type AppProps = {
@@ -105,6 +103,7 @@ export function App({ language, heading, summary, details }: AppProps) {
   const activeMode = useRef(mode);
   const [extractOpened, setExtractOpened] = useState(false);
   const [studioOpened, setStudioOpened] = useState(false);
+  const [packetOpened, setPacketOpened] = useState(false);
   const [design, setDesign] = useState<{ revision: number; source?: FlatSource }>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
@@ -115,12 +114,14 @@ export function App({ language, heading, summary, details }: AppProps) {
     design: arabic ? 'تصميم الحقول' : 'Design fields',
     create: arabic ? 'إنشاء قالب' : 'Create template',
     verify: arabic ? 'التحقق من بيان الحيازة' : 'Verify receipt',
+    packet: labels.packetMode,
   };
 
   function openMode(next: Mode, source?: FlatSource) {
     activeMode.current = next;
     if (next === 'extract') setExtractOpened(true);
     if (next === 'create') setStudioOpened(true);
+    if (next === 'packet') setPacketOpened(true);
     if (next === 'design') setDesign((current) => !current || source
       ? { revision: (current?.revision ?? 0) + 1, source }
       : current);
@@ -161,7 +162,7 @@ export function App({ language, heading, summary, details }: AppProps) {
     return () => document.removeEventListener('keydown', handleCharacterShortcut);
   }, [arabic, characterKeys, fillMode]);
 
-  const { ready, flagged, customFont } = desk;
+  const { customFont } = desk;
   const subset = desk.exportScope.exportScope === 'selected-subset';
   const emptySubset = subset && desk.exportCount === 0;
   const custodyLabel = arabic
@@ -171,6 +172,7 @@ export function App({ language, heading, summary, details }: AppProps) {
 
   return (
     <>
+      {desk.batchSession && <Suspense><BatchSession {...desk.batchSession} /></Suspense>}
       <a className="skip-link" href="#workbench">{labels.skip}</a>
       <header className="site-header">
         <div className="shell header-inner">
@@ -332,8 +334,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                         disabled={desk.exporting} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                       <small>{labels.patternHelp}</small>
                     </label>
-                    {(desk.template || desk.roster) && <Suspense><VirtualFilenameTokens arabic={arabic} /></Suspense>}
-                    {(desk.sheet || desk.groupByColumn !== null) && <Suspense><GroupingControl desk={desk} arabic={arabic} /></Suspense>}
+                    {(desk.template || desk.roster || desk.groupByColumn !== null) && <Suspense><FilenameOptions desk={desk} arabic={arabic} /></Suspense>}
                     <label className="output-mode zip-mode">
                       <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exporting}
                         onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
@@ -434,15 +435,13 @@ export function App({ language, heading, summary, details }: AppProps) {
               <header>
                 <h2 id="export-heading">{labels.export}</h2>
                 {desk.results
-                  ? <Suspense><ExportCounts arabic={arabic} subset={subset} ready={ready} flagged={flagged} /></Suspense>
+                  ? <Suspense><CheckedExportCounts desk={desk} arabic={arabic} /></Suspense>
                   : <p data-testid="export-counts">{labels.exportWait}</p>}
               </header>
               <div className="panel-body export-actions">
-                {subset
-                  ? <Suspense><SelectedExportScope arabic={arabic} count={desk.exportCount} showEmpty={emptySubset && Boolean(desk.results)} /></Suspense>
-                  : <p role="status" className="tag tag-pass" data-testid="export-scope">{fillLabel(labels.exportAll, { count: desk.exportCount })}</p>}
-                {desk.grouping && desk.results && <Suspense><GroupedSummary desk={desk} arabic={arabic} /></Suspense>}
-                {desk.checkedWorker && <Suspense><PrintEstimate worker={desk.checkedWorker} output={desk.output} arabic={arabic} /></Suspense>}
+                {!subset && <p role="status" className="tag tag-pass" data-testid="export-scope">{fillLabel(labels.exportAll, { count: desk.exportCount })}</p>}
+                {(subset || desk.checkedWorker || (desk.grouping && desk.results)) &&
+                  <Suspense><ExportDetails desk={desk} language={language} /></Suspense>}
                 <div className="actions">
                   <button type="button" className="button primary" data-testid="download-zip" disabled={!desk.exportCount || desk.exporting || desk.groupingBlocked || (desk.flattenZip && desk.printSettingsBlocked)}
                     onClick={() => desk.download('zip')}>{arabic ? <span>{labels.zip} <bdi dir="ltr">(ZIP)</bdi></span> : labels.zip}</button>
@@ -458,13 +457,11 @@ export function App({ language, heading, summary, details }: AppProps) {
                 <div className="custody-controls">
                   {desk.custody ? (
                     <Suspense fallback={custodyPending}>
-                      <CustodyPanel sources={desk.custody} outputs={desk.custodyOutputs} scope={desk.exportScope} disabled={emptySubset || desk.exporting}
-                        label={custodyLabel} arabic={arabic} />
+                      <CompletedCustody desk={desk} arabic={arabic} label={custodyLabel} />
                     </Suspense>
                   ) : custodyPending}
                 </div>
-                {desk.exporting && <Suspense><ExportProgress arabic={arabic} /></Suspense>}
-                {desk.exportError && <Suspense><ExportError error={desk.exportError} language={language} /></Suspense>}
+                {(desk.exporting || desk.exportError) && <Suspense><ExportFeedback desk={desk} language={language} /></Suspense>}
               </div>
             </section>
           </div>
@@ -485,6 +482,11 @@ export function App({ language, heading, summary, details }: AppProps) {
           {mode === 'verify' && <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
             <ReceiptVerifier arabic={arabic} />
           </Suspense>}
+          {packetOpened && <div hidden={mode !== 'packet'}>
+            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
+              <PacketWorkbench arabic={arabic} active={mode === 'packet'} />
+            </Suspense>
+          </div>}
         </div>
 
         {details && <div className="route-details" dangerouslySetInnerHTML={details} />}

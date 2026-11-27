@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
-import { decodePDFRawStream, PDFArray, PDFDocument, PDFHexString, PDFRawStream } from 'pdf-lib';
+import { decodePDFRawStream, PDFArray, PDFDocument, PDFHexString, PDFName, PDFRawStream } from 'pdf-lib';
 
 const entry = fileURLToPath(new URL('../../scripts/arabiform-cli.ts', import.meta.url));
 const tmp = await realpath(tmpdir());
@@ -139,6 +139,50 @@ try {
   assert.equal(run(2, '--mode', 'preflight', '--template', 'fixtures/golden/xfa.pdf', '--roster',
     'fixtures/golden/roster.csv', '--out-dir', join(directory, 'Blocked')).issues[0].code, 'xfa-unsupported');
 
+  const hr = 'fixtures/m4/multi-page-hr-choices.pdf';
+  const clinic = 'fixtures/m3/clinic-consent-mixed.pdf';
+  const clinicRoster = 'fixtures/m3/clinic-consent-roster.csv';
+  const mappings = join(directory, 'packet-mappings.json');
+  const packetOut = join(directory, 'Ready Packets');
+  const packetArgs = ['--mode', 'packet', '--template', hr, '--template', clinic, '--mappings', mappings];
+  await writeFile(mappings, JSON.stringify([{ Employee: 'Name' }, { Name: 'Name', ID: 'ID', Consent: 'Consent' }]));
+  const partial = run(2, ...packetArgs, '--roster', clinicRoster, '--cover', '--group-by', 'Consent', '--out-dir', packetOut);
+  assert.equal(partial.status, 'flagged');
+  assert.equal(partial.ready, 2);
+  const held = partial.rows[2];
+  assert.equal(held.status, 'flagged');
+  assert.deepEqual(held.issues.map(({ templateIndex, templateName, fieldName, code }) => [templateIndex, templateName, fieldName, code]),
+    [[2, 'clinic-consent-mixed.pdf', 'Consent', 'invalid-checkbox-value']]);
+  assert.deepEqual(partial.outputs, ['arabiform-packets.zip', 'packet-custody-manifest.json']);
+  const packets = unzipSync(await readFile(join(packetOut, 'arabiform-packets.zip')));
+  const receipt = await readJson(join(packetOut, 'packet-custody-manifest.json'));
+  assert.deepEqual(receipt.sources.templates.map(({ sha256 }) => sha256), await Promise.all([hr, clinic].map(async (path) => hash(await readFile(path)))));
+  assert.equal(receipt.sources.roster.sha256, hash(await readFile(clinicRoster)));
+  assert.deepEqual(Object.keys(packets), receipt.outputs.map(({ path }) => path));
+  assert.deepEqual(receipt.outputs.map(({ rowNumber, filename }) => [rowNumber, filename]), [[1, '00001-packet.pdf'], [2, '00002-packet.pdf']]);
+  for (const output of receipt.outputs) {
+    const bytes = packets[output.path];
+    assert(output.path.includes('/'));
+    assert.equal(hash(bytes), output.sha256);
+    assert.deepEqual(output.documents.map(({ startPage, pageCount }) => [startPage, pageCount]), [[2, 2], [4, 1]]);
+    const pdf = await PDFDocument.load(bytes);
+    assert.equal(pdf.getPageCount(), 4);
+    assert(!pdf.catalog.has(PDFName.of('AcroForm')));
+  }
+  const packetCleanRoster = join(directory, 'packet-clean.csv');
+  await writeFile(packetCleanRoster, 'Name,ID,Consent\r\nMohammed,00123,yes\r\n');
+  assert.equal(run(0, ...packetArgs, '--roster', packetCleanRoster, '--out-dir', join(directory, 'Clean Packet')).status, 'clean');
+  const packetHeldRoster = join(directory, 'packet-held.csv');
+  const packetHeldOut = join(directory, 'All Packets Held');
+  await writeFile(packetHeldRoster, 'Name,ID,Consent\r\nMohammed,00123,review\r\n');
+  assert.equal(run(2, ...packetArgs, '--roster', packetHeldRoster, '--out-dir', packetHeldOut).ready, 0);
+  await assert.rejects(lstat(packetHeldOut), { code: 'ENOENT' });
+  const packetBlockedOut = join(directory, 'Packet Intake Blocked');
+  const packetBlocked = run(2, '--mode', 'packet', '--template', hr, '--template', clinic, '--template', 'fixtures/golden/xfa.pdf',
+    '--roster', clinicRoster, '--out-dir', packetBlockedOut);
+  assert.deepEqual(packetBlocked.issues.map(({ templateIndex, templateName, code }) => [templateIndex, templateName, code]), [[3, 'xfa.pdf', 'xfa-unsupported']]);
+  await assert.rejects(lstat(packetBlockedOut), { code: 'ENOENT' });
+
   const reserved = join(directory, 'Reserved');
   await mkdir(reserved);
   await writeFile(join(reserved, 'arabiform-preflight.json'), 'existing');
@@ -153,7 +197,7 @@ try {
   assert.match(run(1, '--mode', 'preflight', ...inputs, '--out-dir', join(link, 'nested')).message, /link, junction/);
   assert.deepEqual(await readdir(target), []);
   assert.equal(run(1, '--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir', 'safe/../escape').status, 'usage-error');
-  console.log('Real subprocess checks passed for all five modes, exact custody, M20 preset numerals and vector seal, strict output refusal and output-path guards.');
+  console.log('Real subprocess checks passed for all six modes, exact custody, M20 typography and seal, M21 packet exit 0/2, held recipient exclusion, strict no-output refusal, and output-path guards.');
 } finally {
   const actual = await realpath(directory);
   assert.equal(dirname(actual), tmp);

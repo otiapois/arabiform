@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
+import { validateApprovalSealSettings, type ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import { printProblem } from './ExportError';
 import type { useWorkbench } from './useWorkbench';
 import './print-formatting.css';
@@ -34,7 +34,8 @@ const corners = {
 } satisfies Record<ApprovalSealSettings['placement'], readonly [string, string]>;
 
 export default function ApprovalSealControl({ desk, arabic }: { desk: ReturnType<typeof useWorkbench>; arabic: boolean }) {
-  const { approvalSeal, changeApprovalSeal, sealSettingsBlocked, qrSettingsBlocked, sealCheckPending, sealProblem, exportCount, exporting } = desk;
+  const { approvalSeal, sealSettingsBlocked, qrSettingsBlocked, sealCheckPending, sealProblem, exportCount, exporting } = desk;
+  const changeApprovalSeal = (value: ApprovalSealSettings | null) => desk.changeApprovalSeal(value, validateApprovalSealSettings(value) !== undefined);
   const [opened, setOpened] = useState<boolean>();
   const copy = arabic ? ar : en;
   const code = sealProblem?.code ?? (qrSettingsBlocked ? 'qr-stamp-invalid-settings' : undefined);

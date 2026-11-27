@@ -21,6 +21,7 @@ import { planGroupedOutput, SPLIT_CUSTODY_PATH } from '../src/core/export/groupi
 import { createCustodyManifest, MERGED_CUSTODY_FILENAME } from '../src/core/audit/custody';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../src/core/custody/verify';
 import { generateStudioTemplate, STUDIO_TEMPLATE_IDS } from '../src/core/studio/templates';
+import { preflightPacket, type PacketTemplate } from '../src/core/packet/assembler';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -979,6 +980,46 @@ m20Obstacle.acroField.getWidgets()[0]!.dict.set(key('F'), m20.context.obj(36));
 await assert.rejects(createFlattenedZip([{ ...eastWest, pdfBytes: await m20.save() }], undefined, undefined, m20Qr, m20Seal),
   { code: m20Proof.overlapWithWidget, pageNumber: 1, fieldName: 'UnmappedPrintWidget' });
 
+const packetArabic = 'مُحَمَّد سَالِم';
+const packetEnglish = 'Mohammed Salem';
+const packetRoster = Buffer.from(`ID,Arabic Name,English Name,Consent\n00123,${packetArabic},${packetEnglish},yes\n00007,ليلى حسن,Layla Hasan,review\n`);
+const packetTemplates: (PacketTemplate & { bytes: Buffer; title: string })[] = [
+  { name: '01-HR.pdf', title: 'HR Onboarding', bytes: m4, mapping: { Employee: 'English Name' } },
+  { name: '02-Clinic.pdf', title: 'مُوَافَقَةُ العِيَادَةِ | Clinic Consent', bytes: consent, mapping: { Name: 'Arabic Name', ID: 'ID', Consent: 'Consent' } },
+];
+const packet = await preflightPacket({ templates: packetTemplates, roster: { name: 'packet-roster.csv', bytes: packetRoster },
+  fonts: settings.fonts, includeCover: true });
+assert.equal(packet.status, 'checked', JSON.stringify(packet.status === 'blocked' ? packet.issues : []));
+assert.deepEqual(packet.rows.map(({ rowNumber, status, issues }) => [rowNumber, status, issues.map(({ templateIndex, fieldName, code }) =>
+  [templateIndex, fieldName, code])]), [[1, 'ready', []], [2, 'flagged', [[2, 'Consent', 'invalid-checkbox-value']]]]);
+const assembled = await packet.assemble();
+const packetProof = {
+  zip: 'm21-assembled-packets.zip', receipt: 'm21-packet-custody-manifest.json', roster: 'm21-packet-roster.csv', member: '00123-packet.pdf',
+  coverText: ['Packet Document Index', 'فِهْرِسُ مُسْتَنَدَاتِ الحُزْمَةِ', 'Document', 'المستند', 'Start page', 'صفحة البداية'],
+  documents: [] as { source: string; editable: string; flattened: string; title: string; fields: string[]; visibleText: string[] }[],
+};
+const packetMembers = unzipSync(assembled.zipBytes);
+assert.deepEqual(Object.keys(packetMembers), [packetProof.member]);
+const assembledPdf = await PDFDocument.load(packetMembers[packetProof.member]!);
+assert.equal(assembledPdf.getPageCount(), 4);
+assert(!assembledPdf.catalog.has(key('AcroForm')));
+await writeFile(resolve(root, packetProof.zip), assembled.zipBytes);
+await writeFile(resolve(root, packetProof.receipt), assembled.manifestJson);
+await writeFile(resolve(root, packetProof.roster), packetRoster);
+const packetReferences = [
+  await passingCase(m4, { Employee: packetEnglish }, 'm21-hr-editable.pdf', 'M21 packet: English HR name on two pages'),
+  await passingCase(consent, { Name: packetArabic, ID: '00123', Consent: 'yes' }, 'm21-clinic-editable.pdf',
+    'M21 packet: Arabic clinic name with harakat, leading-zero ID and consent', 8, { checkboxes: { Consent: 'Yes' } }),
+];
+for (const [index, { filename, pdfBytes }] of packetReferences.entries()) {
+  const { bytes, title } = packetTemplates[index]!;
+  const flattened = `m21-individual-print-${index + 1}.pdf`;
+  const referenceZip = unzipSync(await createFlattenedZip([{ filename, pdfBytes }]));
+  await writeFile(resolve(root, flattened), referenceZip[filename]!);
+  packetProof.documents.push({ source: await snapshotSource(bytes), editable: filename, flattened, title,
+    fields: index ? ['Name', 'ID', 'Consent'] : ['Employee'], visibleText: index ? [packetArabic, '00123'] : [packetEnglish] });
+}
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -1018,5 +1059,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, packetProof, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

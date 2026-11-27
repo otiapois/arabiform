@@ -14,7 +14,7 @@ Use `npm --silent run arabiform-cli -- …` for automation that reads the CLI's 
 
 استخدم `npm --silent run arabiform-cli -- …` عندما يقرأ برنامجك مخرجات JSON مباشرةً. يخفي `--silent` السطور التعريفية التي يطبعها `npm run`. تمرّر `--` بعد اسم الأمر الوسائط المتبقية إلى ArabiForm.
 
-## Five-mode walkthrough / تجربة الأوضاع الخمسة
+## Single-template walkthrough / تجربة تعبئة قالب واحد
 
 Run these commands with a fresh `./arabiform-demo` path. The inputs are fictional. The same commands work in PowerShell and POSIX shells, with a shell-specific ZIP extraction command below.
 
@@ -43,6 +43,31 @@ npm run arabiform-cli -- --mode extract --in-dir ./arabiform-demo/editable --out
 npm run arabiform-cli -- --mode verify --manifest ./arabiform-demo/filled/custody-manifest.json --variant merged ./arabiform-demo/filled/arabiform-merged.pdf
 ```
 
+## Packet walkthrough / تجربة تجميع الحزم
+
+Save the following JSON as `./packet-mappings.json` in UTF-8 without a byte order mark. Each object maps PDF field names to exact headers in the shared roster. The array follows the order of the repeated `--template` arguments. Use `null` in a slot to auto-map the text and checkbox fields of that template. Omit `--mappings` to auto-map every template. Each template needs at least one mapping. Fields left out of an explicit mapping keep their original visible appearances in print.
+
+احفظ JSON التالي في ملف `./packet-mappings.json` بترميز UTF-8 بلا علامة BOM. يربط كل كائن أسماء حقول PDF بعناوين أعمدة مطابقة في الجدول المشترك. يتبع ترتيب عناصر القائمة ترتيب خيارات `--template`. استخدم `null` في موضع قالب لربط حقوله النصية وخانات الاختيار تلقائيًا. احذف `--mappings` للربط التلقائي في جميع القوالب. يحتاج كل قالب إلى حقل مرتبط واحد على الأقل. تحتفظ الحقول التي تتركها خارج الربط الصريح بمظهرها المرئي عند الطباعة.
+
+```json
+[
+  { "Employee": "Name" },
+  { "Name": "Name", "ID": "ID", "Consent": "Consent" }
+]
+```
+
+Use the bundled synthetic HR and clinic templates with one synthetic CSV. Choose a fresh output path. The cover is one page, the HR document starts on page 2, and the clinic document starts on page 4. Grouping creates folders from the `Consent` column. The last roster row deliberately has an invalid checkbox value. The command exits `2` and still writes packets for the first two rows.
+
+استخدم قالبَي الموارد البشرية والعيادة وجدول CSV الاصطناعي المرفق. اختر مسار إخراج جديدًا. يتكوّن الغلاف من صفحة واحدة، ويبدأ مستند الموارد البشرية في الصفحة 2، ويبدأ مستند العيادة في الصفحة 4. ينظّم خيار التجميع الملفات في مجلدات بحسب عمود `Consent`. يحتوي الصف الأخير عمدًا على قيمة غير صالحة لخانة اختيار. يخرج الأمر بالرمز `2` ويكتب حزم الصفّين الأولَين.
+
+```sh
+npm run arabiform-cli -- --mode packet --template ./fixtures/m4/multi-page-hr-choices.pdf --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./fixtures/m3/clinic-consent-roster.csv --mappings ./packet-mappings.json --group-by Consent --cover --out-dir ./arabiform-demo/packets
+```
+
+The ZIP contains one flattened PDF per ready recipient. The packet manifest is a separate JSON file. `verify` reads the single-template batch receipts described below. For a packet, compare SHA-256 for the exact source or extracted PDF bytes with the corresponding digest in a trusted copy of `packet-custody-manifest.json`. The manifest is unsigned. Issuer authenticity requires separate evidence. [Packet manifest fields](pdf-engine.md#multi-template-packet-assembly)
+
+يحتوي ZIP على ملف PDF مسطّح لكل شخص جاهز. يُحفظ بيان الحزم في ملف JSON مستقل. يقرأ `verify` بيانات دفعات القالب الواحد المذكورة أدناه. للتحقّق من حزمة، احسب بصمة SHA-256 للبايتات الأصلية للمصدر أو لملف PDF المستخرج من الأرشيف، وقارنها بالبصمة المقابلة في نسخة موثوقة من `packet-custody-manifest.json`. البيان غير موقّع. يتطلّب إثبات هوية الجهة المصدرة دليلًا منفصلًا. [حقول بيان الحزم](pdf-engine.md#multi-template-packet-assembly)
+
 ## Modes and output / الأوضاع والمخرجات
 
 | `--mode` | English | العربية |
@@ -50,6 +75,7 @@ npm run arabiform-cli -- --mode verify --manifest ./arabiform-demo/filled/custod
 | `studio` | Requires a starter ID in `--template` and `--out-dir`. Writes `<id>.pdf` and `<id>-synthetic-sample.csv`. The PDF is an editable AcroForm. The matching UTF-8 BOM CSV contains synthetic rows. | يتطلّب معرّف القالب في `--template` ومسار الإخراج في `--out-dir`. ينشئ قالب AcroForm قابلًا للتعبئة باسم `<id>.pdf` وجدولًا اصطناعيًا مطابقًا باسم `<id>-synthetic-sample.csv` بترميز UTF-8 وعلامة BOM. |
 | `preflight` | Requires `--template`, `--roster`, and `--out-dir`. Checks mapping and values, including glyph fit, and writes `arabiform-preflight.csv` and `arabiform-preflight.json`. The files describe each row or the reason intake was blocked. | يتطلّب `--template` و`--roster` و`--out-dir`. يفحص الربط والقيم ومدى اتساع الحقول للحروف، ثم يكتب `arabiform-preflight.csv` و`arabiform-preflight.json` بتفاصيل كل صف أو سبب رفض المدخلات. |
 | `fill` | Requires `--template`, `--roster`, and `--out-dir`. Runs preflight and, for an exportable batch, writes `arabiform-editable.zip`, `arabiform-flattened.zip`, `arabiform-merged.pdf`, and `custody-manifest.json`. It makes both ZIP variants on every successful export. Grouping changes the paths in both ZIPs and keeps the printable PDF combined. | يتطلّب `--template` و`--roster` و`--out-dir`. يجري الفحص المسبق ويكتب `arabiform-editable.zip` و`arabiform-flattened.zip` و`arabiform-merged.pdf` و`custody-manifest.json` للدفعة القابلة للتصدير. ينتج التصدير أرشيفَي ZIP، ويغيّر التجميع المسارات داخلهما مع إبقاء كل السجلات في ملف الطباعة المدمج. |
+| `packet` | Requires two to four `--template` arguments, `--roster`, and `--out-dir`. Writes `arabiform-packets.zip` and `packet-custody-manifest.json` when at least one person is ready. | يتطلّب تكرار `--template` من مرتين إلى أربع مرات، مع `--roster` و`--out-dir`. يكتب `arabiform-packets.zip` و`packet-custody-manifest.json` عند وجود شخص جاهز واحد على الأقل. |
 | `extract` | Requires `--out-dir` and either `--in-dir` or 1–200 positional PDF paths. Reads saved form fields and writes `arabiform-extracted.csv` (UTF-8 BOM), `arabiform-extracted.xlsx` (text cells) and `extraction-audit.json`. | يتطلّب `--out-dir` ومجلدًا في `--in-dir` أو قائمة تضم من مسار PDF واحد إلى 200 مسار. يقرأ الحقول المحفوظة ويكتب `arabiform-extracted.csv` بترميز UTF-8 وعلامة BOM، و`arabiform-extracted.xlsx` بخلايا نصية، و`extraction-audit.json`. |
 | `verify` | Requires `--manifest` and either one or more positional PDF paths or `--qr-payload`. Writes results as JSON to stdout. | يتطلّب `--manifest` ومسار PDF واحدًا أو أكثر، أو `--qr-payload`. يكتب النتائج بصيغة JSON إلى المخرج القياسي. |
 
@@ -65,19 +91,20 @@ npm run arabiform-cli -- --mode verify --manifest ./arabiform-demo/filled/custod
 | Flag | English | العربية |
 | --- | --- | --- |
 | `--help` | Print usage and exit `0`. Use it on its own. | يعرض طريقة الاستخدام ويخرج بالرمز `0`. استخدمه بمفرده. |
-| `--mode <name>` | Select one of the five modes above. | يحدّد أحد الأوضاع الخمسة أعلاه. |
-| `--out-dir <dir>` | Local output directory for `studio`, `preflight`, `fill` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`preflight` و`fill` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
-| `--template <pdf>` / `--template <id>` | Source template for `preflight` or `fill`, or a built-in template ID for `studio`. | مسار القالب المصدر في `preflight` أو `fill`، أو معرّف قالب مضمّن في `studio`. |
-| `--roster <csv-or-xlsx>` | Source roster for `preflight` and `fill`. | جدول البيانات المصدر في `preflight` و`fill` بصيغة CSV أو Excel. |
+| `--mode <name>` | Select a mode from the table above. | يحدّد أحد الأوضاع المذكورة في الجدول أعلاه. |
+| `--out-dir <dir>` | Local output directory for `studio`, `preflight`, `fill`, `packet` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`preflight` و`fill` و`packet` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
+| `--template <pdf>` / `--template <id>` | Source template for `preflight` or `fill`, or a built-in template ID for `studio`. For `packet`, repeat `--template <pdf>` two to four times in document order. | مسار القالب المصدر في `preflight` أو `fill`، أو معرّف قالب مضمّن في `studio`. في `packet`، كرّر `--template <pdf>` من مرتين إلى أربع مرات بحسب ترتيب المستندات. |
+| `--roster <csv-or-xlsx>` | Source roster for `preflight`, `fill`, or `packet`. All templates in `packet` use the same roster. | جدول البيانات المصدر في `preflight` أو `fill` أو `packet` بصيغة CSV أو Excel. تستخدم جميع قوالب `packet` الجدول نفسه. |
 | `--preset <json>` | Reuse a workbench mapping preset (versions 1–10) in `preflight` or `fill`. | يعيد استخدام ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 10) في `preflight` أو `fill`. |
-| `--sheet <name>` | Exact visible Excel worksheet name for `preflight` and `fill`. By default, load the first visible worksheet. | اسم ورقة العمل الظاهرة في `preflight` و`fill` كما كُتب في ملف Excel. تُحمَّل أول ورقة ظاهرة افتراضيًا. |
+| `--mappings <json>` | Optional ordered JSON array of field-to-header maps or `null` for `packet`. Supply one entry per template. | قائمة JSON اختيارية تحتوي على تعريف ربط الحقول بعناوين الأعمدة، أو على `null`، لكل قالب في `packet`. اتّبع ترتيب القوالب. |
+| `--sheet <name>` | Exact visible Excel worksheet name for `preflight`, `fill`, or `packet`. By default, load the first visible worksheet. | اسم ورقة العمل الظاهرة في `preflight` أو `fill` أو `packet` كما كُتب في ملف Excel. تُحمَّل أول ورقة ظاهرة افتراضيًا. |
 | `--sheet-base64url <name>` | Encoded equivalent of `--sheet` for shells that have trouble passing a worksheet name. Use canonical UTF-8 base64url with no padding. Supply just one of the two forms. | بديل مرمّز لـ `--sheet` عندما يصعب تمرير اسم الورقة عبر واجهة الأوامر. استخدم UTF-8 بترميز base64url القياسي دون حشو، واختر إحدى الصيغتين. |
-| `--group-by <header>` | Exact roster header for `preflight` and `fill`. Plans one folder per value, including `_Ungrouped` for blanks, and records the member paths in preflight diagnostics. | اسم عمود الجدول حرفيًا في `preflight` و`fill`. يحدّد مجلدًا لكل قيمة ومجلد `_Ungrouped` للقيم الفارغة، ويسجّل مسارات الملفات في تقارير الفحص. |
+| `--group-by <header>` | Exact roster header for `preflight`, `fill`, or `packet`. Plans one folder per value, including `_Ungrouped` for blanks. Single-template preflight diagnostics record the member paths. | اسم عمود الجدول حرفيًا في `preflight` أو `fill` أو `packet`. يحدّد مجلدًا لكل قيمة ومجلد `_Ungrouped` للقيم الفارغة. تسجّل تقارير فحص القالب الواحد مسارات الملفات. |
 | `--group-by-base64url <header>` | Encoded equivalent of `--group-by`. Use canonical UTF-8 base64url with no padding. Supply just one of the two forms. | بديل مرمّز لـ `--group-by`. استخدم UTF-8 بترميز base64url القياسي دون حشو، واختر إحدى الصيغتين. |
 | `--date YYYY-MM-DD` | Date for virtual roster values and print cover dates in `preflight` or `fill`. The default is the current UTC date. Pin the date to repeat a run with date-based fields or a cover. | تاريخ القيم المحسوبة وأغلفة الطباعة في `preflight` أو `fill`. التاريخ الافتراضي هو اليوم بالتوقيت العالمي UTC. حدّده عند تكرار دفعة تستخدم التاريخ في الحقول أو الغلاف. |
 | `--strict` | For `fill`, exit `2` with JSON diagnostics on stderr and write no output files if any row fails preflight. | في `fill`، يكتب تفاصيل الإخفاق بصيغة JSON إلى مخرج الأخطاء القياسي ويخرج بالرمز `2` دون إنشاء ملفات إذا أخفق أي صف. |
 | `--imposition 1-up` or `--imposition 2-up` | Merged PDF layout in `fill`. `2-up` places two single-page records per A4 sheet. Use `1-up` for multi-page templates since `2-up` stops the export. | تخطيط PDF المدمج في `fill`. يضع `2-up` سجلين من صفحة واحدة على ورقة A4. استخدم `1-up` مع القوالب متعددة الصفحات لأن `2-up` يوقف تصديرها. |
-| `--cover` | Adds an index cover to the merged PDF in `fill`. Uses the preset's cover language or English when set to `auto` or omitted. | يضيف غلافًا بفهرس إلى PDF المدمج في `fill`. يستخدم لغة الغلاف المحفوظة في الإعدادات، أو الإنجليزية إذا كانت اللغة `auto` أو غير محدّدة. |
+| `--cover` | In `fill`, adds an index cover to the merged PDF using the preset's cover language, or English when set to `auto` or omitted. In `packet`, adds a bilingual cover with a document index to each packet PDF. | في `fill` يضيف غلافًا بفهرس إلى ملف PDF المدمج بلغة الغلاف المحفوظة، أو بالإنجليزية إذا كانت اللغة `auto` أو غير محدّدة. في `packet` يضيف غلافًا ثنائي اللغة بفهرس المستندات إلى كل حزمة PDF. |
 | `--watermark <text>` | Adds a one-line watermark of up to 32 Unicode code points in `fill`. It uses a 45° angle and 14% opacity. Print marks apply to flattened record pages. | يضيف علامة مائية من سطر واحد يصل إلى 32 محرفًا بترميز Unicode في `fill`. تكون الزاوية 45° والعتامة 14%. تظهر علامات الطباعة على صفحات السجلات المسطّحة. |
 | `--qr` | Enables a custody QR stamp for `fill` print outputs and records the stamped rows in the receipt. Uses the preset's active corner and size, or bottom right at 48 pt. A preset's custom QR pattern applies if `--qr` is omitted. | يفعّل ختم QR لسجلّ الحيازة في مخرجات طباعة `fill`، ويسجّل الصفوف المختومة في البيان. يستخدم الزاوية والمقاس الفعّالين في الإعدادات، أو الزاوية اليمنى السفلى بمقاس 48 نقطة. يُستخدم نمط QR المخصّص المحفوظ إذا حُذف `--qr`. |
 | `--in-dir <dir>` | In `extract`, read regular `.pdf` files from the top level of this directory in filename order. For a grouped ZIP, list the unpacked PDF paths explicitly to set the input order. | في `extract`، يقرأ ملفات `.pdf` العادية في المستوى الأول من المجلد حسب ترتيب الأسماء. مع أرشيف ZIP المجمّع، مرّر مسارات ملفات PDF بعد فك الضغط لتحديد ترتيب الإدخال. |
@@ -117,9 +144,9 @@ Fill needs an editable AcroForm with supported fields. Intake blocks signed, enc
 | `1` | Invalid command arguments or file I/O error. | وسائط أمر غير صالحة أو خطأ في قراءة الملفات أو كتابتها. |
 | `2` | Flagged or blocked result. `preflight` writes row or intake diagnostics. `fill --strict` writes no files on preflight failure. Without `--strict`, `fill` can export ready rows and still exit `2`. An `extract` that finds blocked files or schema differences writes spreadsheets and the audit before exiting `2`. A mismatching or unknown verification result also exits `2`. | نتيجة تتضمّن تنبيهًا أو منعًا. يكتب `preflight` تفاصيل الصفوف أو سبب رفض المدخلات. يخرج `fill --strict` دون كتابة ملفات عند إخفاق الفحص. قد يصدّر `fill` دون `--strict` الصفوف الجاهزة مع رمز الخروج `2`. يكتب `extract` الجدولين وتقرير التدقيق ويخرج بالرمز `2` إذا تعذّرت قراءة ملفات أو اختلفت بنية الحقول بينها. يخرج التحقّق أيضًا بالرمز `2` عند اختلاف البايتات أو غياب نتيجة مطابقة. |
 
-The CLI writes result JSON to stdout. When `fill` is blocked, including when zero rows are ready, it writes diagnostic JSON to stderr. Run `preflight` separately to save the diagnostic files. Invalid arguments, malformed preset or receipt JSON, and file I/O errors also use stderr and exit `1`.
+The CLI writes result JSON to stdout. When `fill` is blocked, including when zero rows are ready, it writes diagnostic JSON to stderr. Run `preflight` separately to save the diagnostic files. `packet` writes a `clean` result to stdout with exit `0`, or a `flagged` result to stdout with exit `2` when some recipients are held and others export. If every recipient is held or the inputs block the batch, `packet` writes diagnostics to stderr, exits `2`, and writes no packet files. Invalid arguments, malformed JSON inputs, and file I/O errors also use stderr and exit `1`.
 
-تكتب الأداة نتائج JSON إلى المخرج القياسي. عند توقّف `fill`، بما في ذلك غياب أي صف جاهز، تكتب تفاصيل JSON إلى مخرج الأخطاء القياسي. شغّل `preflight` وحده لحفظ ملفات الفحص. وتُكتب أخطاء الوسائط أو صيغة ملف الإعدادات أو البيان أو التعامل مع الملفات إلى مخرج الأخطاء مع رمز الخروج `1`.
+تكتب الأداة نتائج JSON إلى المخرج القياسي. عند توقّف `fill`، بما في ذلك غياب أي صف جاهز، تكتب تفاصيل JSON إلى مخرج الأخطاء القياسي. شغّل `preflight` وحده لحفظ ملفات الفحص. يكتب `packet` نتيجة `clean` إلى المخرج القياسي ويخرج بالرمز `0`، أو يكتب `flagged` ويخرج بالرمز `2` عند تصدير بعض الحزم مع توقّف حزم أخرى. إذا توقّفت كل الحزم أو منعت المدخلات معالجة الدفعة، يكتب `packet` التفاصيل إلى مخرج الأخطاء ويخرج بالرمز `2` دون كتابة ملفات حزم. وتُكتب أخطاء الوسائط أو صيغة JSON أو التعامل مع الملفات إلى مخرج الأخطاء مع رمز الخروج `1`.
 
 ## Custody checks / التحقّق من بيان الحيازة
 
