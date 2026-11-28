@@ -1,6 +1,7 @@
 import { unzipSync, zipSync } from 'fflate';
 import Papa from 'papaparse';
 import { sha256, type CustodyEntry } from '../audit/custody';
+import { isSingleMailbox } from '../validation/mailbox';
 import { isSafeGroupedPdfPath } from '../export/grouping';
 import { DEFAULT_FILENAME_PATTERN, isSafePdfFilename, physicalFilenameColumns } from '../roster/filenames';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
@@ -64,17 +65,6 @@ const CRLF = '\r\n';
 const encoder = new TextEncoder();
 const headerControl = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u;
 const lineBreak = /[\r\n]/;
-const dotAtom = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
-const dnsLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
-
-function isRecipient(value: string): boolean {
-  if (value.length > 254 || headerControl.test(value)) return false;
-  const [local, domain, extra] = value.split('@');
-  if (local === undefined || domain === undefined || extra !== undefined || local.length > 64 || !dotAtom.test(local)) return false;
-  const labels = domain.split('.');
-  return labels.length > 1 && /[a-z]/i.test(labels.at(-1)!) && labels.every((label) => dnsLabel.test(label));
-}
-
 function interpolate(template: string, values: Cells, protectedColumns: ReadonlySet<string> | undefined) {
   let start = 0;
   let text = '';
@@ -95,10 +85,10 @@ export function previewDispatch(settings: DispatchSettings, values: Cells, rowNu
   const block = (code: DispatchIssue['code'], field: Field): DispatchPreview => ({ status: 'blocked', issue: { rowNumber, code, field } });
   const recipient = Object.hasOwn(values, recipientColumn) ? values[recipientColumn] : undefined;
   if (protectedColumns?.has(recipientColumn)) return block('protected-column', 'to');
-  if (recipient === undefined || lineBreak.test(recipientColumn) || !isRecipient(recipient)) return block('invalid-recipient', 'to');
+  if (recipient === undefined || lineBreak.test(recipientColumn) || !isSingleMailbox(recipient)) return block('invalid-recipient', 'to');
   const cc = ccColumn === undefined ? '' : Object.hasOwn(values, ccColumn) ? values[ccColumn] : undefined;
   if (ccColumn !== undefined && protectedColumns?.has(ccColumn)) return block('protected-column', 'cc');
-  if (cc === undefined || ccColumn !== undefined && lineBreak.test(ccColumn) || cc !== '' && !isRecipient(cc)) return block('invalid-cc', 'cc');
+  if (cc === undefined || ccColumn !== undefined && lineBreak.test(ccColumn) || cc !== '' && !isSingleMailbox(cc)) return block('invalid-cc', 'cc');
   if (headerControl.test(subjectTemplate)) return block('invalid-header', 'subject');
   const subject = interpolate(subjectTemplate, values, protectedColumns);
   if (subject.issue) return block(subject.issue, 'subject');

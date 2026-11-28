@@ -1,7 +1,9 @@
+import type { RosterSchemaDiagnostic } from '../core/validation/roster-schema';
 import { ChoiceList } from './Choices';
 import { activeFillLabels } from './active-fill-labels';
 import { fillLabel, type translator } from './labels';
 import { sourceProblem } from './source-problems';
+import { schemaLabels } from './schema-labels';
 import type { RowResult } from './useWorkbench';
 
 type Diagnostic = RowResult['diagnostics'][number];
@@ -67,15 +69,28 @@ export function diagnosticText(issue: Diagnostic, minSize: number, language: Lan
 
 export { safeRowMinSize } from '../core/pdf/batch-font-suggestion';
 
-export function Diagnostics({ issues, minSize, language, testId }: {
+export function SchemaIssue({ issue, arabic }: { issue: RosterSchemaDiagnostic; arabic: boolean }) {
+  const locale = arabic ? 'ar' : 'en';
+  return <><bdi dir="auto">{issue.column}</bdi>{' · '}<bdi dir="auto">{schemaLabels[locale][issue.rule]}</bdi>{' · '}{issue.reason[locale]}</>;
+}
+
+export function Diagnostics({ issues, schemaIssues, minSize, language, testId }: {
   issues: readonly Diagnostic[];
+  schemaIssues?: readonly RosterSchemaDiagnostic[];
   minSize: number;
   language: Language;
   testId: string;
 }) {
   const labels = activeFillLabels(language.arabic);
   return (
-    <ul className="diagnostics" aria-label={(language.arabic ? ar : en).diagnostics} data-testid={testId}>
+    <ul className="diagnostics" data-testid={testId} aria-label={schemaIssues?.length
+      ? language.arabic ? 'نتائج فحص الصف' : 'Row diagnostics'
+      : (language.arabic ? ar : en).diagnostics}>
+      {schemaIssues?.map((issue, index) => (
+        <li key={'schema-' + index} data-testid="schema-issue" data-reason={issue.reasonCode}>
+          <SchemaIssue issue={issue} arabic={language.arabic} />
+        </li>
+      ))}
       {issues.map((issue, index) => (
         <li key={index}>
           {issue.ruleIndex !== undefined && <>{fillLabel((language.arabic ? ar : en).rule, { index: issue.ruleIndex })}{' · '}</>}

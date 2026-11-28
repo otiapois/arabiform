@@ -19,3 +19,12 @@
 }
 .conditional-rule [aria-invalid="true"] { border-color: var(--error); }
 .conditional-rule .actions .text-button { min-block-size: 2.6rem; }
+.conditional-rule input[type="number"] {
+  inline-size: 5rem;
+  min-block-size: 2.1rem;
+  padding-inline: .45rem;
+  border: 1px solid var(--control-line);
+  border-radius: .38rem;
+  background: var(--surface);
+}
+.schema-trimmed { display: flex; align-items: baseline; gap: .45rem; font-size: .86rem; }

@@ -11,6 +11,7 @@ import type { PrintCertificateNames } from '../pdf/print-certificate';
 import type { RowSelection } from './row-selection';
 import type { BoundaryRowSpotlight } from '../preflight/spotlight';
 import type { ConditionalFieldRule } from '../rules/conditional-fields';
+import type { RosterSchemaDiagnostic, RosterSchemaRule } from '../validation/roster-schema';
 
 export interface BatchInput {
   template: Uint8Array | ArrayBuffer;
@@ -18,10 +19,11 @@ export interface BatchInput {
   sheetName?: string;
   rows: readonly Record<string, string>[];
   conditional?: { rules: readonly ConditionalFieldRule[]; columns: readonly string[]; rows: readonly Record<string, string>[] };
+  schema?: { rules: readonly RosterSchemaRule[]; columns: readonly string[]; rows: readonly Record<string, string>[] };
   options: PreflightOptions;
 }
 
-export type BatchRowResult = Omit<RowPreflightResult, 'pdfBytes'>;
+export type BatchRowResult = Omit<RowPreflightResult, 'pdfBytes'> & { schemaDiagnostics?: RosterSchemaDiagnostic[] };
 export interface BatchProgress {
   phase: 'preflight' | 'zip' | 'merged' | 'split' | 'dispatch';
   completed: number;

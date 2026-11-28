@@ -57,6 +57,7 @@ export type BatchSettings = {
   font: FontMode;
   customFont?: Uint8Array;
   conditional?: Omit<NonNullable<BatchInput['conditional']>, 'rows'>;
+  schema?: Omit<NonNullable<BatchInput['schema']>, 'rows'>;
 };
 
 export function useBatch(batch: BatchSettings | null, selected: number, output: OutputSettings, sealPreviewBlocked: boolean) {

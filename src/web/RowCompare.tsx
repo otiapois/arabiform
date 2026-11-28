@@ -111,9 +111,10 @@ function ComparedRow({ worker, template, minSize, language, render, blocked, row
           ))}
         </dl>
       </div>
-      {!ready && result.diagnostics.length > 0 && (
+      {!ready && (result.diagnostics.length > 0 || Boolean(result.schemaDiagnostics?.length)) && (
         <div className="preview-diagnostics compare-diagnostics">
-          <Diagnostics issues={result.diagnostics} minSize={minSize} language={language} testId="compare-diagnostics" />
+          <Diagnostics issues={result.diagnostics} schemaIssues={result.schemaDiagnostics}
+            minSize={minSize} language={language} testId="compare-diagnostics" />
         </div>
       )}
       <PdfPreview compact bytes={ready ? preview?.bytes : template.bytes} fields={template.info.fields} overlays={template.overlays}

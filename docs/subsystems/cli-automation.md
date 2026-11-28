@@ -133,6 +133,21 @@ npm run arabiform-cli -- --mode preflight --template ./fixtures/m3/clinic-consen
 npm run arabiform-cli -- --mode fill --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./arabiform-rules.csv --preset ./arabiform-rules.json --strict --out-dir ./arabiform-demo/rules-filled
 ```
 
+## Roster validation walkthrough / تجربة التحقق من بيانات الجدول
+
+The tracked GCC payroll sample is synthetic. Its v13 preset checks `Name`, `IBAN`, `Effective Date`, and `EmployeeID`. The original CSV has one ready row, an IBAN checksum failure in row 2, and an impossible date in row 3. Run both commands from the source checkout.
+
+بيانات عينة رواتب الخليج المرفقة خيالية. تتحقّق إعداداتها بالإصدار 13 من أعمدة `Name` و`IBAN` و`Effective Date` و`EmployeeID`. يحتوي ملف CSV على صف جاهز، وصف ثانٍ يخفق في فحص IBAN، وصف ثالث فيه تاريخ غير موجود. شغّل الأمرين من مجلد الشفرة المصدرية.
+
+```sh
+npm run arabiform-cli -- --mode preflight --template ./fixtures/m26/gcc-payroll.pdf --roster ./fixtures/m26/gcc-payroll.csv --preset ./fixtures/m26/gcc-payroll-preset-v13.json --out-dir ./arabiform-demo/payroll-check
+npm run arabiform-cli -- --mode fill --template ./fixtures/m26/gcc-payroll.pdf --roster ./fixtures/m26/gcc-payroll.csv --preset ./fixtures/m26/gcc-payroll-preset-v13.json --strict --out-dir ./arabiform-demo/payroll-blocked
+```
+
+`preflight` exits `2` and saves the CSV and JSON diagnostics. `fill --strict` exits `2` and writes no output files. To try a clean run, copy the CSV into `./arabiform-demo/payroll-corrected.csv`. Set row 2's `IBAN` to `SA31 0000 0000 0000 0001 0001` and row 3's `Effective Date` to `2026-02-28`. Keep the file UTF-8 and preserve the `EmployeeID` strings and their leading zeros. Run the commands with the corrected `--roster` and fresh output directories. Both exit `0` when all three rows pass.
+
+يخرج `preflight` بالرمز `2` ويحفظ تفاصيل الإخفاق في CSV وJSON. يخرج `fill --strict` بالرمز `2` دون كتابة ملفات. لتجربة تشغيل ناجح، انسخ ملف CSV إلى `./arabiform-demo/payroll-corrected.csv`. اضبط `IBAN` في الصف الثاني على `SA31 0000 0000 0000 0001 0001`، و`Effective Date` في الصف الثالث على `2026-02-28`. احفظ الملف بترميز UTF-8 وأبقِ معرّفات `EmployeeID` نصوصًا بالأصفار البادئة. أعد تشغيل الأمرين مع ملف `--roster` المصحّح ومجلّدَي إخراج جديدين. يخرج كلاهما بالرمز `0` عند اجتياز الصفوف الثلاثة الفحص.
+
 ## Packet walkthrough / تجربة تجميع الحزم
 
 Save the following JSON as `./packet-mappings.json` in UTF-8 without a byte order mark. Each object maps PDF field names to exact headers in the shared roster. The array follows the order of the repeated `--template` arguments. Use `null` in a slot to auto-map the text and checkbox fields of that template. Omit `--mappings` to auto-map every template. Each template needs at least one mapping. Fields left out of an explicit mapping keep their original visible appearances in print.
@@ -205,7 +220,7 @@ npm run arabiform-cli -- --mode preflight --template ./fixtures/m23/2027-offer.p
 | `--template <pdf>` / `--template <id>` | Source template for `preflight` or `fill`, or a built-in template ID for `studio`. For `packet`, repeat `--template <pdf>` two to four times in document order. | مسار القالب المصدر في `preflight` أو `fill`، أو معرّف قالب مضمّن في `studio`. في `packet`، كرّر `--template <pdf>` من مرتين إلى أربع مرات بحسب ترتيب المستندات. |
 | `--old <pdf>` / `--new <pdf>` | The original and revised AcroForm PDFs for `diff-template`. | مسارا قالبَي AcroForm القديم والجديد في `diff-template`. |
 | `--roster <csv-or-xlsx>` | Source roster for `preflight`, `fill`, or `packet`. All templates in `packet` use the same roster. | جدول البيانات المصدر في `preflight` أو `fill` أو `packet` بصيغة CSV أو Excel. تستخدم جميع قوالب `packet` الجدول نفسه. |
-| `--preset <json>` | A workbench mapping preset (versions 1–12) to reuse in `preflight` or `fill`, or migrate in `diff-template`. | ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 12) لاستخدامه في `preflight` أو `fill`، أو ترحيله في `diff-template`. |
+| `--preset <json>` | A workbench mapping preset (versions 1–13) to reuse in `preflight` or `fill`, or migrate in `diff-template`. | ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 13) لاستخدامه في `preflight` أو `fill`، أو ترحيله في `diff-template`. |
 | `--rename-map <json>` | Optional old-to-new field name map for `diff-template`. Requires `--preset`. | ملف JSON اختياري يربط أسماء الحقول القديمة بالجديدة في `diff-template`. يتطلّب `--preset`. |
 | `--mappings <json>` | Optional ordered JSON array of field-to-header maps or `null` for `packet`. Supply one entry per template. | قائمة JSON اختيارية تحتوي على تعريف ربط الحقول بعناوين الأعمدة، أو على `null`، لكل قالب في `packet`. اتّبع ترتيب القوالب. |
 | `--sheet <name>` | Exact visible Excel worksheet name for `preflight`, `fill`, or `packet`. By default, load the first visible worksheet. | اسم ورقة العمل الظاهرة في `preflight` أو `fill` أو `packet` كما كُتب في ملف Excel. تُحمَّل أول ورقة ظاهرة افتراضيًا. |
@@ -253,6 +268,10 @@ Version 11 extends those settings with ordered conditional rules. Both modes app
 Version 12 saves `imposition`, `fourUpOrder` and `centerCutGuides` along with the earlier preset settings. Without v12 options, 4-up uses sequential order and leaves the center guides off. To enable cut-and-stack order or center guides in the CLI, pass the v12 preset saved from the workbench. Presets from versions 1–11 retain their previous layout behavior.
 
 يحفظ الإصدار 12 الحقول `imposition` و`fourUpOrder` و`centerCutGuides` إلى جانب الإعدادات السابقة. عند استخدام تخطيط السجلات الأربعة دون خيارات الإصدار 12، تُرتَّب السجلات تسلسليًا وتظلّ خطوط القص في المنتصف متوقّفة. لتفعيل ترتيب القص والتكديس أو خطوط المنتصف في الطرفية، مرّر إعدادات الإصدار 12 التي حفظتها من واجهة العمل. تحتفظ الإصدارات من 1 إلى 11 بطريقة التخطيط المعتادة.
+
+Version 13 stores `schemaRules`. Both modes check the rules against the current CSV headers or selected Excel worksheet. If a missing header is also mapped to a PDF field, the CLI stops during intake with `preset-source-mismatch`. For an unmapped rule column that is missing or a cell that fails, both modes flag the row and expose the rule and reason under `schemaDiagnostics` in the CSV and JSON audits. Versions 1–12 still load, with data validation off. [Roster schema contract](roster-mapper.md#roster-schema-validation)
+
+يحفظ الإصدار 13 قواعد التحقّق في `schemaRules`. يفحص الوضعان عناوين CSV أو ورقة Excel المختارة. إذا غاب عنوان عمود مرتبط بحقل PDF، يتوقّف التشغيل عند قراءة المدخلات مع `preset-source-mismatch`. إذا غاب عنوان عمود تستخدمه قاعدة وحدها أو أخفقت خلية في الفحص، يحدّد الوضعان الصف ويعرضان القاعدة وسبب الإخفاق في `schemaDiagnostics` في تقريرَي CSV وJSON. تظلّ الإصدارات من 1 إلى 12 قابلة للاستيراد، وتبدأ دون قواعد تحقّق. [تفاصيل قواعد التحقّق](roster-mapper.md#roster-schema-validation)
 
 An explicit flag overrides the corresponding preset value. `--sheet` and `--date` apply to this run. `--cover` and `--qr` enable their settings. To turn a saved option off, update the preset in the workbench. Each export includes both ZIP variants regardless of the preset's ZIP preference. Selected rows, inline edits, local custom fonts, cover source fingerprints and saved batch drafts stay outside the mapping preset.
 

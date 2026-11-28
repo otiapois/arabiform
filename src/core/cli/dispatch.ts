@@ -135,7 +135,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     } catch {
       // Fall through to the same usage error for invalid JSON and invalid preset structure.
     }
-    if (!preset) return { exitCode: 1, report: { status: 'usage-error', message: 'Invalid mapping preset. Export a mapping preset (v1–v12) from ArabiForm.' }, artifacts: [], diagnostic: true };
+    if (!preset) return { exitCode: 1, report: { status: 'usage-error', message: 'Invalid mapping preset. Export a mapping preset (v1–v13) from ArabiForm.' }, artifacts: [], diagnostic: true };
   }
 
   let template: Awaited<ReturnType<typeof inspectTemplate>>;
@@ -171,6 +171,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   const alignOverrides = preset && 'alignOverrides' in preset ? preset.alignOverrides : undefined;
   const fieldTypography = preset && 'fieldTypography' in preset ? preset.fieldTypography : undefined;
   const conditionalRules = preset && 'conditionalRules' in preset && preset.conditionalRules.length ? preset.conditionalRules : undefined;
+  const schemaRules = preset?.version === 13 && preset.schemaRules.length ? preset.schemaRules : undefined;
   const mismatches = [
     ...actualMappings.filter(([field, column]) => !fields.has(field) || !headers.includes(column)).map(([field, column]) => JSON.stringify([field, column])),
     ...virtualMappings.filter(([field]) => fields.get(field)?.kind !== 'text').map(([field]) => JSON.stringify(field)),
@@ -197,6 +198,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   const filenamePattern = reviewFilenamePattern(preset?.filenamePattern, protectedColumns);
   const grouping = groupBy == null ? undefined : planGroupedOutput(rows, groupBy, filenamePattern, { localDate });
   const filenamePlans = planFilenames(rows, filenamePattern, { localDate });
+  const cells = rows.map(({ values }) => values);
   const run = createBatchProcessor();
   const checked = await run({ phase: 'preflight', input: {
     template: sources.template, roster: sources.roster, sheetName: files.sheet,
@@ -204,7 +206,8 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
       ...actualMappings.map(([field, column]) => [field, values[column]!]),
       ...virtualMappings.map(([field, binding]) => [field, resolveVirtualMapping(binding, index + 1, localDate)]),
     ])),
-    ...(conditionalRules && { conditional: { rules: conditionalRules, columns: headers, rows: rows.map(({ values }) => values) } }),
+    ...(conditionalRules && { conditional: { rules: conditionalRules, columns: headers, rows: cells } }),
+    ...(schemaRules && { schema: { rules: schemaRules, columns: headers, rows: cells } }),
     options: { fonts: sources.fonts, minFontSize: preset?.minFontSize, preferredFont: preset?.font, alignOverrides, fieldTypography, maskPolicies },
   } }, idle) as BatchPreflightResult;
   const scope = resolveRowSelection(checked.rows);
@@ -214,15 +217,16 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     ...result, rowNumber: index + 1, filename: (grouping?.rows[index] ?? filenamePlans[index]!).filename,
     ...(grouping && { zipPath: grouping.rows[index]!.zipPath }),
     sourceWarnings: rows[index]!.warnings,
+    ...(schemaRules && { schemaDiagnostics: result.schemaDiagnostics ?? [] }),
   }));
   const report = {
     status: flagged ? 'flagged' : 'clean', ready, flagged, ...(xlsx && { sheet: sheet.name }),
     ...(missingFilenameColumns.length && { warnings: [{ code: 'missing-filename-columns', columns: missingFilenameColumns }] }),
-    ...(mode === 'preflight' || flagged > 0 || conditionalRules ? { rows: reportedRows } : {}),
+    ...(mode === 'preflight' || flagged > 0 || conditionalRules || schemaRules ? { rows: reportedRows } : {}),
   };
   const exitCode = flagged ? 2 : 0;
   if (mode === 'preflight') {
-    const { csv } = createAudit(reportedRows);
+    const { csv } = createAudit(reportedRows, undefined, { schemaEnabled: Boolean(schemaRules) });
     return { exitCode, report, artifacts: [
       { name: 'arabiform-preflight.csv', data: csv }, { name: 'arabiform-preflight.json', data: json(report) },
     ] };
@@ -238,7 +242,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     const reason = imposition === '4-up' ? fourUpUnavailableReason : twoUpUnavailableReason;
     if (reason) return blockedBatch(mode, reason, imposition + ' requires a compatible single-page printable template. Choose --imposition 1-up.');
   }
-  const fourUp = imposition === '4-up' && preset?.version === 12 ? { fourUpOrder: preset.fourUpOrder, centerCutGuides: preset.centerCutGuides } : undefined;
+  const fourUp = imposition === '4-up' && preset && 'fourUpOrder' in preset ? { fourUpOrder: preset.fourUpOrder, centerCutGuides: preset.centerCutGuides } : undefined;
   const watermark = command.watermark === undefined ? (preset && 'watermark' in preset ? preset.watermark : undefined) : cliWatermark(command.watermark);
   const approvalSeal = preset && 'approvalSeal' in preset ? preset.approvalSeal ?? undefined : undefined;
   const qr = preset && 'qrStamp' in preset ? preset.qrStamp : undefined;
@@ -269,7 +273,6 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     let dispatch: BatchDispatchResult | undefined;
     let editable: BatchZipResult;
     if (command.dispatch) {
-      const cells = rows.map(({ values }) => values);
       dispatch = await run({ phase: 'dispatch', filenames, grouping, rows: cells, settings: command.dispatch, includePdfZip: true,
         unsafeFilenameRows: unsafeDispatchFilenameRows(cells, preset?.filenamePattern, groupBy),
         protectedColumns: [...protectedColumns] }, idle) as BatchDispatchResult;

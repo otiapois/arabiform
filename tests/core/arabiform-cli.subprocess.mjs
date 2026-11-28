@@ -279,6 +279,34 @@ try {
   assert.deepEqual(blocked.issues, [{ side: 'new', code: 'encrypted-pdf' }]);
   await assert.rejects(lstat(blockedDiffDir), { code: 'ENOENT' });
 
+  const payroll = 'fixtures/m26/gcc-payroll';
+  const payrollInputs = ['--template', payroll + '.pdf', '--preset', payroll + '-preset-v13.json'];
+  const badPayroll = ['--roster', payroll + '.csv'];
+  const payrollAudit = join(directory, 'M26 Audit');
+  const payrollHeld = join(directory, 'M26 Strict Held');
+  const payrollOut = join(directory, 'M26 Repaired');
+  const repairs = join(directory, 'M26 repaired payroll.csv');
+  const rejected = run(2, '--mode', 'fill', ...payrollInputs, ...badPayroll, '--strict', '--out-dir', payrollHeld);
+  const checks = rejected.rows.flatMap(({ schemaDiagnostics }) => schemaDiagnostics.map(({ rowNumber, column, rule, reasonCode }) =>
+    [rowNumber, column, rule, reasonCode]));
+  assert.deepEqual(checks, [[2, 'IBAN', 'iban-mod97', 'iban-checksum'], [3, 'Effective Date', 'iso-date', 'iso-date']]);
+  await assert.rejects(lstat(payrollHeld), { code: 'ENOENT' });
+  run(2, '--mode', 'preflight', ...payrollInputs, ...badPayroll, '--out-dir', payrollAudit);
+  const auditRows = (await readJson(join(payrollAudit, 'arabiform-preflight.json'))).rows;
+  const csvRows = Papa.parse(await readFile(join(payrollAudit, 'arabiform-preflight.csv'), 'utf8'), { header: true, skipEmptyLines: true }).data;
+  assert.deepEqual(csvRows.map(({ schemaDiagnostics }) => JSON.parse(schemaDiagnostics)), auditRows.map(({ schemaDiagnostics }) => schemaDiagnostics));
+  const repairedIban = 'SA31 0000 0000 0000 0001 0001';
+  await writeFile(repairs, (await readFile(join(root, payroll + '.csv'), 'utf8'))
+    .replace('SA31 0000 0000 0000 0001 0002', repairedIban).replace('2026-02-29', '2026-02-28'));
+  assert.equal(run(0, '--mode', 'fill', ...payrollInputs, '--roster', repairs, '--strict', '--out-dir', payrollOut).ready, 3);
+  const payrollPdfs = unzipSync(await readFile(join(payrollOut, 'arabiform-editable.zip')));
+  assert.deepEqual(Object.keys(payrollPdfs), ['0012345678.pdf', '0012345679.pdf', '0012345680.pdf']);
+  const repaired = (await PDFDocument.load(payrollPdfs['0012345679.pdf'])).getForm();
+  assert.equal(repaired.getTextField('IBAN').getText(), repairedIban);
+  assert.equal(repaired.getTextField('Name').getText(), 'سَلْمَى بِنْت يَاسِين');
+  assert.equal(repaired.getTextField('EmployeeID').getText(), '0012345679');
+  assert.equal(repaired.getTextField('Sentinel').getText(), 'KEEP 00109');
+
   const reserved = join(directory, 'Reserved');
   await mkdir(reserved);
   await writeFile(join(reserved, 'arabiform-preflight.json'), 'existing');
@@ -293,7 +321,7 @@ try {
   assert.match(run(1, '--mode', 'preflight', ...inputs, '--out-dir', join(link, 'nested')).message, /link, junction/);
   assert.deepEqual(await readdir(target), []);
   assert.equal(run(1, '--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir', 'safe/../escape').status, 'usage-error');
-  console.log('Real subprocess checks passed for all seven modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, M23 template diff exit 0/2 and v11 migration, strict no-output refusal, and output-path guards.');
+  console.log('Real subprocess checks passed for all seven modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, M23 template diff and v11 migration, M26 v13 audit and strict exit 2/0, and output-path guards.');
 } finally {
   const actual = await realpath(directory);
   assert.equal(dirname(actual), tmp);

@@ -12,6 +12,7 @@ import { selectBoundaryRows } from '../preflight/spotlight';
 import { localVirtualDate } from '../roster/virtual-columns';
 import { prepareConditionalFields } from '../rules/conditional-fields';
 import { maskText } from '../shaping/redaction';
+import { prepareRosterSchema } from '../validation/roster-schema';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 import { resolveRowSelection } from './row-selection';
 
@@ -21,11 +22,13 @@ type ProgressListener = (progress: BatchProgress) => void;
 type RowInputs = Omit<BatchInput, 'roster' | 'sheetName'>;
 
 async function preflightBatch(input: RowInputs, progress: (completed: number, total: number) => void) {
-  const { rows, template, options, conditional } = input;
+  const { rows, template, options, conditional, schema } = input;
   const { maskPolicies } = options;
   const results: BatchRowResult[] = [];
   progress(0, rows.length);
   if (!rows.length) return { rows: results, spotlight: {}, renderRows: rows };
+  if (schema?.rules.length && schema.rows.length !== rows.length) throw new Error('schema-row-count-mismatch');
+  const validate = schema?.rules.length ? prepareRosterSchema(schema.rules, schema.columns) : undefined;
   const { check, fields } = await prepareTemplatePreflight(template, options);
   if (conditional?.rules.length && conditional.rows.length !== rows.length) throw new Error('conditional-row-count-mismatch');
   const evaluate = conditional?.rules.length ? prepareConditionalFields(conditional.rules, conditional.columns, fields) : undefined;
@@ -33,7 +36,14 @@ async function preflightBatch(input: RowInputs, progress: (completed: number, to
   const renderRows = evaluatedRows?.map(({ values }) => values) ?? rows;
   for (let start = 0; start < rows.length; start += BATCH_CHUNK_SIZE) {
     const end = Math.min(start + BATCH_CHUNK_SIZE, rows.length);
-    for (let index = start; index < end; index++) results.push(await check(renderRows[index]!, evaluatedRows?.[index]));
+    for (let index = start; index < end; index++) {
+      const schemaDiagnostics = validate?.(schema!.rows[index]!, index + 1);
+      if (schemaDiagnostics?.length) {
+        results.push({ status: 'flagged', diagnostics: [], pageNumbers: [], fontSizes: {}, schemaDiagnostics });
+      } else {
+        results.push(await check(renderRows[index]!, evaluatedRows?.[index]));
+      }
+    }
     progress(results.length, rows.length);
     if (results.length < rows.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }

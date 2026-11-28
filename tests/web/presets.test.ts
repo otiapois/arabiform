@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { RosterSchemaRule } from '../../src/core/validation/roster-schema';
 import { makeDraftSettings, makeMappingPreset, parseMappingPreset, presetMismatches } from '../../src/web/presets';
 
 const preset = {
@@ -169,5 +170,20 @@ describe('local mapping preset boundary', () => {
       expect(parseMappingPreset(JSON.stringify(settings))).toEqual(settings);
     }
     expect(makeMappingPreset(...args, '4-up')).toMatchObject({ version: 12, fourUpOrder: 'sequential', centerCutGuides: false });
+  });
+
+  it('roundtrips v13 settings with a rule targeting a source-only column', () => {
+    const args = [preset.mapping, preset.filenamePattern, preset.minFontSize, 'arabic', false, false, {}, undefined, {},
+      { placement: 'none' }, 'auto', '1-up', null, {}, null, undefined, undefined] as const;
+    const rules: RosterSchemaRule[] = [{ column: 'Department', kind: 'allowed-values', values: [' 001 ', '', 'رواتب'], match: 'exact' }];
+    const settings = makeMappingPreset(...args, rules);
+    expect(settings).toMatchObject({ version: 13, schemaRules: rules, fourUpOrder: 'sequential', centerCutGuides: false });
+    expect(parseMappingPreset(JSON.stringify(settings))).toEqual(settings);
+    expect(makeDraftSettings(...args, rules)).toEqual(settings);
+    expect(makeMappingPreset(...args, []).version).toBe(1);
+    expect(makeDraftSettings(...args, []).version).toBe(4);
+    expect(presetMismatches({}, 'batch.pdf', [], ['department'], {}, [], {}, [], rules)).toEqual({
+      missingFields: [], missingColumns: ['Department'],
+    });
   });
 });
