@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { PDFArray, PDFName, PDFNull } from 'pdf-lib';
+import { PDFArray, type PDFDocument, PDFName, PDFNull, PDFObjectParser, PDFRawStream } from 'pdf-lib';
 import { sha256 } from '../audit/custody';
 import { decodeText, invalidPdf, radioOption, readSavedFields } from '../pdf/saved-fields';
 import { loadPdf, PdfIntakeError } from '../pdf/template';
@@ -57,7 +57,7 @@ const encoder = new TextEncoder();
 const ascii = new TextDecoder('ascii');
 const absent: SavedValue = { value: null };
 
-function checkPdfEnvelope(bytes: Uint8Array) {
+function checkPdfEnvelope(bytes: Uint8Array, doc: PDFDocument) {
   if (!/^%PDF-(?:1\.[0-7]|2\.0)[\x00\t\n\f\r ]/.test(ascii.decode(bytes.subarray(0, 12)))) invalidPdf();
   let end = bytes.length;
   while (end && [0, 9, 10, 12, 13, 32].includes(bytes[end - 1]!)) end--;
@@ -65,8 +65,14 @@ function checkPdfEnvelope(bytes: Uint8Array) {
   const lastXref = /(?:^|[\r\n])startxref[\t\r\n ]+(\d+)[\t\r\n ]+%%EOF$/.exec(trailer);
   if (!lastXref) return invalidPdf();
   const offset = Number(lastXref[1]);
-  if (!Number.isSafeInteger(offset) || offset <= 0 || offset >= end
-    || !/^(?:xref[\t\r\n ]|\d+[\t ]+\d+[\t ]+obj[\t\r\n ])/.test(ascii.decode(bytes.subarray(offset, offset + 48)))) invalidPdf();
+  if (!Number.isSafeInteger(offset) || offset <= 0 || offset >= end) invalidPdf();
+  const header = ascii.decode(bytes.subarray(offset, offset + 48));
+  if (/^xref[\t\r\n ]+\d+[\t ]+\d+[\t\r\n ]/.test(header)) return;
+  // pdf-lib can recover pages by scanning objects even when the final pointer is wrong.
+  const object = /^\d+[\t\r\n ]+\d+[\t\r\n ]+obj[\t\r\n ]+/.exec(header);
+  if (!object) return invalidPdf();
+  const stream = PDFObjectParser.forBytes(bytes.subarray(offset + object[0].length), doc.context).parseObject();
+  if (!(stream instanceof PDFRawStream) || stream.dict.get(PDFName.of('Type')) !== PDFName.of('XRef')) invalidPdf();
 }
 
 async function inspectBatch(bytes: Uint8Array, batch: BatchDiffError['batch']): Promise<Map<string, PdfMember>> {
@@ -75,7 +81,7 @@ async function inspectBatch(bytes: Uint8Array, batch: BatchDiffError['batch']): 
     const { path, key, bytes } = member;
     try {
       const doc = await loadPdf(bytes);
-      checkPdfEnvelope(bytes);
+      checkPdfEnvelope(bytes, doc);
       const fields = new Map<string, SavedValue>();
       for (const { name, kind, value, options, widgets } of readSavedFields(doc, true)) {
         if (value === undefined || value === PDFNull) {

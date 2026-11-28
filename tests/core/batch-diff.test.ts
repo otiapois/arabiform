@@ -117,6 +117,7 @@ it('rejects aliases, traversal, junk, malformed sizes and CRC; verifies PDFs in 
   const issueCases = [
     [zip({ 'dir/../safe.pdf': data }), 'unsafe-path'],
     [zip({ '＃/Ａ.pdf': data, '#/a.pdf': data }), 'duplicate-path'],
+    [zip({ 'Straße.pdf': data, 'STRAẞE.pdf': data }), 'duplicate-path'],
     [zip({ 'X/café.pdf': data, 'X/cafe\u0301.pdf': data }), 'duplicate-path'],
     [zip({ 'X/one.pdf': data, 'x/two.pdf': data }), 'duplicate-path'],
     [zip({ 'test.pdf': data, 'test.pdf/inner.pdf': data }), 'duplicate-path'],
@@ -142,4 +143,20 @@ it('rejects aliases, traversal, junk, malformed sizes and CRC; verifies PDFs in 
       await expect(compareBatches(before, after)).rejects.toMatchObject({ batch, path: 'guard.pdf', code });
     }
   }
+});
+
+it('requires startxref to identify an actual PDF cross-reference stream or table', async () => {
+  const good = Buffer.from(await pdf(1));
+  const raw = good.toString('latin1');
+  const indirect = /\n\d+ \d+ obj\n/.exec(raw);
+  expect(indirect).not.toBeNull();
+  const wrongXref = Buffer.from(raw.replace(/startxref\n\d+/, 'startxref\n' + (indirect!.index + 1)), 'latin1');
+  expect(wrongXref.equals(good)).toBe(false);
+  await expect(compareBatches(zip({ 'test.pdf': good }), zip({ 'test.pdf': wrongXref }))).rejects.toMatchObject({
+    batch: 'next', path: 'test.pdf', code: 'invalid-pdf',
+  });
+  const classic = await PDFDocument.create({ updateMetadata: false });
+  classic.addPage();
+  const archive = zip({ 'test.pdf': await classic.save({ useObjectStreams: false, updateFieldAppearances: false }) });
+  expect((await compareBatches(archive, archive)).counts.unchanged).toBe(1);
 });

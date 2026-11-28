@@ -116,7 +116,7 @@ export function readBatchZip(bytes: Uint8Array, batch: BatchDiffError['batch']):
     let aliasPrefix = '';
     for (const [partIndex, part] of parts.entries()) {
       rawPrefix += '/' + part;
-      aliasPrefix += '/' + filenameKey(part);
+      aliasPrefix += '/' + filenameKey(part.normalize('NFKC').toLowerCase());
       const explicit = partIndex === parts.length - 1;
       const isDirectory = !explicit || directory;
       const prior = aliases.get(aliasPrefix);
