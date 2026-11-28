@@ -228,3 +228,7 @@ M20 新章三个打印输出均可下载。全套单元测试却发现，未启�
 移动端 Edge 接受了 `访客名单.csv`，两款证书内置字体都无法绘制其中的汉字。证书在纸面说明名称无法显示，并完整打印来源文件的 SHA-256。重新打开下载的 PDF 后，从 Subject 的 JSON 中逐字读回原始文件名。命令行给旋转模板取中文名也得到相同结果。后续改动证书排版时，保留一个内置字体无法覆盖的真实文件名，同时检查页面、原始名称和文件指纹。[浏览器下载验真](tests/e2e/m24-printshop.spec.ts) · [PDF 读回](tests/e2e/m24-print-proof.py) · [中文模板命令行回执](test-results/m24-evidence/lead-cli-rotated/receipt.json)
 
 **Seen: 1**（M24，同一处证书排版限制计一次）。
+
+### 脱敏后从就绪行取画布对照（M25，2026-11-28）
+
+更改掩码会重新预检这一行，其间 PDF.js 也会绘制原始空模板。首次验收在桌面看到变化一直到画布纵坐标 202，超出了姓名框下沿 145。该次下载的 PDF 已有正确的脱敏字段值。测试现在等到该行重新就绪，再下载并核对同一行的字段值，然后采集可见画布。把掩码后的预览和一份直接输入相同星号的合成名单对照，英阿界面在两种视口均逐像素相同。**Seen: 1**（M25，两种视口测到同一取样问题）。[首次测量](test-results/m25-evidence/qa-focused/initial-results.utf16.json) · [取样和下载断言](tests/e2e/m25-dispatch.spec.ts) · [四组复验](test-results/m25-evidence/qa-focused/runtime/)
