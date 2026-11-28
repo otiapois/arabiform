@@ -10,6 +10,7 @@ import { WatermarkControls } from './WatermarkControls';
 
 const MappingRows = lazy(() => import('./MappingRows'));
 const ConditionalRules = lazy(() => import('./ConditionalRules'));
+const DataValidation = lazy(() => import('./DataValidation'));
 const PresetFeedback = lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback })));
 const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
 const WorkbenchPreview = lazy(() => import('./WorkbenchPreview'));
@@ -67,6 +68,7 @@ export function App({ language, heading, summary, details }: AppProps) {
   const [characterKeys, setCharacterKeys] = useState(true);
   const [cliOpen, setCliOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
   const modeLabels = {
     fill: arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs',
     extract: arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx',
@@ -253,6 +255,12 @@ export function App({ language, heading, summary, details }: AppProps) {
                       <summary data-testid="conditional-rules-toggle">{arabic ? 'قواعد التعبئة الشرطية' : 'Conditional rules'}</summary>
                       {rulesOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
                         <ConditionalRules desk={desk} arabic={arabic} />
+                      </Suspense>}
+                    </details>
+                    <details className="conditional-rules" onToggle={(event) => setValidationOpen(event.currentTarget.open)}>
+                      <summary data-testid="data-validation-toggle">{arabic ? 'التحقق من بيانات الجدول' : 'Data validation'}</summary>
+                      {validationOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
+                        <DataValidation desk={desk} arabic={arabic} />
                       </Suspense>}
                     </details>
                   </div>

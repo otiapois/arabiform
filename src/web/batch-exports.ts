@@ -35,7 +35,7 @@ export async function buildDownload(
   kind: ExportKind,
   client: Pick<BatchWorker, 'zip' | 'merged' | 'split' | 'certificate'>,
   onProgress: (progress: BatchProgress) => void,
-  roster: Pick<BatchSettings, 'rows' | 'localDate'>,
+  roster: Pick<BatchSettings, 'rows' | 'localDate' | 'schema'>,
   results: BatchRowResult[],
   { filenamePlans, flattenZip, cover, watermark, rowSelection, qrStamp, approvalSeal, imposition, fourUp, grouping }: OutputSettings,
   scope: ExportScope,
@@ -53,7 +53,8 @@ export async function buildDownload(
       diagnostics: result.diagnostics,
       fontSizes: result.fontSizes,
       ...(result.ruleApplied && { ruleApplied: result.ruleApplied }),
-    })), scope);
+      ...(result.schemaDiagnostics && { schemaDiagnostics: result.schemaDiagnostics }),
+    })), scope, roster.schema && { schemaEnabled: true });
     return { data: audit[kind], filename: `arabiform-preflight.${kind}`, mime: kind === 'csv' ? 'text/csv;charset=utf-8' : 'application/json' };
   }
 

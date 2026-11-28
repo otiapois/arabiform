@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from '
 import { suggestBatchFontSize } from '../core/pdf/batch-font-suggestion';
 import { matchChoice } from '../core/pdf/choice-match';
 import { choiceText, editableChoices } from './Choices';
-import { Diagnostics, diagnosticProblem, diagnosticText, safeRowMinSize } from './Diagnostics';
+import { Diagnostics, SchemaIssue, diagnosticProblem, diagnosticText, safeRowMinSize } from './Diagnostics';
 import { Filename } from './Filename';
 import { fillLabel, type translator } from './labels';
 import type { RowFilter, TemplateInfo, useWorkbench } from './useWorkbench';
@@ -145,8 +145,13 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
   const invalidChoiceColumns = new Set(result?.diagnostics
     .filter(({ code, ruleIndex }) => code === 'invalid-choice' && ruleIndex === undefined)
     .map(({ field }) => desk.mapping[field]));
-  const safeSize = result?.status === 'flagged' ? safeRowMinSize(result.diagnostics, desk.minFontSize) : undefined;
-  const batchSize = useMemo(() => desk.results && suggestBatchFontSize(desk.results, desk.minFontSize),
+  const invalidSchemaColumns = new Set(result?.schemaDiagnostics?.filter(({ reasonCode }) =>
+    reasonCode !== 'missing-column').map(({ column }) => column));
+  const schemaColumns = new Set(desk.schemaRules.map(({ column }) => column));
+  const safeSize = result?.status === 'flagged' && !result.schemaDiagnostics?.length
+    ? safeRowMinSize(result.diagnostics, desk.minFontSize) : undefined;
+  const batchSize = useMemo(() => desk.results && suggestBatchFontSize(
+    desk.results.filter(({ schemaDiagnostics }) => !schemaDiagnostics?.length), desk.minFontSize),
     [desk.results, desk.minFontSize]);
   const searchIndex = useMemo(() => desk.rows.map(({ values }, i) =>
     searchable([desk.filenamePlans[i]!.filename, ...Object.values(values)].join('\0'))), [desk.rows, desk.filenamePlans]);
@@ -227,7 +232,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
       </div>
       <div className="queue-selection actions compact" role="group" aria-label={copy.selection}>
         <button ref={selectFilteredButton} type="button" className="button secondary" data-testid="select-filtered-ready"
-          disabled={!desk.results || desk.exporting}
+          disabled={!desk.hasMapping || !desk.results || desk.exporting}
           onClick={() => desk.changeRowSelection(matches.filter((index) => desk.results?.[index]?.status === 'pass').map((index) => index + 1))}>
           {copy.selectFilteredReady}
         </button>
@@ -274,7 +279,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
                       <label className="row-export-check">
                         <input type="checkbox" data-testid="queue-row-select" checked={checked}
                           aria-label={fillLabel(copy.includeRow, { row: rowNumber })}
-                          disabled={desk.exporting || !desk.results || (!checked && result?.status !== 'pass')}
+                          disabled={!desk.hasMapping || desk.exporting || !desk.results || (!checked && result?.status !== 'pass')}
                           onChange={(event) => desk.changeRowSelection(event.currentTarget.checked
                             ? [...checkedRows, rowNumber] : [...checkedRows].filter((selected) => selected !== rowNumber))} />
                       </label>
@@ -291,12 +296,14 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
                   </td>
                   <td><span className={`tag tag-${result?.status ?? 'pending'}`}>{!result ? copy.waiting : result.status === 'pass' ? labels.ready : labels.flagged}</span></td>
                   <td className="review-cell">
-                    {issue && (
+                    {result?.schemaDiagnostics?.[0]
+                      ? <SchemaIssue issue={result.schemaDiagnostics[0]} arabic={arabic} />
+                      : issue && (
                       <>
                         <bdi dir="auto">{issue.field}</bdi>{' · '}{diagnosticText(issue, desk.minFontSize, language)}
                       </>
                     )}
-                    {!result?.diagnostics.length && source.warnings.length === 0 && copy.noIssues}
+                    {!result?.diagnostics.length && !result?.schemaDiagnostics?.length && source.warnings.length === 0 && copy.noIssues}
                     {source.warnings.length > 0 && <span className="source-marker">{labels.sourceWarnings}</span>}
                   </td>
                 </tr>
@@ -334,7 +341,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
             <div className="row-summary">
               <h3>{fillLabel(fieldLabels.selected, { row: desk.selected + 1 })}</h3>
               <Filename name={desk.filenamePlans[desk.selected]!.filename} />
-              {result?.status === 'pass' && <p>{copy.cleanRow}</p>}
+              {result?.status === 'pass' && desk.hasMapping && <p>{copy.cleanRow}</p>}
               {desk.checking && <p>{copy.unresolved}</p>}
             </div>
             <div className="actions compact">
@@ -357,8 +364,9 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
               </button>
             </div>
           </div>
-          {!!result?.diagnostics.length && (
-            <Diagnostics issues={result.diagnostics} minSize={desk.minFontSize} language={language} testId="selected-diagnostics" />
+          {result && (result.diagnostics.length > 0 || Boolean(result.schemaDiagnostics?.length)) && (
+            <Diagnostics issues={result.diagnostics} schemaIssues={result.schemaDiagnostics} minSize={desk.minFontSize}
+              language={language} testId="selected-diagnostics" />
           )}
           {row.warnings.length > 0 && (
             <div className="source-details">
@@ -376,9 +384,9 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
               </ul>
             </div>
           )}
-          <div id="edit-cells" className="edit-cells" hidden={!editing && invalidChoiceColumns.size === 0}>
+          <div id="edit-cells" className="edit-cells" hidden={!editing && invalidChoiceColumns.size === 0 && invalidSchemaColumns.size === 0}>
             {desk.sheet?.headers.map((column) => {
-              const invalid = invalidChoiceColumns.has(column);
+              const invalid = invalidChoiceColumns.has(column) || invalidSchemaColumns.has(column);
               if (!editing && !invalid) return null;
               const value = row.values[column] ?? '';
               const choices = fieldsByColumn.get(column)?.choices ?? [];
@@ -388,7 +396,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
               return (
                 <label key={column}>
                   <bdi>{column}</bdi>
-                  {options.length
+                  {options.length && !schemaColumns.has(column)
                     ? (
                       <select
                         dir="auto"
@@ -409,6 +417,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
                         dir="auto"
                         rows={2}
                         data-testid="roster-cell"
+                        data-roster-column={column}
                         aria-invalid={invalid || undefined}
                         value={value}
                         onChange={(event) => updateCell(column, event.currentTarget.value)}

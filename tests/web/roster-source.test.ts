@@ -20,3 +20,16 @@ it('keeps Excel formula warnings used only by a rule predicate or text token', (
   expect(current!.warnings).toEqual(row.warnings.slice(0, 3));
   expect(current!.values.Role).toBe('Standard');
 });
+
+it('keeps formula warnings and literal edits on an unmapped schema column', () => {
+  const warning: RosterRow['warnings'][number] = {
+    code: 'excel-formula-warning', column: 'IBAN', source: { row: 2, column: 'B' }, formulaHasCachedValue: false,
+  };
+  const row: RosterRow = { values: { Name: 'Synthetic', IBAN: '' }, warnings: [warning] };
+  const iban = 'SA31 0000 0000 0000 0001 0001';
+  const [effective] = rosterViews.effectiveRows([row], { Name: 'Name' }, { 0: { IBAN: iban } }, [],
+    [{ column: 'IBAN', kind: 'iban-mod97' }]);
+  expect(effective?.warnings).toEqual([warning]);
+  expect(effective?.values.IBAN).toBe(iban);
+  expect(row.values.IBAN).toBe('');
+});

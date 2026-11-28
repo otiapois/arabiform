@@ -108,9 +108,10 @@ export default function WorkbenchPreview({ template, desk, language }: {
             <PrintMarginAdvisory template={template.info} mapping={desk.mapping} virtualMappings={desk.virtualMappings} arabic={arabic} />
           </Suspense>
         )}
-        {!!selectedResult?.diagnostics.length && (
+        {selectedResult && (selectedResult.diagnostics.length > 0 || Boolean(selectedResult.schemaDiagnostics?.length)) && (
           <div className="preview-diagnostics">
-            <Diagnostics issues={selectedResult.diagnostics} minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
+            <Diagnostics issues={selectedResult.diagnostics} schemaIssues={selectedResult.schemaDiagnostics}
+              minSize={desk.minFontSize} language={language} testId="preview-diagnostics" />
           </div>
         )}
         <PdfPreview bytes={bytes} fields={template.info.fields} overlays={template.overlays} diagnostics={selectedResult?.diagnostics}

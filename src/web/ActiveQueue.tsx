@@ -5,6 +5,7 @@ import { sourceProblem } from './source-problems';
 
 const en = {
   addMapping: 'Map at least one PDF field to check the rows.',
+  addMappingForExport: 'Map at least one PDF field to export PDFs.',
   preflight: 'Checking rows',
   zip: 'Creating ZIP',
   merged: 'Merging PDFs',
@@ -17,6 +18,7 @@ const en = {
 
 const ar: typeof en = {
   addMapping: 'اربط حقل PDF واحدًا على الأقل لفحص الصفوف.',
+  addMappingForExport: 'اربط حقل PDF واحدًا على الأقل لتصدير الملفات.',
   preflight: 'فحص الصفوف',
   zip: 'إنشاء أرشيف ZIP',
   merged: 'دمج ملفات PDF',
@@ -53,12 +55,13 @@ export default function ActiveQueue(props: Parameters<typeof Queue>[0]) {
       {desk.paused && (
         <div className="batch-state">
           <p role="status">{labels.pausedBatch}</p>
-          <button type="button" className="button secondary" data-testid="resume-batch" disabled={!desk.hasMapping || desk.fontBlocked} onClick={desk.resume}>
+          <button type="button" className="button secondary" data-testid="resume-batch"
+            disabled={(!desk.hasMapping && !desk.schemaRules.length) || desk.fontBlocked} onClick={desk.resume}>
             {labels.resumeBatch}
           </button>
         </div>
       )}
-      {desk.template && !desk.hasMapping && <p className="queue-note">{labels.addMapping}</p>}
+      {desk.template && !desk.hasMapping && <p className="queue-note">{desk.schemaRules.length ? labels.addMappingForExport : labels.addMapping}</p>}
       <Queue {...props} />
     </>
   );

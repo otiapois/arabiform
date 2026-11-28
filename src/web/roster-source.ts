@@ -5,6 +5,7 @@ import type { BatchDraft } from '../core/draft/batch-draft';
 import * as virtual from '../core/roster/virtual-columns';
 import { planGroupedOutput } from '../core/export/grouping';
 import { conditionalRuleColumns, type ConditionalFieldRule } from '../core/rules/conditional-fields';
+import type { RosterSchemaRule } from '../core/validation/roster-schema';
 import { errorCode } from './resources';
 
 type ActiveSheet = { sheetName?: string; sheet?: RosterSheet; sheetError?: string };
@@ -34,10 +35,11 @@ export const rosterViews = {
       return [name, column && !Object.hasOwn(bindings, name) && headers.includes(column) ? column : ''];
     }));
   },
-  effectiveRows(rows: RosterSheet['rows'], mapping: Record<string, string>, edits: BatchDraft['edits'], rules: readonly ConditionalFieldRule[]) {
-    const mappedColumns = new Set([...Object.values(mapping), ...rules.flatMap(conditionalRuleColumns)]);
+  effectiveRows(rows: RosterSheet['rows'], mapping: Record<string, string>, edits: BatchDraft['edits'], rules: readonly ConditionalFieldRule[],
+    schemaRules: readonly RosterSchemaRule[] = []) {
+    const usedColumns = new Set([...Object.values(mapping), ...rules.flatMap(conditionalRuleColumns), ...schemaRules.map(({ column }) => column)]);
     return rows.map((row, index) => {
-      const warnings = row.warnings.filter(({ code, column }) => code !== 'excel-formula-warning' || mappedColumns.has(column));
+      const warnings = row.warnings.filter(({ code, column }) => code !== 'excel-formula-warning' || usedColumns.has(column));
       const edit = edits[index];
       return edit || warnings.length !== row.warnings.length
         ? { ...row, values: edit ? { ...row.values, ...edit } : row.values, warnings }

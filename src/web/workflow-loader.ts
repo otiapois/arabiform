@@ -1,8 +1,10 @@
 import { decodeBase64 } from './resources';
 import { rosterViews } from './roster-source';
 import type { ConditionalFieldRule } from '../core/rules/conditional-fields';
-import type { SampleWorkflow } from './useWorkbench';
-import { inspectFillTemplate } from './fill-template-source';
+import type { FillSample, SampleWorkflow } from './useWorkbench';
+import { inspectFillTemplate, type FillTemplate } from './fill-template-source';
+import type { MappingPreset } from './presets';
+import type { RosterSource } from './roster-source';
 
 // The sample-* chunks contain individual fixture bytes; this module only selects one of them.
 const samples = {
@@ -18,7 +20,19 @@ const vipRules: ConditionalFieldRule[] = [
 ];
 const vipRoster = 'Name,ID,Consent,Role,Clinic\nVIP Guest,00123,false,VIP,North clinic\nStandard Guest,00007,false,Standard,South clinic\n';
 
-export async function loadSampleWorkflow(workflow: SampleWorkflow | 'conditional', openedAt: Date, locale: 'en' | 'ar') {
+type LoadedSample = {
+  template: FillTemplate;
+  roster: RosterSource;
+  notice: string;
+  rules?: ConditionalFieldRule[];
+  preset?: MappingPreset;
+};
+
+export async function loadSampleWorkflow(workflow: FillSample, openedAt: Date, locale: 'en' | 'ar'): Promise<LoadedSample> {
+  if (workflow === 'payroll') {
+    const { loadPayrollDemo } = await import('./payroll-demo');
+    return loadPayrollDemo(openedAt, locale);
+  }
   const conditional = workflow === 'conditional';
   const sample = samples[conditional ? 'clinic' : workflow];
   const [assets, parser, virtual] = await Promise.all([

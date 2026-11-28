@@ -9,6 +9,7 @@ import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import { hasVirtualFilenameToken } from '../core/roster/filenames';
 import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
 import { conditionalRuleColumns, type ConditionalFieldRule } from '../core/rules/conditional-fields';
+import type { RosterSchemaRule } from '../core/validation/roster-schema';
 
 export type { FontMode, MappingPreset, MappingPresetV4, MappingPresetV5 } from '../core/draft/mapping-preset';
 
@@ -27,11 +28,13 @@ export function makeDraftSettings(
   fieldTypography: FieldTypographyMap = {}, approvalSeal: ApprovalSealSettings | null = null,
   conditionalRules: ConditionalFieldRule[] = [],
   fourUp?: FourUpOptions,
+  schemaRules: RosterSchemaRule[] = [],
 ): Exclude<MappingPreset, { version: 1 | 2 | 3 }> {
   const settings = { mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides };
-  if (imposition === '4-up' || fourUp) {
-    return { version: 12, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings, qrStamp, coverLanguage, imposition,
-      groupByColumn, fieldTypography, approvalSeal, conditionalRules, fourUpOrder: 'sequential', centerCutGuides: false, ...fourUp };
+  if (imposition === '4-up' || fourUp || schemaRules.length) {
+    const print = { ...settings, watermark: watermark ?? { kind: 'none' as const }, virtualMappings, qrStamp, coverLanguage, imposition,
+      groupByColumn, fieldTypography, approvalSeal, conditionalRules, fourUpOrder: 'sequential' as const, centerCutGuides: false, ...fourUp };
+    return schemaRules.length ? { version: 13, ...print, schemaRules } : { version: 12, ...print };
   }
   if (conditionalRules.length || approvalSeal || Object.keys(fieldTypography).length) {
     const advanced = { ...settings, watermark: watermark ?? { kind: 'none' as const }, virtualMappings, qrStamp, coverLanguage, imposition,
@@ -60,12 +63,13 @@ export function makeMappingPreset(
   fieldTypography: FieldTypographyMap = {}, approvalSeal: ApprovalSealSettings | null = null,
   conditionalRules: ConditionalFieldRule[] = [],
   fourUp?: FourUpOptions,
+  schemaRules: RosterSchemaRule[] = [],
 ): MappingPreset {
   if ((watermark && watermark.kind !== 'none') || Object.keys(alignOverrides).length
     || Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern) || qrStamp.placement !== 'none'
-    || coverLanguage !== 'auto' || imposition !== '1-up' || fourUp || groupByColumn !== null || approvalSeal || Object.keys(fieldTypography).length || conditionalRules.length) {
+    || coverLanguage !== 'auto' || imposition !== '1-up' || fourUp || groupByColumn !== null || approvalSeal || Object.keys(fieldTypography).length || conditionalRules.length || schemaRules.length) {
     return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides,
-      watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, approvalSeal, conditionalRules, fourUp);
+      watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, approvalSeal, conditionalRules, fourUp, schemaRules);
   }
   const settings = { mapping, filenamePattern, minFontSize, font };
   if (includeCoverSheet) return { version: 3, ...settings, flattenZip, includeCoverSheet };
@@ -82,6 +86,7 @@ export function presetMismatches(
   textFields = fields,
   fieldTypography: FieldTypographyMap = {},
   conditionalRules: readonly ConditionalFieldRule[] = [],
+  schemaRules: readonly RosterSchemaRule[] = [],
 ) {
   const missingFields = [...new Set([
     ...(fields ? [...Object.keys(mapping), ...conditionalRules.map(({ field }) => field)].filter((field) => !fields.includes(field)) : []),
@@ -89,7 +94,7 @@ export function presetMismatches(
   ])];
   const tokens = Array.from(filenamePattern.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g), (match) => match[1]!);
   const missingColumns = columns
-    ? [...new Set([...Object.values(mapping), ...tokens, ...conditionalRules.flatMap(conditionalRuleColumns)].filter(Boolean))]
+    ? [...new Set([...Object.values(mapping), ...tokens, ...conditionalRules.flatMap(conditionalRuleColumns), ...schemaRules.map(({ column }) => column)].filter(Boolean))]
       .filter((column) => !columns.includes(column))
     : [];
   return { missingFields, missingColumns };
