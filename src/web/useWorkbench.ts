@@ -14,7 +14,7 @@ import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
 import type { BatchPublication } from './BatchSession';
-import type { FillTemplate, FlatSource } from './fill-template-source';
+import type { FillTemplate, FlatSource, MigratedTemplate } from './fill-template-source';
 import type { FontMode, MappingPreset } from './presets';
 import { errorCode, saveDownload } from './resources';
 import type { RosterSource } from './roster-source';
@@ -208,8 +208,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setCellState((current) => ({ edits: {}, hygiene: [], revision: current.revision + 1 }));
   }
 
-  async function loadPdf(file: File) {
+  async function loadPdf(file: File, migration?: MigratedTemplate) {
     const id = ++request.current.pdf;
+    const preset = migration?.preset;
+    const presetId = preset ? ++request.current.preset : undefined;
+    const customFontId = request.current.customFont;
     request.current.draft++;
     invalidate(true);
     setRowSelection('all-ready');
@@ -218,14 +221,27 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setRequestedPage(undefined);
     setFieldSelection(undefined);
     setSample(undefined);
+    if (preset) setPresetError(false);
     setMappingSettings((current) => current.fromPreset ? current : { fromPreset: false, values: {} });
     setErrors((current) => ({ ...current, pdf: undefined }));
     setBusy((current) => ({ ...current, pdf: true }));
     try {
-      const { inspectFillSource } = await import('./fill-template-source');
-      const result = await inspectFillSource(file);
+      const [result, codec] = await Promise.all([
+        import('./fill-template-source').then(({ inspectFillSource }) => inspectFillSource(file)),
+        preset && import('./presets'),
+      ]);
       if (request.current.pdf !== id) return;
-      if (result.template) setTemplate(result.template);
+      if (result.template) {
+        if (preset && codec && presetId === request.current.preset) {
+          setPresetCodec(codec);
+          if (customFontId === request.current.customFont) {
+            request.current.customFont++;
+            setCustomFont(undefined);
+          }
+          restoreSettings(preset);
+        }
+        setTemplate(migration?.synthetic ? { ...result.template, synthetic: true } : result.template);
+      }
       else {
         setErrors((current) => ({ ...current, pdf: result.code }));
         setFlatSource(result.flatSource);

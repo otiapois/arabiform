@@ -1,5 +1,6 @@
 import type { FlatPdfMetadata } from '../core/designer/source';
 import type { TemplateMetadata, getWidgetOverlays } from '../core/pdf';
+import type { MappingPreset } from './presets';
 import { errorCode } from './resources';
 
 export type FillTemplate = {
@@ -7,7 +8,9 @@ export type FillTemplate = {
   bytes: Uint8Array;
   info: TemplateMetadata;
   overlays: ReturnType<typeof getWidgetOverlays>;
+  synthetic?: boolean;
 };
+export type MigratedTemplate = { preset: MappingPreset; synthetic?: boolean };
 export type FlatSource = { name: string; bytes: Uint8Array; info: FlatPdfMetadata };
 type Result = { template: FillTemplate; code?: never; flatSource?: never } | {
   template?: never; code: string; flatSource?: FlatSource;

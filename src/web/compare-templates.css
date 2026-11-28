@@ -1,0 +1,61 @@
+.compare-body, .compare-changes, .compare-migration {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .85rem;
+}
+.compare-sources, .compare-counts, .compare-diagnostics, .compare-renames {
+  display: grid;
+  gap: .65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.compare-sources { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.compare-sources :is(.tag, .text-button) { margin-block-start: .35rem; }
+.compare-sources .text-button { margin-inline-start: .5rem; min-block-size: 1.75rem; }
+.compare-progress:empty { position: absolute; }
+.compare-changes, .compare-migration {
+  padding-block-start: .8rem;
+  border-block-start: 1px solid var(--line);
+}
+.compare-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.compare-counts > div {
+  display: grid;
+  align-content: start;
+  gap: .15rem;
+  padding: .62rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: var(--green-soft);
+  color: var(--forest);
+}
+.compare-counts dt { font-size: .86rem; font-weight: 650; }
+.compare-counts dd { margin: 0; font-size: 1.4rem; font-weight: 720; font-variant-numeric: tabular-nums; }
+.compare-detail {
+  padding: .62rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: .42rem;
+}
+.compare-detail h4, .compare-detail ul, .compare-issues { margin: 0; }
+.compare-detail > ul { list-style: none; padding: 0; }
+.compare-detail > ul > li {
+  display: grid;
+  justify-items: start;
+  gap: .18rem;
+  margin-block-start: .35rem;
+  padding-block-start: .35rem;
+  border-block-start: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .88rem;
+}
+.compare-detail > ul > li > bdi:first-child { font-weight: 650; color: var(--ink); }
+.compare-detail .compare-options, .compare-issues { padding-inline-start: 1.3rem; }
+.compare-issues { color: var(--error); font-size: .89rem; }
+.compare-changes, .compare-migration { overflow-wrap: anywhere; }
+.compare-migration .button bdi, [data-testid="compare-demo"] bdi { white-space: nowrap; }
+
+@media (max-width: 860px) {
+  .compare-sources { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 540px) {
+  .compare-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compare-diagnostics, .compare-renames { grid-template-columns: minmax(0, 1fr); }
+}
