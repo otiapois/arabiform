@@ -33,6 +33,7 @@ const CheckedExportCounts = lazy(() => import('./FillOutputExtras').then(({ Chec
 const ExportDetails = lazy(() => import('./FillOutputExtras').then(({ ExportDetails }) => ({ default: ExportDetails })));
 const ExportFeedback = lazy(() => import('./FillOutputExtras').then(({ ExportFeedback }) => ({ default: ExportFeedback })));
 const SplitDownload = lazy(() => import('./FillOutputExtras').then(({ SplitDownload }) => ({ default: SplitDownload })));
+const PrintCertificateDownload = lazy(() => import('./FillOutputExtras').then(({ PrintCertificateDownload }) => ({ default: PrintCertificateDownload })));
 const CompletedCustody = lazy(() => import('./FillOutputExtras').then(({ CompletedCustody }) => ({ default: CompletedCustody })));
 const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
 const PacketWorkbench = lazy(() => import('./PacketWorkbench'));
@@ -412,10 +413,12 @@ export function App({ language, heading, summary, details }: AppProps) {
                     onClick={() => desk.download('zip')}>{arabic ? <span>{labels.zip} <bdi dir="ltr">(ZIP)</bdi></span> : labels.zip}</button>
                   <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
                     onClick={() => desk.download('merged')}>{labels.merged}</button>
+                  {desk.template && <Suspense><PrintCertificateDownload desk={desk} arabic={arabic} /></Suspense>}
                   {desk.grouping && <Suspense><SplitDownload desk={desk} arabic={arabic} /></Suspense>}
                 </div>
                 <div className="actions audit-actions" role="group" aria-label={labels.audit}>
-                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked} onClick={() => desk.download('csv')}>{labels.auditCsv}</button>
+                  <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked}
+                    onClick={() => desk.download('csv')}>{arabic ? <span>{labels.auditCsv} <bdi dir="ltr">(CSV)</bdi></span> : labels.auditCsv}</button>
                   <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked}
                     onClick={() => desk.download('json')}>{arabic ? <span>{labels.auditJson} <bdi dir="ltr">(JSON)</bdi></span> : labels.auditJson}</button>
                 </div>

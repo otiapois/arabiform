@@ -170,6 +170,19 @@ describe('explicit preset migration', () => {
     expect(diff.breaking).toBe(true);
   });
 
+  it('keeps a v12 cut-and-stack preset and its conditional rules after a field rename', async () => {
+    const { old, revised, preset } = await offer();
+    const advanced = { ...preset, version: 12, imposition: '4-up', fourUpOrder: 'cut-and-stack', centerCutGuides: true };
+    expect(validateMappingPreset(advanced)).toEqual(advanced);
+    expect(validateMappingPreset({ ...advanced, centerCutGuides: 'true' })).toBeUndefined();
+    expect(validateMappingPreset({ ...advanced, fourUpOrder: 'column-major' })).toBeUndefined();
+    expect(validateMappingPreset({ ...preset, imposition: '4-up' })).toBeUndefined();
+    const migrated = migrateTemplatePreset(await inspectTemplateDiff(old, revised), advanced, { FullName: 'EmployeeFullName' });
+    expect(migrated.diagnostics).toEqual([]);
+    expect(migrated.preset).toMatchObject({ version: 12, imposition: '4-up', fourUpOrder: 'cut-and-stack', centerCutGuides: true,
+      conditionalRules: [{ ...preset.conditionalRules[0], field: 'EmployeeFullName' }, preset.conditionalRules[1]] });
+  });
+
   it('separates unsafe targets, source mismatches, and namespace collisions without guessing or dropping active bindings', async () => {
     const { old, revised, preset } = await offer();
     const doc = await PDFDocument.load(revised, { updateMetadata: false });

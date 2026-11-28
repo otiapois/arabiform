@@ -41,6 +41,13 @@ export function ExportFeedback({ desk, language }: { desk: Desk; language: Langu
   </>;
 }
 
+export function PrintCertificateDownload({ desk, arabic }: { desk: Desk; arabic: boolean }) {
+  return <button type="button" className="button secondary" data-testid="print-certificate-download"
+    disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked} onClick={() => desk.download('certificate')}>
+    <span>{arabic ? 'نزّل شهادة ما قبل الطباعة' : 'Download Print-Shop Certificate'}{' '}<bdi dir="ltr">(.pdf)</bdi></span>
+  </button>;
+}
+
 export function CompletedCustody({ desk, arabic, label }: { desk: Desk; arabic: boolean; label: ReactNode }) {
   if (!desk.custody) return null;
   const emptySubset = desk.exportScope.exportScope === 'selected-subset' && !desk.exportCount;

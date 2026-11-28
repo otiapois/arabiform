@@ -5,6 +5,7 @@ import type { GroupingPlan } from '../core/export/grouping';
 import type { AlignOverride } from '../core/pdf/alignment';
 import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
+import type { FourUpOptions } from '../core/pdf/imposition-settings';
 import type { FieldTypographyMap } from '../core/pdf/field-typography';
 import type { QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
@@ -13,13 +14,14 @@ import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { resolveVirtualMapping, VirtualColumnMapping } from '../core/roster/virtual-columns';
 import type { BatchInput, BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
+import type { MergedPrintCache } from './batch-exports';
 import { resolveRowSelection, type RowSelection } from '../core/worker/row-selection';
 import type { FontMode } from './presets';
 import { errorCode, loadFonts, saveDownload } from './resources';
 import { useRecordPreview, type RenderRecord } from './useRecordPreview';
 
 export type BatchWorker = ReturnType<typeof createBatchWorker>;
-export type ExportKind = 'zip' | 'merged' | 'split' | 'csv' | 'json';
+export type ExportKind = 'zip' | 'merged' | 'split' | 'certificate' | 'csv' | 'json';
 export type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256' | 'groupByColumn' | 'groups' | 'qrRecords'>;
 
 export type OutputSettings = {
@@ -33,11 +35,14 @@ export type OutputSettings = {
   qrStamp?: Exclude<QrStampSettings, { placement: 'none' }>;
   approvalSeal?: ApprovalSealSettings;
   imposition?: Imposition;
+  fourUp?: FourUpOptions;
 };
 
 export type BatchSettings = {
   template: Uint8Array;
+  templateName: string;
   roster: Uint8Array;
+  rosterName: string;
   sheetName?: string;
   rows: readonly RosterRow[];
   mapping: Record<string, string>;
@@ -66,6 +71,7 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
   const [exporting, setExporting] = useState<ExportKind>();
   const [exportError, setExportError] = useState<{ code: string; rowNumber?: number }>();
   const current = checked?.batch === batch ? checked : undefined;
+  const mergedCache = useMemo<MergedPrintCache>(() => ({}), [current?.client, output]);
   const results = current?.results;
   const exportScope = useMemo(() => resolveRowSelection(results ?? [], output.rowSelection), [results, output.rowSelection]);
   const exportCount = exportScope.selectedRowNumbers.length;
@@ -165,7 +171,7 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     if (!batch || !client || !results || exportLock.current) return;
     const pdf = kind !== 'csv' && kind !== 'json';
     if (!exportCount && (output.rowSelection !== 'all-ready' || pdf)) return;
-    if ((output.groupingBlocked && kind !== 'merged') || (kind === 'split' && !output.grouping)) return;
+    if ((output.groupingBlocked && kind !== 'merged' && kind !== 'certificate') || (kind === 'split' && !output.grouping)) return;
     const operation = Symbol();
     exportLock.current = operation;
     setExporting(kind);
@@ -173,11 +179,12 @@ export function useBatch(batch: BatchSettings | null, selected: number, output: 
     const currentExport = () => exportLock.current === operation && worker.current === client;
     try {
       if (pdf) {
-        setProgress({ phase: kind, completed: 0, total: exportCount });
+        setProgress({ phase: kind === 'certificate' ? 'merged' : kind, completed: 0, total: exportCount });
       }
       const { buildDownload } = await import('./batch-exports');
       if (!currentExport()) return;
-      const download = await buildDownload(kind, client, trackProgress(client), batch, results, output, exportScope, currentExport);
+      const names = kind === 'certificate' ? { templateName: batch.templateName, rosterName: batch.rosterName } : undefined;
+      const download = await buildDownload(kind, client, trackProgress(client), batch, results, output, exportScope, currentExport, mergedCache, names);
       if (download && currentExport()) {
         const { data, filename, mime, digests } = download;
         saveDownload(data, filename, mime);

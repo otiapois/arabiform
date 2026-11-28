@@ -75,7 +75,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
           || ('fieldTypography' in draft.settings && Object.keys(draft.settings.fieldTypography).some((field) => !textFields.has(field)))) {
           throw new Error('invalid-batch-draft');
         }
-        if (draft.settings.version === 11 && draft.settings.conditionalRules.length) {
+        if ('conditionalRules' in draft.settings && draft.settings.conditionalRules.length) {
           const { mapping, virtualMappings, conditionalRules } = draft.settings;
           const mapped = Object.fromEntries(source.fields.filter((field) =>
             (Object.hasOwn(mapping, field) && mapping[field]) || Object.hasOwn(virtualMappings, field))

@@ -1,5 +1,6 @@
 import type { FlatPdfMetadata } from '../core/designer/source';
 import type { TemplateMetadata, getWidgetOverlays } from '../core/pdf';
+import type { inspectImpositionCompatibility } from '../core/pdf/imposition';
 import type { MappingPreset } from './presets';
 import { errorCode } from './resources';
 
@@ -8,6 +9,7 @@ export type FillTemplate = {
   bytes: Uint8Array;
   info: TemplateMetadata;
   overlays: ReturnType<typeof getWidgetOverlays>;
+  impositionCompatibility: Awaited<ReturnType<typeof inspectImpositionCompatibility>>;
   synthetic?: boolean;
 };
 export type MigratedTemplate = { preset: MappingPreset; synthetic?: boolean };
@@ -16,13 +18,19 @@ type Result = { template: FillTemplate; code?: never; flatSource?: never } | {
   template?: never; code: string; flatSource?: FlatSource;
 };
 
+export async function inspectFillTemplate(name: string, bytes: Uint8Array): Promise<FillTemplate> {
+  const engine = await import('../core/pdf');
+  const info = await engine.inspectTemplate(bytes);
+  const { inspectImpositionCompatibility } = await import('../core/pdf/imposition');
+  const impositionCompatibility = await inspectImpositionCompatibility(bytes);
+  return { name, bytes, info, overlays: engine.getWidgetOverlays(info), impositionCompatibility };
+}
+
 export async function inspectFillSource(file: File): Promise<Result> {
   let bytes: Uint8Array | undefined;
   try {
-    const [engine, buffer] = await Promise.all([import('../core/pdf'), file.arrayBuffer()]);
-    bytes = new Uint8Array(buffer);
-    const info = await engine.inspectTemplate(bytes);
-    return { template: { name: file.name, bytes, info, overlays: engine.getWidgetOverlays(info) } };
+    bytes = new Uint8Array(await file.arrayBuffer());
+    return { template: await inspectFillTemplate(file.name, bytes) };
   } catch (problem) {
     const code = errorCode(problem, 'loadError');
     if (code === 'flat-scanned-no-fields' && bytes) {

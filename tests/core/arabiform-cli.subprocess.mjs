@@ -90,6 +90,24 @@ try {
   assert.equal(run(0, '--mode', 'verify', '--manifest', manifestPath, '--qr-payload', manifest.qrRecords[0].payload).status, 'VERIFIED_QR_RECORD');
   assert.equal(run(2, '--mode', 'verify', '--manifest', manifestPath, '--qr-payload', 'invalid').status, 'UNMATCHED_UNKNOWN');
 
+  const printShop = join(directory, 'M24 Print Shop');
+  const badge = join(root, 'fixtures', 'm24', 'visitor-badge-rotated.pdf');
+  const visitors = join(root, 'fixtures', 'm24', 'visitor-roster.csv');
+  const printJob = run(0, '--mode', 'fill', '--template', badge, '--roster', visitors, '--out-dir', printShop,
+    '--imposition', '4-up', '--print-certificate', '--cover');
+  assert.equal(printJob.ready, 7);
+  assert(printJob.outputs.includes('print-shop-certificate.pdf'));
+  const printBytes = await readFile(join(printShop, 'arabiform-merged.pdf'));
+  const printDoc = await PDFDocument.load(printBytes);
+  const certificate = await PDFDocument.load(await readFile(join(printShop, 'print-shop-certificate.pdf')));
+  assert.equal(printDoc.getPageCount(), 3);
+  assert.equal(certificate.getPageCount(), 1);
+  const certificateStreams = certificate.getPage(0).node.Contents();
+  assert(certificateStreams instanceof PDFArray);
+  const certificateText = Buffer.from(decodePDFRawStream(certificateStreams.lookup(0, PDFRawStream)).decode()).toString('utf8');
+  for (const value of ['SHA-256 ' + hash(printBytes), 'SHA-256 ' + hash(await readFile(badge)), 'SHA-256 ' + hash(await readFile(visitors)),
+    '0 clipped fields verified', 'شهادة فحص المطبعة']) assert(certificateText.includes('/ActualText ' + PDFHexString.fromText(value).toString()));
+
   const m20Template = join(directory, 'Numeral Form.pdf');
   const m20Roster = join(directory, 'Numeral Roster.csv');
   const m20Preset = join(directory, 'M20 Preset.json');

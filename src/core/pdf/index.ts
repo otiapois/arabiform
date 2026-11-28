@@ -2,7 +2,7 @@ import { PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, 
 import { applyNumeralPolicy } from '../shaping/numerals';
 import type { ConditionalFieldEvaluation, RuleApplication } from '../rules/conditional-fields';
 import { explicitQuadding, type AlignOverride } from './alignment';
-import { installAppearance, type AppearanceFont } from './appearances';
+import { installAppearance, widgetTextMatrix, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
 import { copyBundledFont } from './bundled-fonts';
 import { matchChoice, type FieldChoice } from './choice-match';
@@ -18,6 +18,7 @@ export { matchChoice } from './choice-match';
 export type { FieldChoice } from './choice-match';
 export { inspectCustomFont, MAX_CUSTOM_FONT_BYTES } from './custom-font';
 export type { AuditRow, Imposition, PdfExportRow, PrintWatermarkOptions } from './exports';
+export type { FourUpOptions, ImpositionUnavailableReason } from './imposition-settings';
 export type { MergeCoverOptions } from './merge-cover';
 export { PdfIntakeError } from './template';
 export type { FieldMetadata, PdfIntakeCode, TemplateMetadata, WidgetMetadata } from './template';
@@ -45,6 +46,7 @@ export interface RowPreflightResult {
   fontSizes: Record<string, number[]>;
   smallestInkFontSizePt?: number;
   inkClearancePt?: number;
+  mappedInkOutsidePrint?: true;
   ruleApplied?: RuleApplication[];
   pdfBytes?: Uint8Array;
 }
@@ -98,6 +100,7 @@ function planRow(
   const customGlyphIds = new Set<number>();
   let smallestInkFontSizePt = Infinity;
   let inkClearancePt = Infinity;
+  let mappedInkOutsidePrint = false;
 
   for (const { field, widgets, meta, alignment, completeWidgetList, pageNumbers, dropdownOptions } of fields) {
     const { name } = meta;
@@ -217,16 +220,28 @@ function planRow(
     if (placed.length !== widgets.length) continue;
     sizes.push([name, placed.map(({ placement }) => placement.size)]);
     for (const { widget, placement: { size, lines } } of placed) {
-      const { width, height, rotation, pageIndex } = widget.meta;
+      const { x, y, width, height, rotation, pageIndex } = widget.meta;
       const quarterTurn = rotation % 180 !== 0;
       const outerWidth = quarterTurn ? height : width;
       const outerHeight = quarterTurn ? width : height;
-      const { userUnit } = pages[pageIndex]!;
+      const { userUnit, printBounds: [pageLeft, pageBottom, pageRight, pageTop] } = pages[pageIndex]!;
+      const widgetWithinPrint = x >= pageLeft && y >= pageBottom && x + width <= pageRight && y + height <= pageTop;
       for (const { line, origin, baseline } of lines) {
         if (line.painted) {
           const [left, right] = line.inkX;
-          const clearance = Math.min(origin + left * size, outerWidth - (origin + right * size),
-            baseline + line.bounds.minY * size, outerHeight - (baseline + line.bounds.maxY * size));
+          const inkLeft = origin + left * size;
+          const inkRight = origin + right * size;
+          const inkBottom = baseline + line.bounds.minY * size;
+          const inkTop = baseline + line.bounds.maxY * size;
+          const clearance = Math.min(inkLeft, outerWidth - inkRight, inkBottom, outerHeight - inkTop);
+          if (!widgetWithinPrint && !mappedInkOutsidePrint) {
+            const [a, b, c, d, e, f] = widgetTextMatrix(rotation, width, height);
+            for (const localX of [inkLeft, inkRight]) for (const localY of [inkBottom, inkTop]) {
+              const pageX = x + a * localX + c * localY + e;
+              const pageY = y + b * localX + d * localY + f;
+              if (pageX < pageLeft || pageX > pageRight || pageY < pageBottom || pageY > pageTop) mappedInkOutsidePrint = true;
+            }
+          }
           smallestInkFontSizePt = Math.min(smallestInkFontSizePt, size * userUnit);
           inkClearancePt = Math.min(inkClearancePt, clearance * userUnit);
         }
@@ -243,6 +258,7 @@ function planRow(
   const pageNumbers = [...new Set(diagnostics.flatMap((issue) => issue.pageNumbers))].sort((first, second) => first - second);
   const result: CheckedRow = { status: diagnostics.length ? 'flagged' : 'pass', diagnostics, pageNumbers, fontSizes,
     ...(conditional && { ruleApplied: conditional.ruleApplied }),
+    ...(mappedInkOutsidePrint && { mappedInkOutsidePrint: true }),
   };
   if (result.status === 'pass' && Number.isFinite(smallestInkFontSizePt) && Number.isFinite(inkClearancePt)) {
     result.smallestInkFontSizePt = smallestInkFontSizePt;

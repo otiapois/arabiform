@@ -25,7 +25,8 @@ import { preflightPacket, type PacketTemplate } from '../src/core/packet/assembl
 import { dispatchCli } from '../src/core/cli/dispatch';
 import { MIGRATED_PRESET_FILENAME } from '../src/core/template/diff-migrator';
 import type { ConditionalFieldRule, RuleApplication } from '../src/core/rules/conditional-fields';
-import type { BatchPreflightResult } from '../src/core/worker/protocol';
+import type { BatchMergedResult, BatchPreflightResult } from '../src/core/worker/protocol';
+import type { PrintJobEstimate } from '../src/core/export/print-estimator';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -1102,6 +1103,56 @@ for (const [index, { filename, pdfBytes }] of packetReferences.entries()) {
     fields: index ? ['Name', 'ID', 'Consent'] : ['Employee'], visibleText: index ? [packetArabic, '00123'] : [packetEnglish] });
 }
 
+const m24Proofs = [];
+const m24RosterBytes = await readFile(asset('fixtures/m24/visitor-roster.csv'));
+const m24Roster = (await readRoster(m24RosterBytes, 'visitor-roster.csv')).sheets[0]!.rows;
+for (const [templateName, fourUpOrder, centerCutGuides, kind] of [
+  ['visitor-badge.pdf', 'sequential', false, 'portrait'],
+  ['visitor-badge-rotated.pdf', 'cut-and-stack', true, 'rotated'],
+] as const) {
+  const template = await readFile(asset(`fixtures/m24/${templateName}`));
+  const rows = m24Roster.map(({ values }) => ({ Name: values.Name!, 'Badge ID': values['Badge ID']! }));
+  const filenames = rows.map((row) => row['Badge ID'] + '.pdf');
+  for (const [index, values] of rows.entries()) await passingCase(template, values, `m24-${kind}-${filenames[index]}`,
+    `M24 ${kind} A6 visitor badge record ${index + 1}`);
+  const payloads = rows.map((row) => `VISITOR-${row['Badge ID']}`);
+  const modules = payloads.map((payload) => {
+    const symbol = encodeQr(payload);
+    proveQrMatrix(symbol, payload);
+    return symbol.modules;
+  });
+  const watermark = { kind: 'draft-ar', opacity: 0.22, angle: -45 } as const;
+  const corner = 'bottom-right';
+  const sizePt = 48;
+  const qrStamp = { placement: corner, sizePt, payloads } as const;
+  const coverSheet = { locale: 'en', coverLanguage: 'bilingual', templateName, filenames, exportedAt: '2026-11-28' } as const;
+  const worker = createBatchProcessor();
+  const noop = () => {};
+  const checked = await worker({ phase: 'preflight', input: { template, roster: m24RosterBytes, rows, options: settings } }, noop) as BatchPreflightResult;
+  assert(checked.rows.every(({ status }) => status === 'pass'));
+  const fullPrint = { phase: 'merged', coverSheet, watermark, qrStamp } as const;
+  const reference = await worker(fullPrint, noop) as BatchMergedResult;
+  const fourUp = { fourUpOrder, centerCutGuides };
+  const estimated = await worker({ phase: 'estimate', coverSheet, imposition: '4-up', fourUp }, noop) as PrintJobEstimate;
+  const imposed = await worker({ ...fullPrint, imposition: '4-up', fourUp }, noop) as BatchMergedResult;
+  const outputName = `m24-${kind}-4-up.pdf`;
+  const certificate = await worker({ phase: 'certificate', merged: imposed, names: { templateName, rosterName: 'visitor-roster.csv', outputName } }, noop) as Uint8Array;
+  const imposedDoc = await PDFDocument.load(imposed.bytes);
+  assert.equal(imposedDoc.getPageCount(), estimated.activePhysicalSheets);
+  assert.equal(estimated.activePhysicalSheets, estimated.coverPages + 2);
+  assert(!imposedDoc.catalog.has(key('AcroForm')));
+  assert.equal((await PDFDocument.load(certificate)).getPageCount(), 1);
+  const spec = { pdf: outputName, referencePdf: `m24-${kind}-record-reference.pdf`, certificate: `m24-${kind}-certificate.pdf`,
+    coverPages: estimated.coverPages, filenames, rowNumbers: rows.map((_, index) => index + 1), corner, sizePt, modules, payloads,
+    grid: 4, cutAndStack: fourUpOrder === 'cut-and-stack', centerCutGuides, templateName, templateSha256: checked.custody.templateSha256,
+    rosterName: 'visitor-roster.csv', rosterSha256: checked.custody.rosterSha256,
+    minimumUnscaledMappedFontPt: Math.min(...checked.rows.map(({ smallestInkFontSizePt }) => smallestInkFontSizePt!)) };
+  await writeFile(resolve(root, spec.pdf), imposed.bytes);
+  await writeFile(resolve(root, spec.referencePdf), reference.bytes);
+  await writeFile(resolve(root, spec.certificate), certificate);
+  m24Proofs.push(spec);
+}
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -1141,5 +1192,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, packetProof, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, packetProof, m24Proofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);

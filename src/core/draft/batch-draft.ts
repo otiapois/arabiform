@@ -79,7 +79,7 @@ function validateBatchDraft(data: unknown): BatchDraft {
     || Object.entries(settings.mapping).some(([field, column]) => !fieldNames.has(field) || column !== '' && !columns.has(column))
     || 'virtualMappings' in settings && Object.keys(settings.virtualMappings).some((field) => !fieldNames.has(field))
     || 'groupByColumn' in settings && settings.groupByColumn !== null && !columns.has(settings.groupByColumn)) throw invalid();
-  if (settings.version === 11 && settings.conditionalRules.some((rule) =>
+  if ('conditionalRules' in settings && settings.conditionalRules.some((rule) =>
     !(Object.hasOwn(settings.mapping, rule.field) && settings.mapping[rule.field] || Object.hasOwn(settings.virtualMappings, rule.field))
     || conditionalRuleColumns(rule).some((column) => !columns.has(column)))) throw invalid();
 

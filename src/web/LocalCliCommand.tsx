@@ -50,7 +50,7 @@ export default function LocalCliCommand({ desk, arabic }: { desk: ReturnType<typ
     sheetName === undefined ? '--roster roster.csv' : '--roster roster.xlsx',
     '--preset arabiform-mapping-preset.json --out-dir output',
     sheetName ? nameArgument('--sheet', sheetName) : undefined,
-    `--imposition ${desk.printLayout === '2-up' ? '2-up' : '1-up'}`,
+    `--imposition ${desk.printLayout}`,
     groupBy ? nameArgument('--group-by', groupBy) : undefined,
     desk.includeCoverSheet ? '--cover' : undefined,
     sourceDate?.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(sourceDate) ? `--date ${sourceDate}` : undefined,

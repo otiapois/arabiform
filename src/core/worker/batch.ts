@@ -3,10 +3,11 @@ import { createCustodyQrRecords } from '../custody/records';
 import { validateGroupingPlan } from '../export/grouping';
 import type { preparePrintJobEstimator } from '../export/print-estimator';
 import { planCombinedPrint, planSplitPrint } from '../export/print-job';
-import { createMergedPdf, preflightRow, prepareTemplatePreflight } from '../pdf';
-import { createGeneratedZip, createSplitMergedZip, createStampedPreview } from '../pdf/exports';
+import { preflightRow, prepareTemplatePreflight } from '../pdf';
+import { createGeneratedZip, createMergedPrint, createSplitMergedZip, createStampedPreview } from '../pdf/exports';
+import type { inspectImpositionCompatibility } from '../pdf/imposition';
+import type { PrintPreflightReceipt } from '../pdf/print-certificate';
 import { validateBatchQrPrintRequest, type BatchQrPrintRequest, type QrPrintRequest } from '../pdf/qr-settings';
-import { hasUnsupportedPrintAnnotation, openTemplate } from '../pdf/template';
 import { selectBoundaryRows } from '../preflight/spotlight';
 import { localVirtualDate } from '../roster/virtual-columns';
 import { prepareConditionalFields } from '../rules/conditional-fields';
@@ -37,18 +38,6 @@ async function preflightBatch(input: RowInputs, progress: (completed: number, to
   return { rows: results, spotlight: selectBoundaryRows(renderRows, results, fields), renderRows };
 }
 
-async function inspectPrintSource(template: RowInputs['template']) {
-  const { doc, pages } = await openTemplate(template);
-  const templatePagesPerRecord = pages.length;
-  if (templatePagesPerRecord !== 1) return { templatePagesPerRecord };
-  if (hasUnsupportedPrintAnnotation(doc.getPage(0))) {
-    return { templatePagesPerRecord, twoUpUnavailableReason: 'imposition-unsupported-print-annotation' as const };
-  }
-  const { hasValidImpositionGeometry } = await import('../pdf/imposition');
-  return { templatePagesPerRecord, twoUpUnavailableReason: hasValidImpositionGeometry(pages[0]!) ? undefined
-    : 'imposition-invalid-page-geometry' as const };
-}
-
 async function selectPrintQr(qr: BatchQrPrintRequest | undefined, rowCount: number, custody: CustodySources, rowNumbers: readonly number[]) {
   if (qr === undefined) return {};
   const request = validateBatchQrPrintRequest(qr, rowCount);
@@ -62,14 +51,15 @@ async function selectPrintQr(qr: BatchQrPrintRequest | undefined, rowCount: numb
 export function createBatchProcessor() {
   let preflightStarted = false;
   let retained: { input: RowInputs; checked: BatchPreflightResult } | undefined;
-  let printSource: Awaited<ReturnType<typeof inspectPrintSource>> | undefined;
+  let printSource: Awaited<ReturnType<typeof inspectImpositionCompatibility>> | undefined;
   let estimatePrint: ReturnType<typeof preparePrintJobEstimator> | undefined;
+  let lastMergedReceipt: PrintPreflightReceipt | undefined;
   let pending: Promise<unknown> = Promise.resolve();
 
   async function handle(command: BatchCommand, notify: ProgressListener): Promise<BatchResult> {
     const { phase } = command;
     const progress = (completed: number, total: number) => {
-      if (phase !== 'preview' && phase !== 'estimate') notify({ phase, completed, total });
+      if (phase !== 'preview' && phase !== 'estimate' && phase !== 'certificate') notify({ phase, completed, total });
     };
     if (phase === 'preflight') {
       if (preflightStarted) throw new Error('batch-already-started');
@@ -82,10 +72,17 @@ export function createBatchProcessor() {
       return checked;
     }
     if (!retained) throw new Error('batch-not-ready');
+    if (phase === 'merged') lastMergedReceipt = undefined;
     const { input, checked: { rows: results, custody } } = retained;
+    if (phase === 'certificate') {
+      if (!lastMergedReceipt) throw new Error('print-certificate-unavailable');
+      if (lastMergedReceipt.mergedPdfSha256 !== command.merged.mergedPdfSha256) throw new Error('print-certificate-output-mismatch');
+      const { createPrintCertificate } = await import('../pdf/print-certificate');
+      return createPrintCertificate(command.merged.bytes, lastMergedReceipt, command.names, input.options.fonts);
+    }
     if (phase === 'estimate') {
       const { preparePrintJobEstimator } = await import('../export/print-estimator');
-      printSource ??= await inspectPrintSource(input.template);
+      printSource ??= await (await import('../pdf/imposition')).inspectImpositionCompatibility(input.template);
       estimatePrint ??= preparePrintJobEstimator(input.options);
       return estimatePrint({
         ...command, ...printSource, rows: results, custody, exportedAt: localVirtualDate(new Date()),
@@ -131,11 +128,24 @@ export function createBatchProcessor() {
       const groups = planSplitPrint(context, command.grouping).map(({ filenames, ...group }) => ({
         ...group, rows: outputRows(group.rowNumbers, filenames),
       }));
-      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords, approvalSeal);
+      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords, approvalSeal, command.fourUp);
     }
     const combined = planCombinedPrint(context);
-    const bytes = await createMergedPdf(outputRows(combined.rowNumbers, combined.filenames), progress, combined.cover, watermark, qrStamp, command.imposition, approvalSeal);
-    return { bytes, mergedPdfSha256: await sha256(bytes), ...(qrRecords && { qrRecords }) };
+    const imposition = command.imposition ?? '1-up';
+    const { bytes, coverPages, pageCount, recordScales } = await createMergedPrint(outputRows(combined.rowNumbers, combined.filenames),
+      progress, combined.cover, watermark, qrStamp, imposition, approvalSeal, command.fourUp);
+    const mergedPdfSha256 = await sha256(bytes);
+    let minimum = Infinity;
+    let mappedInkOutsidePrint = false;
+    for (const [index, rowNumber] of selectedRowNumbers.entries()) {
+      const { smallestInkFontSizePt, mappedInkOutsidePrint: outside } = results[rowNumber - 1]!;
+      if (smallestInkFontSizePt !== undefined) minimum = Math.min(minimum, smallestInkFontSizePt * (recordScales?.[index] ?? 1));
+      if (outside) mappedInkOutsidePrint = true;
+    }
+    lastMergedReceipt = { sources: custody, mergedPdfSha256, readyCount: selectedRowNumbers.length, excludedCount: results.length - selectedRowNumbers.length,
+      exportScope: scope.exportScope, imposition, pageCount, coverPages, mappedInkOutsidePrint,
+      ...(Number.isFinite(minimum) && { minimumMappedFontPt: minimum }) };
+    return { bytes, mergedPdfSha256, ...(qrRecords && { qrRecords }) };
   }
 
   return (command: BatchCommand, notify: ProgressListener) => {

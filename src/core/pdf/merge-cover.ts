@@ -3,8 +3,7 @@ import { PDFDocument, PDFOperator, PDFOperatorNames as Op, type PDFPage } from '
 import { CUSTODY_PREFIX_LENGTH, type CustodySources } from '../audit/custody';
 import { localVirtualDate } from '../roster/virtual-columns';
 import { appendPositionedText } from './appearances';
-import { twoUpSheetCount } from './two-up-sheets';
-import type { Imposition } from './exports';
+import { sheetForRecord, type FourUpOptions, type Imposition } from './imposition-settings';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type PlacedLine } from './shaping';
 import { key, number } from './template';
 import type { PreflightOptions } from './index';
@@ -53,7 +52,7 @@ class CoverSheetError extends Error {}
 interface CoverRowGeometry { height: number; pageCount: number }
 interface CoverRowPosition { index: number; top: number; startPage: number; endPage: number }
 
-export function paginateCoverRows(rows: readonly CoverRowGeometry[], firstTop: number, nextTop: number, bottom: number, imposition: Imposition = '1-up') {
+export function paginateCoverRows(rows: readonly CoverRowGeometry[], firstTop: number, nextTop: number, bottom: number, imposition: Imposition = '1-up', fourUp?: FourUpOptions) {
   const pages: CoverRowPosition[][] = [[]];
   let top = firstTop;
   let precedingPages = 0;
@@ -63,9 +62,9 @@ export function paginateCoverRows(rows: readonly CoverRowGeometry[], firstTop: n
       top = nextTop;
     }
     if (top - row.height < bottom) throw new CoverSheetError('cover-sheet-layout-overflow');
-    const sheet = twoUpSheetCount(index + 1);
-    pages.at(-1)!.push({ index, top, startPage: imposition === '2-up' ? sheet : precedingPages + 1,
-      endPage: imposition === '2-up' ? sheet : precedingPages + row.pageCount });
+    const sheet = sheetForRecord(index, rows.length, imposition, fourUp) + 1;
+    pages.at(-1)!.push({ index, top, startPage: imposition === '1-up' ? precedingPages + 1 : sheet,
+      endPage: imposition === '1-up' ? precedingPages + row.pageCount : sheet });
     top -= row.height;
     precedingPages += row.pageCount;
   }
@@ -186,7 +185,7 @@ export function prepareCoverEstimateLayout(fonts: FontBytes) {
 
 function planMergeCover(
   entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition,
-  layout = createCoverTextLayout(options.preflight.fonts),
+  layout = createCoverTextLayout(options.preflight.fonts), fourUp?: FourUpOptions,
 ) {
   const { locale, templateName, exportedAt, preflight, rowNumbers, flagged, skipped, custody } = options;
   const dateLabel = typeof exportedAt === 'string' ? exportedAt : localVirtualDate(exportedAt);
@@ -222,7 +221,7 @@ function planMergeCover(
       const settings = layout(`${panel.minimum}: ${minFontSize} ${panel.points}   ·   ${panel.font}: ${panel[customFont ? 'custom' : preferredFont]}`, size, panelWidth, direction);
       return { left: MARGIN + index * (panelWidth + BILINGUAL_GUTTER), direction, title, details, summary, settings };
     });
-    const heading = (language: typeof copy, label: string, index: number) => index === 3 && imposition === '2-up' ? language.sheets : label;
+    const heading = (language: typeof copy, label: string, index: number) => index === 3 && imposition !== '1-up' ? language.sheets : label;
     const headings = copy.columns.map((label, index) => layout(heading(copy, label, index), 10, COLUMNS[index]! - 2 * CELL_PADDING, direction));
     const translatedHeadings = bilingual && labels.ar.columns.slice(1).map((label, index) =>
       layout(heading(labels.ar, label, index + 1), 9, COLUMNS[index + 1]! - 2 * CELL_PADDING, 'rtl'));
@@ -236,7 +235,7 @@ function planMergeCover(
         summary: summary.height, settings: settings.height,
       })), footer?.height,
     );
-    const pages = paginateCoverRows(rows, firstTable - tableHeader, afterTitle - tableHeader, bottom, imposition)
+    const pages = paginateCoverRows(rows, firstTable - tableHeader, afterTitle - tableHeader, bottom, imposition, fourUp)
       .map((page) => page.map(({ index, top, startPage, endPage }) => {
         const { text, height } = rows[index]!;
         const range = startPage === endPage ? String(startPage) : `${startPage}–${endPage}`;
@@ -257,18 +256,18 @@ function planMergeCover(
 
 export function countMergeCoverPages(
   entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition,
-  layout: ReturnType<typeof createCoverTextLayout>,
+  layout: ReturnType<typeof createCoverTextLayout>, fourUp?: FourUpOptions,
 ): number {
-  return planMergeCover(entries, options, imposition, layout).pages.length;
+  return planMergeCover(entries, options, imposition, layout, fourUp).pages.length;
 }
 
 export async function prependMergeCover(
-  doc: PDFDocument, entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition = '1-up',
+  doc: PDFDocument, entries: readonly CoverEntry[], options: MergeCoverOptions, imposition: Imposition = '1-up', fourUp?: FourUpOptions,
 ) {
   const {
     pages, fonts, footer, panels, headings, translatedHeadings, direction, bilingual, panelWidth, labelWidth, valueWidth,
     afterTitle, detailHeights, afterDetails, summaryHeight, firstTable, tableHeader,
-  } = planMergeCover(entries, options, imposition);
+  } = planMergeCover(entries, options, imposition, undefined, fourUp);
   try {
     doc.registerFontkit(fontkit);
     const [arabic, latin] = await Promise.all([
@@ -325,6 +324,7 @@ export async function prependMergeCover(
       }
       if (footer) addCoverText(page, footer, MARGIN, MARGIN + footer.height, WIDTH, 'center', resources);
     }
+    return pages.length;
   } catch (cause) {
     if (cause instanceof CoverSheetError) throw cause;
     throw new CoverSheetError('cover-sheet-export-failed', { cause });

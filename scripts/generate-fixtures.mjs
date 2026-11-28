@@ -576,6 +576,45 @@ const offerPreset = {
   ],
 };
 
+async function printshopBadge(rotated = false) {
+  const doc = await createPdf('A6 visitor badge');
+  const left = 14;
+  const bottom = 16;
+  const unit = rotated ? 2 : 1;
+  const nativeWidth = 105 * 72 / 25.4 / unit;
+  const nativeHeight = 148 * 72 / 25.4 / unit;
+  const page = doc.addPage([nativeWidth + 2 * left, nativeHeight + 2 * bottom]);
+  page.setCropBox(left, bottom, nativeWidth, nativeHeight);
+  if (rotated) {
+    page.setRotation(degrees(90));
+    page.node.set(PDFName.of('UserUnit'), doc.context.register(doc.context.obj(unit)));
+  }
+  doc.registerFontkit(fontkit);
+  const sans = await doc.embedFont(await readFile(new URL('../public/fonts/NotoSans-Regular.ttf', import.meta.url)));
+  const xy = (x, y) => rotated ? [left + nativeWidth - y / unit, bottom + x / unit] : [left + x, bottom + y];
+  const rectangle = (x, y, w, h) => rotated ? [...xy(x, y + h), h / unit, w / unit] : [...xy(x, y), w, h];
+  const caption = (text, x, y, size) => {
+    const [nativeX, nativeY] = xy(x, y);
+    page.drawText(text, { x: nativeX, y: nativeY, size: size / unit, rotate: degrees(rotated ? 90 : 0), font: sans, color: forest });
+  };
+  const height = (rotated ? 105 : 148) * 72 / 25.4;
+  const [x, y, width, ruleHeight] = rectangle(24, height - 37, 164, 4);
+  page.drawRectangle({ x, y, width, height: ruleHeight, color: forest });
+  caption('Synthetic Sample', 24, height - 58, 11);
+  caption('Visitor badge', 24, height - 90, 25);
+  const form = doc.getForm();
+  for (const [name, relativeY, fieldWidth, fieldHeight, fontSize] of [['Name', 151, 224, 36, 18], ['Badge ID', 203, 112, 29, 16]]) {
+    const field = form.createTextField(name);
+    field.enableRequired();
+    caption(name.toUpperCase(), 24, height - relativeY + fieldHeight + 6, 9);
+    addWidget(field, page, rectangle(24, height - relativeY, fieldWidth, fieldHeight), sans, 0.9 / unit);
+    if (rotated) field.acroField.getWidgets()[0].getAppearanceCharacteristics().setRotation(90);
+    field.setFontSize(fontSize / unit);
+  }
+  form.updateFieldAppearances(sans);
+  return doc.save({ updateFieldAppearances: false });
+}
+
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
 }
@@ -623,9 +662,21 @@ const fixtures = {
     ['مُحَمَّد سَالِم 12', '00123', 'OPS', 'Priority'],
     ['سَلْمَى يَاسِين', '00007', 'OPS', 'Standard'],
   ]),
+  'm24/visitor-badge.pdf': await printshopBadge(),
+  'm24/visitor-badge-rotated.pdf': await printshopBadge(true),
+  'm24/visitor-roster.csv': csv([
+    ['Name', 'Badge ID', 'Track'],
+    ['مُحَمَّد سَالِم', '00001', 'North'],
+    ['سَلْمَى بِنْت يَاسِين', '00002', 'South'],
+    ['يُسْرَى مُؤْمِن', '00003', 'North'],
+    ['ليلى حسن / 2026', '00004', 'North'],
+    ['بَنِي يَمَن', '00005', 'South'],
+    ['أَحْمَد مَازِن', '00006', 'South'],
+    ['قَاسِم عُمَر', '00007', 'North'],
+  ]),
 };
 
-if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23', 'm24'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {

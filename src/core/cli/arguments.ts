@@ -1,4 +1,4 @@
-import type { Imposition } from '../pdf/exports';
+import { isImposition, type Imposition } from '../pdf/imposition-settings';
 import { STUDIO_TEMPLATE_IDS, type StudioTemplateId } from '../studio/templates';
 import { DEFAULT_WATERMARK_ANGLE, DEFAULT_WATERMARK_OPACITY, validateWatermarkSettings } from '../pdf/watermark-settings';
 import type { CustodyVariant } from '../audit/custody';
@@ -6,7 +6,7 @@ import type { CustodyVariant } from '../audit/custody';
 type BatchFiles = { template: string; roster: string; outDir: string; preset?: string; sheet?: string; groupBy?: string; date?: string };
 export type BatchCommandLine =
   | { mode: 'preflight'; files: BatchFiles }
-  | { mode: 'fill'; files: BatchFiles; strict: boolean; imposition?: Imposition; cover: boolean; watermark?: string; qr: boolean };
+  | { mode: 'fill'; files: BatchFiles; strict: boolean; imposition?: Imposition; cover: boolean; watermark?: string; qr: boolean; printCertificate?: true };
 export type CliCommand =
   | { mode: 'help' }
   | BatchCommandLine
@@ -19,7 +19,7 @@ export type CliCommand =
 export const CLI_USAGE = [
   'npm run arabiform-cli -- --mode preflight|fill --template <pdf> --roster <csv|xlsx> --out-dir <dir>',
   '  [--preset <json>] [--sheet <name>] [--group-by <header>] [--date YYYY-MM-DD]',
-  '  fill only: [--strict] [--imposition 1-up|2-up] [--cover] [--watermark <text>] [--qr]',
+  '  fill only: [--strict] [--imposition 1-up|2-up|4-up] [--cover] [--watermark <text>] [--qr] [--print-certificate]',
   '  --sheet-base64url and --group-by-base64url accept unpadded UTF-8 base64url instead of the literal name.',
   'npm run arabiform-cli -- --mode packet --template <pdf> --template <pdf> [--template <pdf> ...] --roster <csv|xlsx> --out-dir <dir>',
   '  [--mappings <json>] [--sheet <name>] [--group-by <header>] [--cover]',
@@ -54,15 +54,15 @@ export function isSafeLocalPath(path: string): boolean {
 const batchFlags = ['template', 'roster', 'out-dir', 'preset', 'sheet', 'sheet-base64url', 'group-by', 'group-by-base64url', 'date'];
 const flagsByMode = {
   preflight: batchFlags,
-  fill: [...batchFlags, 'strict', 'imposition', 'cover', 'watermark', 'qr'],
+  fill: [...batchFlags, 'strict', 'imposition', 'cover', 'watermark', 'qr', 'print-certificate'],
   packet: ['template', 'roster', 'out-dir', 'mappings', 'sheet', 'sheet-base64url', 'group-by', 'group-by-base64url', 'cover'],
   extract: ['in-dir', 'out-dir'],
   verify: ['manifest', 'qr-payload', 'variant'],
   studio: ['template', 'out-dir'],
   'diff-template': ['old', 'new', 'preset', 'rename-map', 'out-dir'],
 };
-const valueFlags = new Set(['mode', ...Object.values(flagsByMode).flat()].filter((flag) => !['strict', 'cover', 'qr'].includes(flag)));
-const boolFlags = new Set(['strict', 'cover', 'qr']);
+const boolFlags = new Set(['strict', 'cover', 'qr', 'print-certificate']);
+const valueFlags = new Set(['mode', ...Object.values(flagsByMode).flat()].filter((flag) => !boolFlags.has(flag)));
 
 export function cliWatermark(text: string) {
   return validateWatermarkSettings({ kind: 'custom', text, opacity: DEFAULT_WATERMARK_OPACITY, angle: DEFAULT_WATERMARK_ANGLE });
@@ -192,8 +192,9 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
   const files = { template: pathValue(template!, '--template', /\.pdf$/i), roster, outDir, preset: optionalPath('preset', /\.json$/i), sheet, groupBy, date };
   if (mode === 'preflight') return { mode, files };
   const imposition = values.get('imposition');
-  if (imposition !== undefined && imposition !== '1-up' && imposition !== '2-up') throw new CliUsageError('Expected 1-up or 2-up for --imposition.');
+  if (imposition !== undefined && !isImposition(imposition)) throw new CliUsageError('Expected 1-up, 2-up, or 4-up for --imposition.');
   const watermark = values.get('watermark');
   if (watermark !== undefined && !cliWatermark(watermark)) throw new CliUsageError('Invalid --watermark text. Use 1 to 32 printable characters.');
-  return { mode, files, strict: values.has('strict'), imposition, cover: values.has('cover'), watermark, qr: values.has('qr') };
+  return { mode, files, strict: values.has('strict'), imposition, cover: values.has('cover'), watermark, qr: values.has('qr'),
+    ...(values.has('print-certificate') && { printCertificate: true }) };
 }

@@ -1,6 +1,6 @@
 import { isAlignOverride, type AlignOverride } from '../pdf/alignment';
 import { validateApprovalSealSettings, type ApprovalSealSettings } from '../pdf/approval-seal-settings';
-import type { Imposition } from '../pdf/exports';
+import { isImposition, validateFourUpOptions, type FourUpOptions, type Imposition } from '../pdf/imposition-settings';
 import type { FieldTypographyMap } from '../pdf/field-typography';
 import { isCoverLanguage, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../pdf/qr-settings';
 import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
@@ -35,12 +35,13 @@ export type MappingPresetV10 = Omit<MappingPresetV9, 'version'> & {
 export type MappingPresetV11 = Omit<MappingPresetV10, 'version'> & {
   version: 11; conditionalRules: ConditionalFieldRule[];
 };
+export type MappingPresetV12 = Omit<MappingPresetV11, 'version'> & FourUpOptions & { version: 12 };
 
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10 | MappingPresetV11;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10 | MappingPresetV11 | MappingPresetV12;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -96,8 +97,8 @@ function validateFieldTypography(value: unknown, mapping: PresetSettings['mappin
 
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
   if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5
-    && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10 && data.version !== 11)
-    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version >= 10 ? 1 : 0)
+    && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10 && data.version !== 11 && data.version !== 12)
+    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version >= 10 ? 1 : 0) + (data.version === 12 ? 1 : 0)
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
@@ -143,7 +144,7 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   const settingsWithStamps = { ...printSettings, watermark, virtualMappings, qrStamp, coverLanguage: data.coverLanguage };
   if (data.version === 7) return { version: 7, ...settingsWithStamps };
   const { imposition } = data;
-  if (!Object.hasOwn(data, 'imposition') || (imposition !== '1-up' && imposition !== '2-up')) return undefined;
+  if (!Object.hasOwn(data, 'imposition') || !isImposition(imposition) || data.version < 12 && imposition === '4-up') return undefined;
   if (data.version === 8) return { version: 8, ...settingsWithStamps, imposition };
   const { groupByColumn } = data;
   if (!Object.hasOwn(data, 'groupByColumn') || (groupByColumn !== null && (typeof groupByColumn !== 'string' || !groupByColumn.trim()))) return undefined;
@@ -156,5 +157,7 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (data.version === 10) return { version: 10, ...typographySettings };
   const conditionalRules = Object.hasOwn(data, 'conditionalRules') && readConditionalRules(data.conditionalRules);
   if (!conditionalRules) return undefined;
-  return { version: 11, ...typographySettings, conditionalRules };
+  if (data.version === 11) return { version: 11, ...typographySettings, conditionalRules };
+  const fourUp = Object.hasOwn(data, 'fourUpOrder') && Object.hasOwn(data, 'centerCutGuides') && validateFourUpOptions(data);
+  return fourUp ? { version: 12, ...typographySettings, conditionalRules, ...fourUp } : undefined;
 }

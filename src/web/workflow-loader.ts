@@ -2,6 +2,7 @@ import { decodeBase64 } from './resources';
 import { rosterViews } from './roster-source';
 import type { ConditionalFieldRule } from '../core/rules/conditional-fields';
 import type { SampleWorkflow } from './useWorkbench';
+import { inspectFillTemplate } from './fill-template-source';
 
 // The sample-* chunks contain individual fixture bytes; this module only selects one of them.
 const samples = {
@@ -20,13 +21,13 @@ const vipRoster = 'Name,ID,Consent,Role,Clinic\nVIP Guest,00123,false,VIP,North 
 export async function loadSampleWorkflow(workflow: SampleWorkflow | 'conditional', openedAt: Date, locale: 'en' | 'ar') {
   const conditional = workflow === 'conditional';
   const sample = samples[conditional ? 'clinic' : workflow];
-  const [assets, engine, parser, virtual] = await Promise.all([
-    sample.load(), import('../core/pdf'), import('../core/roster'), import('../core/roster/virtual-columns'),
+  const [assets, parser, virtual] = await Promise.all([
+    sample.load(), import('../core/roster'), import('../core/roster/virtual-columns'),
   ]);
   const bytes = decodeBase64(assets.template);
   const rosterBytes = conditional ? new TextEncoder().encode(vipRoster) : decodeBase64(assets.roster);
   const rosterName = conditional ? 'synthetic-vip-standard.csv' : sample.roster;
-  const [info, data] = await Promise.all([engine.inspectTemplate(bytes), parser.readRoster(rosterBytes, rosterName)]);
+  const [template, data] = await Promise.all([inspectFillTemplate(sample.pdf, bytes), parser.readRoster(rosterBytes, rosterName)]);
   const notice = conditional
     ? locale === 'ar' ? 'بيانات اصطناعية من صفّين. تعرض قاعدة VIP عبارة ثنائية اللغة في حقل الاسم وتحدّد مربّعي الموافقة.'
       : 'Two synthetic rows. The VIP rules set a bilingual banner in Name and check both Consent boxes.'
@@ -36,7 +37,7 @@ export async function loadSampleWorkflow(workflow: SampleWorkflow | 'conditional
     : locale === 'ar' ? 'ملفات بأسماء وهمية. راجع الصف المُعلَّم لتجربة هذا المسار.'
       : 'Fictional files. Review the flagged row to try this workflow.';
   return {
-    template: { name: sample.pdf, bytes, info, overlays: engine.getWidgetOverlays(info) },
+    template,
     roster: { name: rosterName, bytes: rosterBytes, sheet: data.sheets[0], engine: parser, virtual, views: rosterViews, localDate: virtual.localVirtualDate(openedAt) },
     rules: conditional ? vipRules : undefined,
     notice,

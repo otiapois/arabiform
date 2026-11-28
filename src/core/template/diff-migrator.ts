@@ -270,7 +270,7 @@ export function migrateTemplatePreset(diff: TemplateDiff, input: unknown, rename
   const typography = 'fieldTypography' in preset ? Object.entries(preset.fieldTypography) : [];
   const textOnly = new Set([...virtualMappings, ...alignment, ...typography].map(([field]) => field));
   const active = new Set([...activeMappings, ...virtualMappings].map(([field]) => field));
-  const conditionalRules = preset.version === 11 ? preset.conditionalRules : [];
+  const conditionalRules = 'conditionalRules' in preset ? preset.conditionalRules : [];
   const rulesByField = new Map<string, IndexedRule[]>();
   for (const [index, rule] of conditionalRules.entries()) {
     const ruleIndex = index + 1;
@@ -334,7 +334,7 @@ export function migrateTemplatePreset(diff: TemplateDiff, input: unknown, rename
     ...('virtualMappings' in preset && { virtualMappings: Object.fromEntries(rewrite(virtualMappings)) }),
     ...('alignOverrides' in preset && { alignOverrides: Object.fromEntries(rewrite(alignment)) }),
     ...('fieldTypography' in preset && { fieldTypography: Object.fromEntries(rewrite(typography)) }),
-    ...(preset.version === 11 && { conditionalRules: conditionalRules.map((rule) => ({ ...rule, field: assigned.get(rule.field)! })) }),
+    ...('conditionalRules' in preset && { conditionalRules: conditionalRules.map((rule) => ({ ...rule, field: assigned.get(rule.field)! })) }),
   });
   if (!migrated) {
     result.diagnostics.push({ code: 'invalid-preset' });

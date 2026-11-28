@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { planGroupedOutput } from '../../src/core/export/grouping';
-import { buildDownload } from '../../src/web/batch-exports';
+import { buildDownload, type MergedPrintCache } from '../../src/web/batch-exports';
 import type { OutputSettings } from '../../src/web/useBatch';
 
 const values: Record<string, string>[] = [{ ID: '' }, { ID: '00007', PADDED_ROW_001: 'physical' }, { ID: '00123' }];
@@ -22,6 +22,7 @@ function worker() {
     zip: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), entries: [] }),
     merged: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), mergedPdfSha256: 'digest' }),
     split: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), groupByColumn: 'Clinic', groups: [] }),
+    certificate: vi.fn().mockResolvedValue(new Uint8Array()),
   };
 }
 
@@ -105,5 +106,52 @@ describe('preparing browser-local print downloads', () => {
 
     await expect(download).resolves.toBeUndefined();
     expect(client.merged).not.toHaveBeenCalled();
+  });
+
+  it.each([['certificate', 'merged'], ['merged', 'certificate']] as const)(
+    'uses the same combined bytes for %s then %s and forwards four-up options to merged and split', async (first, second) => {
+      const client = worker();
+      const mergedBytes = new Uint8Array([1, 2, 3]);
+      const certificateBytes = new Uint8Array([4, 5, 6]);
+      const proof = { bytes: mergedBytes, mergedPdfSha256: 'digest' };
+      client.merged.mockResolvedValue(proof);
+      client.certificate.mockResolvedValue(certificateBytes);
+      const fourUp = { fourUpOrder: 'cut-and-stack', centerCutGuides: true } as const;
+      const grouping = planGroupedOutput(source.rows, 'ID', '{{ID}}.pdf');
+      const settings = { ...output, qrStamp: undefined, grouping, imposition: '4-up', fourUp } as const;
+      const scope = { exportScope: 'selected-subset' as const, selectedRowNumbers: [2, 3] };
+      const cache: MergedPrintCache = {};
+      const names = { templateName: 'template.pdf', rosterName: 'people.csv' };
+      const downloads = new Map<string, Awaited<ReturnType<typeof buildDownload>>>();
+      for (const kind of [first, second]) {
+        downloads.set(kind, await buildDownload(kind, client, onProgress, source, [], settings, scope, isCurrent, cache, names));
+      }
+      await buildDownload('split', client, onProgress, source, [], settings, scope, isCurrent, cache, names);
+      const printArgs = [onProgress, { ...output.cover, filenames: ['1.pdf', '2.pdf', '3.pdf'] }, undefined, [2, 3], undefined, '4-up', undefined, fourUp];
+      expect(client.merged).toHaveBeenCalledExactlyOnceWith(...printArgs);
+      expect(client.split).toHaveBeenCalledExactlyOnceWith(grouping, ...printArgs);
+      expect(client.certificate).toHaveBeenCalledExactlyOnceWith(proof, { ...names, outputName: 'arabiform-merged.pdf' });
+      expect(downloads.get('merged')).toMatchObject({ data: mergedBytes, filename: 'arabiform-merged.pdf', digests: { mergedPdfSha256: 'digest' } });
+      expect(downloads.get('certificate')).toEqual({ data: certificateBytes, filename: 'print-shop-certificate.pdf', mime: 'application/pdf' });
+    },
+  );
+
+  it('keeps an empty selection and a canceled job from requesting a certificate', async () => {
+    const client = worker();
+    const cache: MergedPrintCache = {};
+    const names = { templateName: 'template.pdf', rosterName: 'people.csv' };
+    const settings = { ...output, qrStamp: undefined };
+    const scope = { exportScope: 'selected-subset' as const, selectedRowNumbers: [] };
+    await expect(buildDownload('certificate', client, onProgress, source, [], settings, scope, isCurrent, cache, names)).resolves.toBeUndefined();
+    expect(client.merged).not.toHaveBeenCalled();
+    let current = true;
+    client.merged.mockImplementationOnce(async () => {
+      current = false;
+      return { bytes: new Uint8Array([1]), mergedPdfSha256: 'digest' };
+    });
+    await expect(buildDownload('certificate', client, onProgress, source, [], settings, { ...scope, selectedRowNumbers: [2] }, () => current,
+      cache, names)).resolves.toBeUndefined();
+    expect(client.certificate).not.toHaveBeenCalled();
+    expect(cache.merged).toBeUndefined();
   });
 });
