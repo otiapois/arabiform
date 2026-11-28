@@ -33,3 +33,7 @@ Microsoft Edge 124.0.2478.80 使用一个 Playwright worker 串行跑完桌面 1
 32 份合成夹具全部逐字节复现。默认域名、严格域名 `https://arabiform-qa.test` 和切回默认后的三次真实构建及发布校验都通过。五个静态路由最大入口 JS 为 271,301 字节，gzip 后为 84,336 字节，低于 274,000 / 85,800 字节限制。严格模式拒绝默认占位域名。发布检查覆盖 sitemap、隐私响应头、第三方许可和 CI 文件。夹具属性文件 Git 对象为 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[夹具](../../test-results/m24-evidence/qa-main/fixtures.log) · [严格域名](../../test-results/m24-evidence/qa-main/verify-strict.log) · [占位域名拒绝](../../test-results/m24-evidence/qa-main/verify-strict-negative.log) · [恢复默认](../../test-results/m24-evidence/qa-main/verify-restored.log)
 
 沙箱中的 tsx 启动时报 `uv_os_get_passwd ENOMEM`。使用相同冻结 SHA、输入及 D 盘临时位置，在普通 Windows 环境复跑 CLI 和像素命令。首次完整单测把正斜线临时路径的盘根判成了 `D:/`，转而访问无写权限的默认缓存。改用 Windows 反斜线路径后，原三项发布测试及完整单测均通过。[像素首次退出](../../test-results/m24-evidence/qa-main/pixels-sandbox.log) · [像素复跑](../../test-results/m24-evidence/qa-main/pixels.log) · [三项路径复验](../../test-results/m24-evidence/qa-main/unit-tmp-path-corrected.log) · [完整单测](../../test-results/m24-evidence/qa-main/unit.log)
+
+## 主线收尾
+
+已关闭两处本机验收预览端口，移除 D 盘的四个临时工作树及其专用临时目录。Git 注销文档工作树后留下一层空目录，核对该路径为空且已注销后移除。仅剩干净的 `main` 工作树。夹具属性文件的 Git 对象仍为 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[工作树清理记录](../../test-results/m24-evidence/lead-worktree-cleanup.json)
