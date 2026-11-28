@@ -30,6 +30,13 @@
   - Deduplicate with a compatibility-normalized, case-insensitive key (`name.pdf`, `name-2.pdf`). ZIP independently rejects unsafe components, normalized duplicates, and names above 255 UTF-8 bytes.
   - Use the full batch filename plan in the queue, ZIP, audit, and optional merged-PDF cover index. An exported row keeps the filename and collision suffix from that plan for any subset.
 
+## Conditional Field Rules
+
+- A version 11 preset stores the ordered `conditionalRules` array in addition to the v10 settings. Each rule has a canonical PDF `field`, an exact roster `column`, an `operator`, an optional string `operand`, and an `action`. Targets are mapped editable fields, including text fields mapped to virtual columns. The condition and text action tokens read exact physical headers in the active CSV or worksheet.
+- `equals`, `not-equals`, and `contains` compare literal Unicode strings with case and whitespace preserved. `is-blank` and `is-not-blank` test the trimmed cell and omit `operand`. `gte-number` and `lte-number` compare trimmed signed ASCII decimals exactly. Values such as `0007`, `-0.50`, and `+.5` are valid. Only cells in that decimal syntax can match numeric conditions. All comparisons except the blank tests require `operand`.
+- The first matching rule for each field supplies its value. With no match, use the ordinary mapping. With `set-text`, the action's string `value` can contain literal Unicode and `{{Column}}` tokens. Replace those tokens in one pass. Conditions and tokens use the effective row after edits or cleanup and always read the roster cells. Row data, filenames, group keys, and QR payloads retain their own source values.
+- `clear-field` supplies empty text or unchecks a checkbox. `set-checkbox` supplies a Boolean `checked`. `set-choice` supplies a `value` resolved to one allowed dropdown or radio choice by its label or export value. Invalid rule references or incompatible actions flag the field. Choice resolution follows the template’s normal matching contract. [PDF validation and audit](pdf-engine.md#responsibilities)
+
 ## Grouped Output Paths
 
 - `src/core/export/grouping.ts` plans paths from an exact physical roster header and the effective cells after inline edits or cleanup. A null grouping column uses the ordinary flat ZIP plan. Blank and whitespace-only values share a reserved `_Ungrouped` folder with a null `groupValue`. Distinct nonblank values retain their exact text and form separate groups in first roster order.
