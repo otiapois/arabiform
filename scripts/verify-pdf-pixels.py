@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
 from zipfile import ZipFile
 
 import fitz
@@ -884,4 +885,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # Keep the report UTF-8 even when console output uses a legacy Windows encoding.
+    sys.stdout.reconfigure(errors="backslashreplace")
     main()
