@@ -105,7 +105,7 @@ export async function auditPage(page: Page, phase: 'idle' | 'dialog' | 'workbenc
     for (const [index, el] of controls.entries()) {
       if (!visible(el) || el.matches(':disabled,input[type=hidden]')) continue;
       const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
-      const owner = el.closest<HTMLElement>('.file-action,.preset-picker') ?? el;
+      const owner = el.closest<HTMLElement>('.file-action,.preset-picker,.batch-diff-dropzone') ?? el;
       const style = getComputedStyle(owner), bg = paint(owner), outside = paint(owner.parentElement), id = identify(el);
       if (field || el instanceof HTMLSelectElement) {
         if (!el.matches('[type="file"],[type="checkbox"],[type="radio"],[type="range"]')) {
