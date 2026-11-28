@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
+import Papa from 'papaparse';
 import { decodePDFRawStream, PDFArray, PDFDocument, PDFHexString, PDFName, PDFRawStream } from 'pdf-lib';
 
 const entry = fileURLToPath(new URL('../../scripts/arabiform-cli.ts', import.meta.url));
@@ -183,6 +184,48 @@ try {
   assert.deepEqual(packetBlocked.issues.map(({ templateIndex, templateName, code }) => [templateIndex, templateName, code]), [[3, 'xfa.pdf', 'xfa-unsupported']]);
   await assert.rejects(lstat(packetBlockedOut), { code: 'ENOENT' });
 
+  const m22Roster = join(directory, 'Synthetic VIP Roster.csv');
+  const m22Preset = join(directory, 'M22 Preset.json');
+  const m22Preflight = join(directory, 'M22 Diagnostics');
+  const m22Filled = join(directory, 'M22 Filled');
+  const m22Held = join(directory, 'M22 Held');
+  await writeFile(m22Roster, 'Name,ID,Consent,Role\r\nOriginal,00123,no,VIP\r\nOrdinary,00007,no,Standard\r\n');
+  const conditionalRules = [
+    { field: 'Name', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-text', value: 'مُعْتَمَد / VIP {{ID}}' } },
+    { field: 'Consent', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-checkbox', checked: true } },
+  ];
+  const conditionalPreset = { ...preset, version: 11, mapping: { Name: 'Name', Consent: 'Consent' },
+    qrStamp: { placement: 'none' }, fieldTypography: { Name: { numeralPolicy: 'eastern-arabic' } }, approvalSeal: null, conditionalRules };
+  await writeFile(m22Preset, JSON.stringify(conditionalPreset));
+  const m22Inputs = ['--template', clinic, '--roster', m22Roster, '--preset', m22Preset];
+  const applied = [[{ field: 'Name', ruleIndex: 1 }, { field: 'Consent', ruleIndex: 2 }], []];
+  const checked = run(0, '--mode', 'preflight', ...m22Inputs, '--out-dir', m22Preflight);
+  assert.deepEqual(checked.rows.map(({ ruleApplied }) => ruleApplied), applied);
+  const savedJson = await readJson(join(m22Preflight, 'arabiform-preflight.json'));
+  assert.deepEqual(savedJson.rows.map(({ ruleApplied }) => ruleApplied), applied);
+  const csv = Papa.parse(await readFile(join(m22Preflight, 'arabiform-preflight.csv'), 'utf8'), { header: true, skipEmptyLines: true });
+  assert.deepEqual(csv.data.map(({ ruleApplied }) => JSON.parse(ruleApplied)), applied);
+  const filled = run(0, '--mode', 'fill', ...m22Inputs, '--strict', '--out-dir', m22Filled);
+  assert.deepEqual(filled.rows.map(({ ruleApplied }) => ruleApplied), applied);
+  const actual = unzipSync(await readFile(join(m22Filled, 'arabiform-editable.zip')));
+  assert.deepEqual(Object.keys(actual), ['00123.pdf', '00007.pdf']);
+  for (const [index, bytes] of Object.values(actual).entries()) {
+    const form = (await PDFDocument.load(bytes)).getForm();
+    assert.equal(form.getTextField('Name').getText(), index === 0 ? 'مُعْتَمَد / VIP ٠٠١٢٣' : 'Ordinary');
+    const checkbox = form.getCheckBox('Consent');
+    assert.equal(checkbox.acroField.dict.get(PDFName.of('V')).toString(), index === 0 ? '/Yes' : '/Off');
+    assert.deepEqual(checkbox.acroField.getWidgets().map((widget) => widget.getAppearanceState()?.toString()), index === 0 ? ['/Yes', '/Yes'] : ['/Off', '/Off']);
+    assert.equal(form.getTextField('Sentinel').getText(), 'KEEP 00109');
+  }
+  await writeFile(m22Preset, JSON.stringify({ ...conditionalPreset, conditionalRules: [
+    { ...conditionalRules[0], action: { type: 'set-text', value: '{{id}}' } }, conditionalRules[1],
+  ] }));
+  const invalid = run(2, '--mode', 'fill', ...m22Inputs, '--strict', '--out-dir', m22Held);
+  assert.deepEqual(invalid.rows.map(({ diagnostics }) => diagnostics), Array(2).fill([
+    { field: 'Name', code: 'invalid-conditional-rule', pageNumbers: [1], ruleIndex: 1 },
+  ]));
+  await assert.rejects(lstat(m22Held), { code: 'ENOENT' });
+
   const reserved = join(directory, 'Reserved');
   await mkdir(reserved);
   await writeFile(join(reserved, 'arabiform-preflight.json'), 'existing');
@@ -197,7 +240,7 @@ try {
   assert.match(run(1, '--mode', 'preflight', ...inputs, '--out-dir', join(link, 'nested')).message, /link, junction/);
   assert.deepEqual(await readdir(target), []);
   assert.equal(run(1, '--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir', 'safe/../escape').status, 'usage-error');
-  console.log('Real subprocess checks passed for all six modes, exact custody, M20 typography and seal, M21 packet exit 0/2, held recipient exclusion, strict no-output refusal, and output-path guards.');
+  console.log('Real subprocess checks passed for all six modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, provenance audits, strict no-output refusal, and output-path guards.');
 } finally {
   const actual = await realpath(directory);
   assert.equal(dirname(actual), tmp);

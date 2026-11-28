@@ -33,6 +33,7 @@ export interface AuditRow {
   diagnostics: FieldDiagnostic[];
   fontSizes: Record<string, number[]>;
   zipPath?: string;
+  ruleApplied?: RowPreflightResult['ruleApplied'];
 }
 
 type ExportProgress = (completed: number, total: number) => void;
@@ -363,15 +364,19 @@ export function createAudit(rows: readonly AuditRow[], scope?: ExportScope): { j
     if (!included.length) throw new Error('empty-export');
   }
   const grouped = included.some(({ zipPath }) => zipPath !== undefined);
-  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath }) => ({
+  const hasRules = included.some(({ ruleApplied }) => ruleApplied !== undefined);
+  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath, ruleApplied }) => ({
     rowNumber, filename, status,
-    diagnostics: diagnostics.map(({ pageNumbers, ...issue }) => issue),
+    diagnostics: diagnostics.map(({ pageNumbers, ...issue }) => issue.ruleIndex === undefined ? issue : { ...issue, pageNumbers }),
     fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),
     ...(zipPath !== undefined && { zipPath }),
+    ...(hasRules && { ruleApplied: ruleApplied ?? [] }),
   }));
   const fields = ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'];
   if (grouped) fields.push('zipPath');
-  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath }) => [rowNumber,
-    ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes), ...(grouped ? [zipPath ?? ''] : [])].map(escapeSpreadsheetCell)]);
+  if (hasRules) fields.push('ruleApplied');
+  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath, ruleApplied }) => [rowNumber,
+    ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes), ...(grouped ? [zipPath ?? ''] : []),
+      ...(hasRules ? [JSON.stringify(ruleApplied)] : [])].map(escapeSpreadsheetCell)]);
   return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields, data })}\r\n` };
 }

@@ -43,6 +43,56 @@ npm run arabiform-cli -- --mode extract --in-dir ./arabiform-demo/editable --out
 npm run arabiform-cli -- --mode verify --manifest ./arabiform-demo/filled/custody-manifest.json --variant merged ./arabiform-demo/filled/arabiform-merged.pdf
 ```
 
+## Conditional rule walkthrough / تجربة القواعد الشرطية
+
+Save this fictional roster as `./arabiform-rules.csv` in UTF-8. Use the repository’s synthetic clinic template, which has the `Name`, `ID`, and `Consent` fields.
+
+احفظ هذا الجدول الخيالي باسم `./arabiform-rules.csv` بترميز UTF-8. استخدم قالب العيادة الاصطناعي المرفق بالمشروع، وفيه الحقول `Name` و`ID` و`Consent`.
+
+```csv
+Name,ID,Consent,Role
+ليلى حسن,00001,false,VIP
+أحمد سالم,00002,false,Standard
+```
+
+Save the version 11 preset as `./arabiform-rules.json` in UTF-8.
+
+احفظ إعدادات الربط بالإصدار 11 باسم `./arabiform-rules.json` بترميز UTF-8.
+
+```json
+{
+  "version": 11,
+  "mapping": { "Name": "Name", "ID": "ID", "Consent": "Consent" },
+  "filenamePattern": "{{ID}}",
+  "minFontSize": 8,
+  "font": "auto",
+  "flattenZip": false,
+  "includeCoverSheet": false,
+  "alignOverrides": {},
+  "watermark": { "kind": "none" },
+  "virtualMappings": {},
+  "qrStamp": { "placement": "none" },
+  "coverLanguage": "auto",
+  "imposition": "1-up",
+  "groupByColumn": null,
+  "fieldTypography": {},
+  "approvalSeal": null,
+  "conditionalRules": [
+    { "field": "Name", "column": "Role", "operator": "equals", "operand": "VIP", "action": { "type": "set-text", "value": "كبار الشخصيات / {{Role}}" } },
+    { "field": "Consent", "column": "Role", "operator": "equals", "operand": "VIP", "action": { "type": "set-checkbox", "checked": true } }
+  ]
+}
+```
+
+Use fresh output directories. The VIP PDF stores `كبار الشخصيات / VIP` in `Name` and checks both widgets for `Consent`. The Standard PDF keeps `أحمد سالم` in `Name` and its `Consent` widgets unchecked. The preflight CSV and JSON record `[{"field":"Name","ruleIndex":1},{"field":"Consent","ruleIndex":2}]` for the first row and `[]` for the second. The rule index is its 1-based position in `conditionalRules`.
+
+استخدم مجلدات إخراج جديدة. يحفظ ملف صفّ `VIP` النص `كبار الشخصيات / VIP` في حقل `Name` ويحدّد موضعَي خانة `Consent`. يحتفظ ملف صفّ `Standard` بالاسم `أحمد سالم` وتبقى خانتا الموافقة فيه خاليتين. يسجّل تقرير الفحص بصيغتَي CSV وJSON القاعدتين 1 و2 للصفّ الأول وقائمة فارغة `[]` للصفّ الثاني. يبدأ ترقيم مواضع القواعد في قائمة `conditionalRules` من 1.
+
+```sh
+npm run arabiform-cli -- --mode preflight --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./arabiform-rules.csv --preset ./arabiform-rules.json --out-dir ./arabiform-demo/rules-check
+npm run arabiform-cli -- --mode fill --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./arabiform-rules.csv --preset ./arabiform-rules.json --strict --out-dir ./arabiform-demo/rules-filled
+```
+
 ## Packet walkthrough / تجربة تجميع الحزم
 
 Save the following JSON as `./packet-mappings.json` in UTF-8 without a byte order mark. Each object maps PDF field names to exact headers in the shared roster. The array follows the order of the repeated `--template` arguments. Use `null` in a slot to auto-map the text and checkbox fields of that template. Omit `--mappings` to auto-map every template. Each template needs at least one mapping. Fields left out of an explicit mapping keep their original visible appearances in print.
@@ -95,7 +145,7 @@ The ZIP contains one flattened PDF per ready recipient. The packet manifest is a
 | `--out-dir <dir>` | Local output directory for `studio`, `preflight`, `fill`, `packet` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`preflight` و`fill` و`packet` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
 | `--template <pdf>` / `--template <id>` | Source template for `preflight` or `fill`, or a built-in template ID for `studio`. For `packet`, repeat `--template <pdf>` two to four times in document order. | مسار القالب المصدر في `preflight` أو `fill`، أو معرّف قالب مضمّن في `studio`. في `packet`، كرّر `--template <pdf>` من مرتين إلى أربع مرات بحسب ترتيب المستندات. |
 | `--roster <csv-or-xlsx>` | Source roster for `preflight`, `fill`, or `packet`. All templates in `packet` use the same roster. | جدول البيانات المصدر في `preflight` أو `fill` أو `packet` بصيغة CSV أو Excel. تستخدم جميع قوالب `packet` الجدول نفسه. |
-| `--preset <json>` | Reuse a workbench mapping preset (versions 1–10) in `preflight` or `fill`. | يعيد استخدام ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 10) في `preflight` أو `fill`. |
+| `--preset <json>` | Reuse a workbench mapping preset (versions 1–11) in `preflight` or `fill`. | يعيد استخدام ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 11) في `preflight` أو `fill`. |
 | `--mappings <json>` | Optional ordered JSON array of field-to-header maps or `null` for `packet`. Supply one entry per template. | قائمة JSON اختيارية تحتوي على تعريف ربط الحقول بعناوين الأعمدة، أو على `null`، لكل قالب في `packet`. اتّبع ترتيب القوالب. |
 | `--sheet <name>` | Exact visible Excel worksheet name for `preflight`, `fill`, or `packet`. By default, load the first visible worksheet. | اسم ورقة العمل الظاهرة في `preflight` أو `fill` أو `packet` كما كُتب في ملف Excel. تُحمَّل أول ورقة ظاهرة افتراضيًا. |
 | `--sheet-base64url <name>` | Encoded equivalent of `--sheet` for shells that have trouble passing a worksheet name. Use canonical UTF-8 base64url with no padding. Supply just one of the two forms. | بديل مرمّز لـ `--sheet` عندما يصعب تمرير اسم الورقة عبر واجهة الأوامر. استخدم UTF-8 بترميز base64url القياسي دون حشو، واختر إحدى الصيغتين. |
@@ -129,6 +179,10 @@ In Fill PDFs, save a mapping preset after checking the source template and works
 Version 10 reuses the text fields’ numeral, line height, and inner padding settings and the optional bilingual approval seal. With `--preset`, both `preflight` and `fill` use the same field fit checks as the workbench. The seal’s placement is checked when `fill` prepares the print output. It appears on flattened ZIP members and merged print pages, including 2-up when selected. If the seal collides with a visible field or QR stamp, the page is too small, or the text cannot be rendered, `fill` exits with code `2` before writing the batch artifacts. [Print seal contract](pdf-engine.md#responsibilities)
 
 يعيد الإصدار 10 استخدام إعدادات الأرقام وارتفاع السطر والحاشية الداخلية للحقول النصية، وختم الاعتماد الثنائي اللغة عند تفعيله. مع `--preset` يستخدم `preflight` و`fill` فحوص ملاءمة النص نفسها المستخدمة في واجهة العمل. يُفحص موضع الختم عندما يجهّز `fill` مخرجات الطباعة. يظهر الختم في ملفات ZIP المسطّحة وصفحات PDF المدمجة، بما فيها تخطيط سجلّين لكل ورقة عند اختياره. إذا تداخل الختم مع حقل مرئي أو رمز QR، أو ضاقت مساحة الصفحة، أو تعذّر رسم النص، يتوقّف `fill` برمز الخروج `2` قبل كتابة ملفات الدفعة. [قواعد ختم الطباعة](pdf-engine.md#responsibilities)
+
+Version 11 extends those settings with ordered conditional rules. Both modes apply the first matching rule per mapped field to the supplied roster before numeral formatting and PDF fit checks. A bad rule reference or choice flags the row with a field diagnostic. Preflight CSV stores `ruleApplied` as JSON inside a CSV cell, and the JSON audit and CLI row results store it as an array. Presets from versions 1–10 continue to use their existing behavior. [Rule and column semantics](roster-mapper.md#conditional-field-rules)
+
+يضيف الإصدار 11 قائمة مرتّبة من القواعد الشرطية إلى هذه الإعدادات. في كلا الوضعين، تُطبّق أول قاعدة مطابقة لكل حقل مرتبط بالجدول المقدّم قبل تنسيق الأرقام وفحص اتساع حقل PDF للنص. يظهر تنبيه باسم الحقل في الصف إذا احتوت القاعدة على مرجع غير صالح أو خيار غير متاح. يخزّن تقرير CSV قائمة `ruleApplied` بصيغة JSON داخل خلية، وتظهر كمصفوفة في تقرير JSON ونتائج الصفوف في الطرفية. تعمل الإعدادات من الإصدار 1 إلى 10 بالطريقة المعتادة. [تفاصيل القواعد والأعمدة](roster-mapper.md#conditional-field-rules)
 
 An explicit flag overrides the corresponding preset value. `--sheet` and `--date` apply to this run. `--cover` and `--qr` enable their settings. To turn a saved option off, update the preset in the workbench. Each export includes both ZIP variants regardless of the preset's ZIP preference. Selected rows, inline edits, local custom fonts, cover source fingerprints and saved batch drafts stay outside the mapping preset.
 

@@ -46,6 +46,7 @@ export async function buildDownload(
       status: result.status,
       diagnostics: result.diagnostics,
       fontSizes: result.fontSizes,
+      ...(result.ruleApplied && { ruleApplied: result.ruleApplied }),
     })), scope);
     return { data: audit[kind], filename: `arabiform-preflight.${kind}`, mime: kind === 'csv' ? 'text/csv;charset=utf-8' : 'application/json' };
   }

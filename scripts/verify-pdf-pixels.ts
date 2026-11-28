@@ -22,6 +22,8 @@ import { createCustodyManifest, MERGED_CUSTODY_FILENAME } from '../src/core/audi
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../src/core/custody/verify';
 import { generateStudioTemplate, STUDIO_TEMPLATE_IDS } from '../src/core/studio/templates';
 import { preflightPacket, type PacketTemplate } from '../src/core/packet/assembler';
+import type { ConditionalFieldRule, RuleApplication } from '../src/core/rules/conditional-fields';
+import type { BatchPreflightResult } from '../src/core/worker/protocol';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
 const root = resolve('test-results/pdf-pixels');
@@ -41,7 +43,7 @@ type AlignmentMode = 'auto' | 'rtl' | 'ltr' | 'center';
 type ExpectedAlignment = Record<string, { mode: AlignmentMode; anchor: 'rtl' | 'ltr' | 'center' }>;
 interface DesignerProof { source: string; rotation: number; rects: Record<string, NormalizedRect | readonly NormalizedRect[]> }
 const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean;
-  alignments?: ExpectedAlignment; designer?: DesignerProof } & ExpectedChoices)[] = [];
+  alignments?: ExpectedAlignment; designer?: DesignerProof; ruleApplied?: RuleApplication[] } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
@@ -308,6 +310,39 @@ if (cffPath) {
 }
 const mixedMerged = { pdf: 'consent-merged.pdf', rows: mixedRows.map(({ filename }) => filename) };
 await writeFile(resolve(root, mixedMerged.pdf), await createMergedPdf(mixedRows));
+
+const statusRoster = Buffer.from('Role,Code\r\nVIP,00123\r\nStandard,00007\r\n');
+const statusSheet = (await readRoster(statusRoster, 'status.csv')).sheets[0]!;
+const statusRules: ConditionalFieldRule[] = [
+  { field: 'Name', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-text', value: 'كِبَارُ الشَّخْصِيَّات / VIP {{Code}}' } },
+  { field: 'Consent', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-checkbox', checked: true } },
+  { field: 'Name', column: 'Role', operator: 'not-equals', operand: 'VIP', action: { type: 'clear-field' } },
+  { field: 'Verified', column: 'Role', operator: 'not-equals', operand: 'VIP', action: { type: 'clear-field' } },
+];
+const statusRun = createBatchProcessor();
+const statusPreflight = await statusRun({ phase: 'preflight', input: {
+  template: consent, roster: statusRoster, options: settings,
+  rows: statusSheet.rows.map(() => ({ Name: 'Ordinary', Consent: 'false', Verified: 'true' })),
+  conditional: { rules: statusRules, columns: statusSheet.headers, rows: statusSheet.rows.map(({ values }) => values) },
+} }, () => {}) as BatchPreflightResult;
+const statusExpected = [
+  { values: { Name: 'كِبَارُ الشَّخْصِيَّات / VIP 00123', Consent: 'Yes', Verified: 'Yes' }, outcomes: [1, 2], filename: 'm22-conditional-vip.pdf',
+    label: 'M22 conditional Arabic VIP banner and checked consent' },
+  { values: { Name: '', Consent: 'Off', Verified: 'Off' }, outcomes: [3, 4], filename: 'm22-conditional-standard.pdf',
+    label: 'M22 conditional text clear and unchecked verification' },
+];
+const statusSource = await snapshotSource(consent);
+for (const [rowIndex, { values, outcomes, filename, label }] of statusExpected.entries()) {
+  const { status, diagnostics, ruleApplied } = statusPreflight.rows[rowIndex]!;
+  assert.equal(status, 'pass', `${label}: ${JSON.stringify(diagnostics)}`);
+  assert.deepEqual(ruleApplied, outcomes.map((ruleIndex) => ({ ruleIndex, field: statusRules[ruleIndex - 1]!.field })));
+  const bytes = await statusRun({ phase: 'preview', rowIndex }, () => {});
+  assert(bytes instanceof Uint8Array);
+  const checkboxes = { Consent: values.Consent, Verified: values.Verified };
+  await compareRawPdf(consent, bytes, values, { checkboxes });
+  await writeFile(resolve(root, filename), bytes);
+  cases.push({ before: statusSource, after: filename, values, label, checkboxes, ruleApplied });
+}
 
 const m4 = await readFile(asset('fixtures/m4/multi-page-hr-choices.pdf'));
 const m4Rows: PdfExportRow[] = [];

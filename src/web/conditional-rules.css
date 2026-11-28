@@ -1,0 +1,21 @@
+.conditional-rules-body, .conditional-rule {
+  display: grid;
+  gap: .55rem;
+  min-inline-size: 0;
+}
+.conditional-rules-body { margin-block-start: .55rem; }
+.conditional-rule {
+  margin: 0;
+  padding: .6rem;
+  border: 1px solid var(--control-line);
+  border-radius: .42rem;
+  overflow-wrap: anywhere;
+}
+.conditional-rule legend {
+  padding-inline: .25rem;
+  color: var(--forest);
+  font-size: .86rem;
+  font-weight: 670;
+}
+.conditional-rule [aria-invalid="true"] { border-color: var(--error); }
+.conditional-rule .actions .text-button { min-block-size: 2.6rem; }

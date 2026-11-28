@@ -12,6 +12,7 @@ const en = {
   needsSize: 'Needs {size} pt (min is {min} pt)',
   exceedsOneChar: 'Exceeds MaxLen by {count} char',
   exceedsChars: 'Exceeds MaxLen by {count} chars',
+  rule: 'Rule {index}',
 };
 
 const ar: typeof en = {
@@ -19,6 +20,7 @@ const ar: typeof en = {
   needsSize: 'يلزم حجم {size} نقطة (الحد الأدنى الحالي {min} نقطة)',
   exceedsOneChar: 'يتجاوز الحد الأقصى للحقل (MaxLen) بحرف واحد',
   exceedsChars: 'عدد الأحرف الزائدة على الحد الأقصى للحقل (MaxLen) هو {count}',
+  rule: 'القاعدة {index}',
 };
 
 const problems: Record<string, readonly [string, string]> = {
@@ -29,6 +31,7 @@ const problems: Record<string, readonly [string, string]> = {
   'missing-glyphs': ['The custom font is missing glyphs for this value.', 'يفتقد الخط المخصص بعض أحرف هذه القيمة.'],
   'invalid-checkbox-value': ['Enter true or false, yes or no, 1 or 0, x or blank, or نعم or لا for this checkbox.', 'أدخل نعم أو لا، أو true أو false، أو yes أو no، أو 1 أو 0، أو x، أو اترك الخلية فارغة.'],
   'invalid-choice': ['Choose a value allowed by this PDF field.', 'اختر قيمة من الخيارات التي يسمح بها حقل PDF.'],
+  'invalid-conditional-rule': ['Review the target, roster column and values in Conditional rules.', 'راجع الحقل والعمود والقيم في قواعد التعبئة الشرطية.'],
   'unsupported-checkbox-appearance': ['This checkbox lacks a usable checked or unchecked appearance.', 'يفتقر مربع الاختيار إلى مظهر صالح لإحدى الحالتين: محدد أو غير محدد.'],
   'unsupported-radio-appearance': ['These radio buttons lack usable appearances for their options.', 'تفتقر أزرار الاختيار هذه إلى مظهر صالح لخياراتها.'],
   'unsupported-bidi': ['This value contains an unsupported direction or joining control. Review the source text.', 'تتضمن القيمة علامة غير مدعومة للتحكم في اتجاه الكتابة أو اتصال الحروف. راجع النص الأصلي.'],
@@ -75,7 +78,8 @@ export function Diagnostics({ issues, minSize, language, testId }: {
     <ul className="diagnostics" aria-label={(language.arabic ? ar : en).diagnostics} data-testid={testId}>
       {issues.map((issue, index) => (
         <li key={index}>
-          <bdi dir="auto">{issue.field}</bdi>{' · '}{diagnosticText(issue, minSize, language)}
+          {issue.ruleIndex !== undefined && <>{fillLabel((language.arabic ? ar : en).rule, { index: issue.ruleIndex })}{' · '}</>}
+          {issue.field && <><bdi dir="auto">{issue.field}</bdi>{' · '}</>}{diagnosticText(issue, minSize, language)}
           {issue.choices?.length
             ? <ChoiceList choices={issue.choices} label={labels.allowedChoices} blank={labels.blankChoice} />
             : null}

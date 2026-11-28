@@ -9,6 +9,7 @@ import { DEFAULT_WATERMARK, type WatermarkSettings } from '../core/pdf/watermark
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
+import type { ConditionalFieldRule } from '../core/rules/conditional-fields';
 import type { BatchRowResult } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
@@ -26,6 +27,7 @@ export type RowFilter = 'all' | 'ready' | 'flagged' | 'warnings';
 
 const emptyRows: SourceRow[] = [];
 const emptyFields: TemplateInfo['fields'] = [];
+const emptyRules: ConditionalFieldRule[] = [];
 const noop = () => undefined;
 const idleRenderRecord = async () => undefined;
 const samplePatterns = {
@@ -58,13 +60,14 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [template, setTemplate] = useState<FillTemplate>();
   const [flatSource, setFlatSource] = useState<FlatSource>();
   const [roster, setRoster] = useState<RosterSource>();
-  const [sample, setSample] = useState<{ workflow: SampleWorkflow; notice: string }>();
+  const [sample, setSample] = useState<{ workflow: SampleWorkflow | 'conditional'; notice: string }>();
   const [busy, setBusy] = useState({ pdf: false, roster: false });
   const [errors, setErrors] = useState<{ pdf?: string; roster?: string }>({});
   const request = useRef({ pdf: 0, roster: 0, preset: 0, customFont: 0, draft: 0 });
   const [mappingSettings, setMappingSettings] = useState<MappingSettings>({
     fromPreset: false, values: {},
   });
+  const [conditionalRules, setConditionalRules] = useState(emptyRules);
   const [cellState, setCellState] = useState<CellState>({ edits: {}, hygiene: [], revision: 0 });
   const { edits, hygiene, undo, undoExpired, revision: cellRevision } = cellState;
   const [selected, setSelected] = useState(0);
@@ -112,12 +115,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     return kind === 'text' && (mapping[name] || Object.hasOwn(virtualMappings, name)) && typography && Object.hasOwn(typography, name)
       ? [[name, typography[name]!]] : [];
   })), [fields, mapping, virtualMappings, mappingSettings.typography]);
-  const rows = useMemo(() => sheet && roster ? roster.views.effectiveRows(sheet.rows, mapping, edits) : emptyRows, [sheet, roster, mapping, edits]);
+  const rows = useMemo(() => sheet && roster ? roster.views.effectiveRows(sheet.rows, mapping, edits, conditionalRules) : emptyRows,
+    [sheet, roster, mapping, edits, conditionalRules]);
   const presetWarnings = useMemo(() => mappingSettings.fromPreset
     ? presetCodec?.presetMismatches(mappingSettings.values, pattern, template ? fields.map(({ name }) => name) : undefined,
       sheet?.headers, mappingSettings.virtual, template ? fields.filter(({ kind }) => kind === 'text').map(({ name }) => name) : undefined,
-      mappingSettings.typography)
-    : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template]);
+      mappingSettings.typography, conditionalRules)
+    : undefined, [fields, mappingSettings, pattern, presetCodec, sheet, template, conditionalRules]);
   const { value: watermark, valid: validWatermark } = watermarkState;
   const { value: qrStamp, valid: validQrStamp } = qrState;
   const { value: approvalSeal, valid: validApprovalSeal } = sealState;
@@ -129,14 +133,15 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
 
   const virtualTemplateBlocked = Boolean(roster && Object.values(virtualMappings).some(({ column, template }) =>
     template && !roster.virtual.validateVirtualTemplate(column, template)));
-  const hasMapping = Object.keys(virtualMappings).length > 0 || fields.some((field) => Boolean(mapping[field.name]));
+  const hasMapping = conditionalRules.length > 0 || Object.keys(virtualMappings).length > 0 || fields.some((field) => Boolean(mapping[field.name]));
   const fontBlocked = customFont?.status === 'loading' || customFont?.status === 'invalid';
   const batch = useMemo(() => template && roster && rows.length && hasMapping && !fontBlocked && !virtualTemplateBlocked
     ? { template: template.bytes, roster: roster.bytes, sheetName: roster.explicitSheet ? roster.sheetName : undefined,
       rows, mapping, virtualMappings, localDate: roster.localDate,
       resolveVirtualMapping: roster.virtual.resolveVirtualMapping, alignOverrides, fieldTypography, minFontSize, font,
-      customFont: customFont?.status === 'ready' ? customFont.bytes : undefined }
-    : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, fieldTypography, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked]);
+      customFont: customFont?.status === 'ready' ? customFont.bytes : undefined,
+      conditional: conditionalRules.length ? { rules: conditionalRules, columns: sheet!.headers } : undefined }
+    : null, [template, roster, rows, mapping, virtualMappings, alignOverrides, fieldTypography, minFontSize, font, customFont, hasMapping, fontBlocked, virtualTemplateBlocked, conditionalRules, sheet]);
   const filenamePlans = useMemo(() => roster?.engine.planFilenames(rows, pattern, { localDate: roster.localDate }) ?? [], [roster, rows, pattern]);
   const grouping = useMemo(() => roster && groupByColumn !== null && sheet?.headers.includes(groupByColumn)
     ? roster.views.planGroupedOutput(rows, groupByColumn, pattern, { localDate: roster.localDate })
@@ -158,6 +163,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const batchSession = batch || publication ? { batch, selected, output, sealPreviewBlocked, publish: publishBatch } : undefined;
   const { invalidate = noop, clearExportError = noop, download, cancel = noop, exportLocked = noop } = publication?.job ?? {};
   const job = publication?.batch === batch ? publication?.job : undefined;
+  const conditionalSaveBlocked = Boolean(conditionalRules.length && (!job?.results || job.results.some(({ diagnostics }) =>
+    diagnostics.some(({ ruleIndex }) => ruleIndex !== undefined))));
   const printSettingsBlocked = settingsSaveBlocked || Boolean(job?.sealPrintBlocked);
   const results = useMemo(() => job?.results?.map((result, index): RowResult => ({
     ...result, ...(grouping?.rows[index] ?? filenamePlans[index]!),
@@ -250,21 +257,22 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     }
   }
 
-  async function loadSample(workflow?: SampleWorkflow) {
+  async function loadSample(workflow?: SampleWorkflow | 'conditional') {
     const selectedSample = workflow ?? 'workshop';
     const pdfId = ++request.current.pdf;
     const rosterId = ++request.current.roster;
     const openedAt = new Date();
-    request.current.preset++;
+    const presetId = ++request.current.preset;
     invalidate(true);
     resetRows();
+    setConditionalRules(emptyRules);
     setMappingSettings({ fromPreset: false, values: selectedSample === 'hr' ? { Clinic: 'Clinic', Contact: 'Contact' } : {} });
     if (workflow !== undefined) {
       request.current.customFont++;
       setCustomFont(undefined);
       setMinFontSize(8);
       setFont('auto');
-      setPattern(samplePatterns[selectedSample]);
+      setPattern(samplePatterns[workflow === 'conditional' ? 'clinic' : workflow]);
       setFlattenZip(false);
       setGroupByColumn(null);
       setIncludeCoverSheet(false);
@@ -286,10 +294,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setBusy({ pdf: true, roster: true });
     try {
       const { loadSampleWorkflow } = await import('./workflow-loader');
-      const { template, roster, notice } = await loadSampleWorkflow(selectedSample, openedAt, locale);
+      const { template, roster, notice, rules } = await loadSampleWorkflow(selectedSample, openedAt, locale);
       if (request.current.pdf === pdfId) setTemplate(template);
       if (request.current.roster === rosterId) setRoster(roster);
-      if (request.current.pdf === pdfId && request.current.roster === rosterId) setSample({ workflow: selectedSample, notice });
+      if (request.current.pdf === pdfId && request.current.roster === rosterId) {
+        setSample({ workflow: selectedSample, notice });
+        if (rules && request.current.preset === presetId) setConditionalRules(rules);
+      }
     } catch (error) {
       if (request.current.pdf === pdfId) setErrors((current) => ({ ...current, pdf: errorCode(error, 'loadError') }));
     } finally {
@@ -316,6 +327,12 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       delete virtual[field];
       return { ...current, virtual, values: { ...current.values, [field]: column } };
     });
+  }
+
+  function changeConditionalRules(rules: ConditionalFieldRule[]) {
+    if (exportLocked()) return;
+    recheck();
+    setConditionalRules(rules);
   }
 
   function changeVirtualMapping(field: string, binding: VirtualColumnMapping) {
@@ -527,6 +544,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
       virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined,
       typography: 'fieldTypography' in preset ? preset.fieldTypography : undefined });
+    setConditionalRules(preset.version === 11 ? preset.conditionalRules : emptyRules);
     setPattern(preset.filenamePattern);
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
@@ -546,11 +564,11 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   function presetInputs() {
     const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
       !Object.hasOwn(virtualMappings, name) && (kind === 'text' || kind === 'checkbox' || mapping[name]) ? [[name, mapping[name]!]] : []));
-    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, validSeal ?? null] as const;
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, validSeal ?? null, conditionalRules] as const;
   }
 
   async function exportPreset() {
-    if (settingsSaveBlocked || virtualTemplateBlocked) return;
+    if (settingsSaveBlocked || virtualTemplateBlocked || conditionalSaveBlocked) return;
     const id = request.current.draft;
     const inputs = presetInputs();
     const { makeMappingPreset } = await import('./presets');
@@ -577,6 +595,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   return {
     template, flatSource, roster, sample, busy, errors, sheet, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
     fieldTypography, changeFieldTypography, approvalSeal, changeApprovalSeal, sealSettingsBlocked, settingsSaveBlocked,
+    conditionalRules, changeConditionalRules, conditionalSaveBlocked,
     virtualMappings, virtualTemplateBlocked, changeVirtualMapping, fieldSelection, focusMappingField, selectWidget,
     sourceRevision: `${request.current.roster}:${roster?.sheetName ?? ''}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,

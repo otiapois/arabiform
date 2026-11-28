@@ -40,6 +40,7 @@ import { createShaper, fitText } from '../../src/core/pdf/shaping';
 import { watermarkLayout } from '../../src/core/pdf/watermark';
 import { selectBoundaryRows } from '../../src/core/preflight/spotlight';
 import { createBatchProcessor } from '../../src/core/worker/batch';
+import { conditionalRuleColumns, prepareConditionalFields, type ConditionalFieldRule } from '../../src/core/rules/conditional-fields';
 import { resolveRowSelection, type RowSelection } from '../../src/core/worker/row-selection';
 import { inspectRosterWorkbook, makeFilenames, planFilenames, readRoster, type RosterSheet } from '../../src/core/roster';
 import { filenameKey } from '../../src/core/roster/filenames';
@@ -82,7 +83,136 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(40_000);
+  expect(acceptedCases).toBeGreaterThanOrEqual(42_500);
+});
+
+describe('seeded conditional field rules', () => {
+  const fields = [
+    { name: 'Banner', kind: 'text' as const, readOnly: false, widgets: [] },
+    { name: 'VIP', kind: 'checkbox' as const, readOnly: false, widgets: [] },
+  ];
+  const shortText = fc.oneof(fc.string({ maxLength: 24 }), fc.constantFrom('', ' ', 'VIP', 'VIP 42', 'كِبَار', '{{Code}}', '👤', '\u00a0'));
+
+  it('takes the first exact, blank or substring match independently per target over 650 ordered cases', async () => {
+    const operator = fc.constantFrom('equals', 'not-equals', 'contains', 'is-blank', 'is-not-blank');
+    await verify(fc.asyncProperty(shortText, shortText, fc.array(operator, { minLength: 2, maxLength: 9 }), async (value, operand, operators) => {
+      const rules: ConditionalFieldRule[] = operators.map((test, index) => ({
+        field: 'Banner', column: 'Role', operator: test, ...(test !== 'is-blank' && test !== 'is-not-blank' && { operand }),
+        action: { type: 'set-text', value: `winner ${index}` },
+      }));
+      rules.splice(1, 0, { field: 'VIP', column: 'Role', operator: 'equals', operand: value, action: { type: 'set-checkbox', checked: true } });
+      const predicates = { equals: value === operand, 'not-equals': value !== operand, contains: value.includes(operand),
+        'is-blank': !value.trim(), 'is-not-blank': !!value.trim() };
+      const index = operators.findIndex((test) => predicates[test]);
+      const winner = { field: 'Banner', ruleIndex: index === 0 ? 1 : index + 2 };
+      const checked = { field: 'VIP', ruleIndex: 2 };
+      const original = Object.freeze({ Banner: 'original', VIP: 'original' });
+      const source = Object.freeze({ Role: value });
+      expect(prepareConditionalFields(rules, ['Role'], fields)(original, source)).toEqual({
+        values: { Banner: index < 0 ? 'original' : `winner ${index}`, VIP: 'true' },
+        diagnostics: [], ruleApplied: index === 0 ? [winner, checked] : index < 0 ? [checked] : [checked, winner],
+      });
+    }), 650);
+  });
+
+  it('compares 700 signed, padded, arbitrary-precision decimals with independent scaled integer arithmetic', async () => {
+    const limit = 10n ** 45n;
+    const scale = 10n ** 12n;
+    const render = (units: bigint, pad: number, tail: number) => {
+      const sign = units < 0n ? '-' : '+';
+      const absolute = units < 0n ? -units : units;
+      return `\t${sign}${'0'.repeat(pad)}${absolute / scale}.${(absolute % scale).toString().padStart(12, '0')}${'0'.repeat(tail)} `;
+    };
+    await verify(fc.asyncProperty(fc.bigInt({ min: -limit, max: limit }), fc.bigInt({ min: -2n, max: 2n }),
+      fc.nat(24), fc.nat(24), fc.constantFrom('', '1e8', '01,200', '+', '-', '.', '0x20', '١٢', 'Infinity', 'NaN'),
+      async (threshold, delta, pad, tail, malformed) => {
+        const value = threshold + delta;
+        const rules: ConditionalFieldRule[] = [
+          { field: 'Banner', column: 'Fee', operator: 'gte-number', operand: render(threshold, 0, tail), action: { type: 'set-text', value: 'high' } },
+          { field: 'VIP', column: 'Fee', operator: 'lte-number', operand: render(threshold, pad, 0), action: { type: 'set-checkbox', checked: true } },
+        ];
+        const evaluate = prepareConditionalFields(rules, ['Fee'], fields);
+        const base = { Banner: 'low', VIP: 'false' };
+        expect(evaluate(base, { Fee: render(value, pad, tail) })).toMatchObject({
+          values: { Banner: value >= threshold ? 'high' : 'low', VIP: value <= threshold ? 'true' : 'false' }, diagnostics: [],
+        });
+        expect(evaluate(base, { Fee: malformed })).toEqual({ values: base, diagnostics: [], ruleApplied: [] });
+      }), 700);
+  });
+
+  it('substitutes exact carried text once and flags missing headers, inherited values and illegal choices in 600 cases', async () => {
+    const targets = [...fields, { name: 'Branch', kind: 'dropdown' as const, readOnly: false, widgets: [],
+      choices: [{ value: 'RYD', label: 'الرِّيَاض' }, { value: 'JED', label: 'جِدَّة' }] }];
+    await verify(fc.asyncProperty(shortText, fc.constantFrom('RYD', 'الرِّيَاض', ' JED ', 'جِدَّة', 'ryd', 'undefined'), fc.boolean(),
+      async (substitution, choice, missing) => {
+        const rules: ConditionalFieldRule[] = [
+          { field: 'Banner', column: 'Role', operator: 'is-not-blank', action: { type: 'set-text', value: '{{__proto__}} {{Code}} {{__proto__}}' } },
+          { field: 'Branch', column: 'Role', operator: 'is-not-blank', action: { type: 'set-choice', value: choice } },
+        ];
+        const legal = !['ryd', 'undefined'].includes(choice);
+        const source = { Role: 'VIP', ['__proto__']: substitution, Code: '{{Role}}' };
+        const base = { Banner: 'before', Branch: 'JED' };
+        const evaluate = prepareConditionalFields(rules, missing ? ['Role', '__proto__'] : ['Role', '__proto__', 'Code'], targets);
+        expect(conditionalRuleColumns(rules[0]!)).toEqual(['Role', '__proto__', 'Code']);
+        const result = evaluate(base, source);
+        expect(result.values).toEqual({ Banner: missing ? 'before' : `${substitution} {{Role}} ${substitution}`, Branch: legal ? choice : 'JED' });
+        expect(result.diagnostics.map(({ field, code, ruleIndex }) => [field, code, ruleIndex])).toEqual([
+          ...(missing ? [['Banner', 'invalid-conditional-rule', 1]] : []), ...(!legal ? [['Branch', 'invalid-choice', 2]] : []),
+        ]);
+        const inherited = evaluate(base, Object.assign(Object.create({ Role: 'VIP' }), { Code: '00123' }));
+        expect(inherited.ruleApplied).toEqual([]);
+        expect(inherited.diagnostics).toHaveLength(2);
+      }), 600);
+  });
+
+  it('roundtrips old and current preset schemas with ordered Unicode rules across 550 cases', async () => {
+    await verify(fc.asyncProperty(shortText, shortText, fc.boolean(), async (literal, operand, flip) => {
+      const v1 = { version: 1, mapping: { Banner: 'Name', VIP: 'Checked' }, filenamePattern: '{{ID}}.pdf', minFontSize: 8, font: 'auto' };
+      const v2 = { ...v1, version: 2, flattenZip: flip };
+      const v3 = { ...v2, version: 3, includeCoverSheet: !flip };
+      const v4 = { ...v3, version: 4, alignOverrides: { Banner: 'auto' } };
+      const v5 = { ...v4, version: 5, watermark: { kind: 'none' } };
+      const v6 = { ...v5, version: 6, virtualMappings: { ID: { column: 'PADDED_ROW_001' } } };
+      const v7 = { ...v6, version: 7, coverLanguage: 'auto', qrStamp: { placement: 'none' } };
+      const v8 = { ...v7, version: 8, imposition: flip ? '2-up' : '1-up' };
+      const v9 = { ...v8, version: 9, groupByColumn: flip ? null : 'Role' };
+      const v10 = { ...v9, version: 10, fieldTypography: { Banner: { numeralPolicy: 'preserve', paddingPt: 4 } }, approvalSeal: null };
+      const rule = { field: 'Banner', column: 'Role', operator: 'equals', operand, action: { type: 'set-text', value: literal } };
+      const v11 = { ...v10, version: 11, conditionalRules: [rule,
+        { field: 'VIP', column: 'Role', operator: 'is-blank', action: { type: 'set-checkbox', checked: flip } }] };
+      for (const preset of [v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11]) {
+        expect(validateMappingPreset(JSON.parse(JSON.stringify(preset)))).toEqual(preset);
+      }
+      expect(validateMappingPreset({ ...v11, conditionalRules: [{ ...rule, action: { ...rule.action, execute: literal } }] })).toBeUndefined();
+      expect(validateMappingPreset({ ...v11, conditionalRules: [{ ...rule, operator: 'is-blank' }] })).toBeUndefined();
+    }), 550);
+  });
+
+  it('roundtrips 30 real filled PDF variants and verifies widget states and untouched sentinel after extraction', async () => {
+    const template = await readFile('fixtures/m3/clinic-consent-mixed.pdf');
+    const fonts = { arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'), latin: await readFile('public/fonts/NotoSans-Regular.ttf') };
+    const variants = fc.record({ id: fc.integer({ min: 1, max: 99999 }), checked: fc.boolean(), label: fc.constantFrom('مُعْتَمَد', 'كِبَار', 'أَسَاسِيّ') });
+    await verify(fc.asyncProperty(variants, async ({ id, checked, label }) => {
+      const code = String(id).padStart(6, '0');
+      const row = { Role: 'VIP', Code: code };
+      const rules: ConditionalFieldRule[] = [
+        { field: 'Name', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-text', value: `${label} / {{Code}}` } },
+        { field: 'Consent', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-checkbox', checked } },
+        { field: 'Clinic', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-choice', value: checked ? 'North clinic' : 'South clinic' } },
+      ];
+      const run = createBatchProcessor();
+      const result = await run({ phase: 'preflight', input: {
+        template, roster: encoder.encode(`Role,Code\r\nVIP,${code}\r\n`), rows: [{ Name: 'ordinary', Consent: 'review', Clinic: 'unknown' }], options: { fonts },
+        conditional: { rules, columns: ['Role', 'Code'], rows: [row] },
+      } }, () => {});
+      expect(result).toMatchObject({ rows: [{ status: 'pass', ruleApplied: rules.map(({ field }, index) => ({ field, ruleIndex: index + 1 })) }] });
+      const bytes = await run({ phase: 'preview', rowIndex: 0 }, () => {});
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      const extracted = await extractBatch([{ filename: 'filled.pdf', bytes: bytes as Uint8Array }]);
+      expect(extracted.rows[0]!.fields).toMatchObject({ Name: { value: `${label} / ${code}` },
+        Consent: { value: checked ? 'checked' : 'unchecked' }, Clinic: { value: checked ? 'North clinic' : 'South clinic' }, Sentinel: { value: 'KEEP 00109' } });
+    }), 30);
+  });
 });
 
 describe('seeded packet assembly', () => {

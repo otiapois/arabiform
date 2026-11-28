@@ -77,7 +77,7 @@ export default function LocalCliCommand({ desk, arabic }: { desk: ReturnType<typ
       {arabic && desk.includeCoverSheet && desk.coverLanguage === 'auto' && <p className="quiet">
         يستخدم الأمر الإنجليزية للغلاف عند اختيار «لغة واجهة التطبيق». اختر «العربية» أو «ثنائي اللغة» قبل تصدير إعدادات الربط.
       </p>}
-      {(desk.roster?.sheetError || desk.groupingBlocked || desk.printSettingsBlocked || desk.virtualTemplateBlocked) && (
+      {(desk.roster?.sheetError || desk.groupingBlocked || desk.printSettingsBlocked || desk.virtualTemplateBlocked || desk.conditionalSaveBlocked) && (
         <p className="alert" role="status">{labels.blocked}</p>
       )}
       {(sheetName || groupBy) && <p className="quiet">

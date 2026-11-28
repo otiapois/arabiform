@@ -11,7 +11,7 @@ import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { BoundaryRowSpotlight } from '../core/preflight/spotlight';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { resolveVirtualMapping, VirtualColumnMapping } from '../core/roster/virtual-columns';
-import type { BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
+import type { BatchInput, BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import { resolveRowSelection, type RowSelection } from '../core/worker/row-selection';
 import type { FontMode } from './presets';
@@ -49,6 +49,7 @@ export type BatchSettings = {
   minFontSize: number;
   font: FontMode;
   customFont?: Uint8Array;
+  conditional?: Omit<NonNullable<BatchInput['conditional']>, 'rows'>;
 };
 
 export function useBatch(batch: BatchSettings | null, selected: number, output: OutputSettings, sealPreviewBlocked: boolean) {

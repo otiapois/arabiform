@@ -1,5 +1,6 @@
 import { PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
 import { applyNumeralPolicy } from '../shaping/numerals';
+import type { ConditionalFieldEvaluation, RuleApplication } from '../rules/conditional-fields';
 import { explicitQuadding, type AlignOverride } from './alignment';
 import { installAppearance, type AppearanceFont } from './appearances';
 import { applyButton, parseCheckbox, planCheckbox, planRadio } from './buttons';
@@ -25,13 +26,14 @@ export { getWidgetOverlays, type WidgetOverlay } from './widget-overlays';
 export type DiagnosticCode = 'too-narrow' | 'too-low' | 'exceeds-maxlen' | 'unsupported-glyph' | 'widget-rotated-unsupported'
   | 'missing-required' | 'unknown-field' | 'no-widget' | 'readonly-field' | 'unsupported-field-mode' | 'unsupported-line-break'
   | 'unsupported-widget' | 'unsupported-bidi' | 'invalid-checkbox-value' | 'unsupported-checkbox-appearance' | 'missing-glyphs'
-  | 'invalid-choice' | 'unsupported-radio-appearance';
+  | 'invalid-choice' | 'unsupported-radio-appearance' | 'invalid-conditional-rule';
 
 export interface FieldDiagnostic {
   field: string;
   code: DiagnosticCode;
   pageNumbers: number[];
   choices?: FieldChoice[];
+  ruleIndex?: number;
   widgetIndex?: number;
   requiredFontSizePt?: number;
   maxLengthExcess?: number;
@@ -43,6 +45,7 @@ export interface RowPreflightResult {
   fontSizes: Record<string, number[]>;
   smallestInkFontSizePt?: number;
   inkClearancePt?: number;
+  ruleApplied?: RuleApplication[];
   pdfBytes?: Uint8Array;
 }
 
@@ -62,6 +65,7 @@ export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<
 
 type OpenTemplate = Awaited<ReturnType<typeof openTemplate>>;
 type CheckedRow = Omit<RowPreflightResult, 'pdfBytes'>;
+type AppliedRules = Pick<ConditionalFieldEvaluation, 'ruleApplied' | 'diagnostics'>;
 
 function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {}, fieldTypography = {} }: PreflightOptions) {
   if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
@@ -71,11 +75,16 @@ function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFo
 function planRow(
   { fields, pages }: OpenTemplate, valuesByField: Record<string, string>,
   { fonts, minFontSize, preferredFont, custom, alignOverrides, fieldTypography }: ReturnType<typeof layoutOptions>,
+  conditional?: AppliedRules,
 ) {
   let shaper: ReturnType<typeof createShaper> | undefined;
   const knownFields = new Set(fields.map(({ meta }) => meta.name));
-  const diagnostics: FieldDiagnostic[] = Object.keys(valuesByField).filter((field) => !knownFields.has(field))
-    .map((field) => ({ field, code: 'unknown-field', pageNumbers: [] }));
+  const blockedFields = conditional?.diagnostics.length ? new Set(conditional.diagnostics.map(({ field }) => field)) : undefined;
+  const diagnostics: FieldDiagnostic[] = [
+    ...(conditional?.diagnostics ?? []),
+    ...Object.keys(valuesByField).filter((field) => !knownFields.has(field) && !blockedFields?.has(field))
+      .map((field) => ({ field, code: 'unknown-field' as const, pageNumbers: [] })),
+  ];
   const plans: {
     field: PDFTextField | PDFDropdown;
     canonicalValue: PDFString | PDFHexString;
@@ -92,6 +101,7 @@ function planRow(
 
   for (const { field, widgets, meta, alignment, completeWidgetList, pageNumbers, dropdownOptions } of fields) {
     const { name } = meta;
+    if (blockedFields?.has(name)) continue;
     const mapped = Object.hasOwn(valuesByField, name);
     let value = mapped ? valuesByField[name]! : meta.value;
     const canonical = field.acroField.dict;
@@ -231,7 +241,9 @@ function planRow(
 
   const fontSizes = Object.fromEntries(sizes);
   const pageNumbers = [...new Set(diagnostics.flatMap((issue) => issue.pageNumbers))].sort((first, second) => first - second);
-  const result: CheckedRow = { status: diagnostics.length ? 'flagged' : 'pass', diagnostics, pageNumbers, fontSizes };
+  const result: CheckedRow = { status: diagnostics.length ? 'flagged' : 'pass', diagnostics, pageNumbers, fontSizes,
+    ...(conditional && { ruleApplied: conditional.ruleApplied }),
+  };
   if (result.status === 'pass' && Number.isFinite(smallestInkFontSizePt) && Number.isFinite(inkClearancePt)) {
     result.smallestInkFontSizePt = smallestInkFontSizePt;
     result.inkClearancePt = inkClearancePt;
@@ -246,8 +258,8 @@ export async function prepareRowPreflight(bytes: Uint8Array | ArrayBuffer, optio
 export async function prepareTemplatePreflight(bytes: Uint8Array | ArrayBuffer, options: PreflightOptions) {
   const template = await openTemplate(bytes);
   const layout = layoutOptions(options);
-  const check = async (valuesByField: Record<string, string>): Promise<CheckedRow> => {
-    const { result, customGlyphIds } = planRow(template, valuesByField, layout);
+  const check = async (valuesByField: Record<string, string>, conditional?: AppliedRules): Promise<CheckedRow> => {
+    const { result, customGlyphIds } = planRow(template, valuesByField, layout, conditional);
     if (result.status === 'pass' && customGlyphIds.size) {
       // The custom subset encoder reads parts of untrusted fonts lazily, after layout.
       // Exercise that exact encoder with a scratch document and no row PDF serialization.

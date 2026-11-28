@@ -1,5 +1,6 @@
 import { decodeBase64 } from './resources';
 import { rosterViews } from './roster-source';
+import type { ConditionalFieldRule } from '../core/rules/conditional-fields';
 import type { SampleWorkflow } from './useWorkbench';
 
 // The sample-* chunks contain individual fixture bytes; this module only selects one of them.
@@ -10,22 +11,34 @@ const samples = {
   badge: { load: () => import('virtual:arabiform/sample-badge'), pdf: 'landscape-badge.pdf', roster: 'badge-roster.csv' },
 } satisfies Record<SampleWorkflow, { load: () => Promise<{ template: string; roster: string }>; pdf: string; roster: string }>;
 
-export async function loadSampleWorkflow(workflow: SampleWorkflow, openedAt: Date, locale: 'en' | 'ar') {
-  const sample = samples[workflow];
+const vipRules: ConditionalFieldRule[] = [
+  { field: 'Name', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-text', value: 'كبار الشخصيات / VIP' } },
+  { field: 'Consent', column: 'Role', operator: 'equals', operand: 'VIP', action: { type: 'set-checkbox', checked: true } },
+];
+const vipRoster = 'Name,ID,Consent,Role,Clinic\nVIP Guest,00123,false,VIP,North clinic\nStandard Guest,00007,false,Standard,South clinic\n';
+
+export async function loadSampleWorkflow(workflow: SampleWorkflow | 'conditional', openedAt: Date, locale: 'en' | 'ar') {
+  const conditional = workflow === 'conditional';
+  const sample = samples[conditional ? 'clinic' : workflow];
   const [assets, engine, parser, virtual] = await Promise.all([
     sample.load(), import('../core/pdf'), import('../core/roster'), import('../core/roster/virtual-columns'),
   ]);
   const bytes = decodeBase64(assets.template);
-  const rosterBytes = decodeBase64(assets.roster);
-  const [info, data] = await Promise.all([engine.inspectTemplate(bytes), parser.readRoster(rosterBytes, sample.roster)]);
-  const notice = workflow === 'workshop'
+  const rosterBytes = conditional ? new TextEncoder().encode(vipRoster) : decodeBase64(assets.roster);
+  const rosterName = conditional ? 'synthetic-vip-standard.csv' : sample.roster;
+  const [info, data] = await Promise.all([engine.inspectTemplate(bytes), parser.readRoster(rosterBytes, rosterName)]);
+  const notice = conditional
+    ? locale === 'ar' ? 'بيانات اصطناعية من صفّين. تعرض قاعدة VIP عبارة ثنائية اللغة في حقل الاسم وتحدّد مربّعي الموافقة.'
+      : 'Two synthetic rows. The VIP rules set a bilingual banner in Name and check both Consent boxes.'
+    : workflow === 'workshop'
     ? locale === 'ar' ? 'الأسماء والأرقام خيالية. في الصف الأخير اسم طويل يتجاوز مساحة الحقل عمدًا.'
       : 'Fictional names and IDs. The final row intentionally contains a name that exceeds its field.'
     : locale === 'ar' ? 'ملفات بأسماء وهمية. راجع الصف المُعلَّم لتجربة هذا المسار.'
       : 'Fictional files. Review the flagged row to try this workflow.';
   return {
     template: { name: sample.pdf, bytes, info, overlays: engine.getWidgetOverlays(info) },
-    roster: { name: sample.roster, bytes: rosterBytes, sheet: data.sheets[0], engine: parser, virtual, views: rosterViews, localDate: virtual.localVirtualDate(openedAt) },
+    roster: { name: rosterName, bytes: rosterBytes, sheet: data.sheets[0], engine: parser, virtual, views: rosterViews, localDate: virtual.localVirtualDate(openedAt) },
+    rules: conditional ? vipRules : undefined,
     notice,
   };
 }

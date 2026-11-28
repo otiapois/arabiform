@@ -1,6 +1,7 @@
 import { sha256 } from '../audit/custody';
 import type { HygieneOperation, HygieneSummary } from '../roster/hygiene';
 import { isRecord, validateMappingPreset, type MappingPreset } from './mapping-preset';
+import { conditionalRuleColumns } from '../rules/conditional-fields';
 
 export type BatchDraftSource = {
   templateSha256: string;
@@ -78,6 +79,9 @@ function validateBatchDraft(data: unknown): BatchDraft {
     || Object.entries(settings.mapping).some(([field, column]) => !fieldNames.has(field) || column !== '' && !columns.has(column))
     || 'virtualMappings' in settings && Object.keys(settings.virtualMappings).some((field) => !fieldNames.has(field))
     || 'groupByColumn' in settings && settings.groupByColumn !== null && !columns.has(settings.groupByColumn)) throw invalid();
+  if (settings.version === 11 && settings.conditionalRules.some((rule) =>
+    !(Object.hasOwn(settings.mapping, rule.field) && settings.mapping[rule.field] || Object.hasOwn(settings.virtualMappings, rule.field))
+    || conditionalRuleColumns(rule).some((column) => !columns.has(column)))) throw invalid();
 
   const edits: [number, Record<string, string>][] = [];
   for (const [index, values] of Object.entries(data.edits)) {
