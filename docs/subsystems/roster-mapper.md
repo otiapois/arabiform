@@ -30,6 +30,27 @@
   - Deduplicate with a compatibility-normalized, case-insensitive key (`name.pdf`, `name-2.pdf`). ZIP independently rejects unsafe components, normalized duplicates, and names above 255 UTF-8 bytes.
   - Use the full batch filename plan in the queue, ZIP, audit, and optional merged-PDF cover index. An exported row keeps the filename and collision suffix from that plan for any subset.
 
+## Roster Schema Validation
+
+`src/core/validation/roster-schema.ts` checks the effective CSV or XLSX row, including inline edits and applied cleanup, before conditional field rules, PDF formatting, and fit checks. Each rule addresses the exact name of a physical column, which can be independent of the PDF mappings. A missing header, including a rename or a worksheet change, fails the rule with `missing-column`. Rules remain in effect until corrected or removed. Evaluation is local and deterministic and accepts only the six built-in rule kinds.
+
+| `kind` | Settings and accepted input | `reasonCode` on failure (after column resolution) |
+| --- | --- | --- |
+| `required` | A nonempty value after trimming whitespace. | `required` |
+| `iban-mod97` | Uppercase ASCII letters and ASCII digits, a supported country, its exact length and Basic Bank Account Number (BBAN) character pattern, check digits `02`–`98`, and ISO 13616 Mod-97 remainder 1. Strip ASCII space U+0020 only for the check. Keep the original value, including spaces, for mapping. | `iban-format`, `iban-country`, `iban-length`, `iban-checksum`, `iban-ambiguous-transposition` |
+| `iso-date` | A real Gregorian date in the exact ASCII form `YYYY-MM-DD` with year `0001`–`9999`. Century years must be divisible by 400 to have February 29. | `iso-date` |
+| `exact-digits` | `digits` is an integer from 1 to 32. Accept exactly that many ASCII digits. Arabic-Indic, Extended Arabic-Indic, fullwidth digits, spaces, and separators fail. Preserve leading zeros as text. | `exact-digits` |
+| `email-format` | One plain ASCII address up to 254 characters, with a dot-atom local part up to 64 characters and a dotted DNS-style domain. Line breaks, display names, and recipient lists fail. | `email-format` |
+| `allowed-values` | `values` is a nonempty list of literal strings. `match` defaults to `exact`. `trimmed` ignores surrounding whitespace on both the cell and list values. Both modes are case-sensitive. An empty cell can match an explicitly allowed empty value. | `allowed-values` |
+
+For IBAN, move the first four characters to the end, expand `A`–`Z` to `10`–`35`, and test the resulting decimal number modulo 97. The supported countries and lengths are `SA 24`, `AE 23`, `QA 29`, `KW 30`, `BH 22`, `OM 23`, `EG 29`, `JO 30`, `LB 28`, `TN 24`, `GB 22`, `DE 22`, `FR 27`, `NL 18`, `ES 24`, and `IT 27`. The national formats come from Swift's registry. [Swift IBAN and registration authority](https://www.swift.com/standards/data-standards/iban-international-bank-account-number) · [Swift IBAN Registry, Release 103](https://www.swift.com/sites/default/files/files/iban-registry_4.pdf)
+
+The strict rule also tests distinct adjacent swaps. For example, `B1` and `1B` both expand to `111`. If the original passes Mod-97 and a distinct adjacent swap also passes the IBAN checks, the row is held with `iban-ambiguous-transposition`. This additional check can hold checksum-valid inputs and leaves the operator to resolve them from the source record. For values accepted by the rule, replacing one decimal digit with another or swapping two different adjacent characters in the compact IBAN produces a value the rule rejects.
+
+Version 13 mapping presets store the ordered array `schemaRules`. Every entry has `column` and `kind`, with the rule-specific settings in the table. Versions 1–12 load with no data validation rules. Export uses v13 when at least one rule is active.
+
+A failed check flags the original 1-based roster row and excludes it from PDF generation. `schemaDiagnostics` contains one object per failure with `code: "schema-validation-failed"`, `rowNumber`, `column`, `rule`, `reasonCode`, and localized `reason.en` and `reason.ar`. Batch preflight audits with validation active include `schemaDiagnostics` as a JSON array, serialized as a single cell in CSV. Existing audit fields keep their previous shape. [PDF preflight and ready scope](pdf-engine.md#responsibilities) · [CLI replay](cli-automation.md#roster-validation-walkthrough--تجربة-التحقق-من-بيانات-الجدول)
+
 ## Conditional Field Rules
 
 - A version 11 preset stores the ordered `conditionalRules` array in addition to the v10 settings. Each rule has a canonical PDF `field`, an exact roster `column`, an `operator`, an optional string `operand`, and an `action`. Targets are mapped editable fields, including text fields mapped to virtual columns. The condition and text action tokens read exact physical headers in the active CSV or worksheet.
