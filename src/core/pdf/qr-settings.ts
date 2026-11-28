@@ -1,12 +1,13 @@
+import { DEFAULT_QR_STAMP } from './print-setting-defaults';
+
+export { DEFAULT_QR_STAMP, DEFAULT_QR_SIZE_PT } from './print-setting-defaults';
+
 const corners = ['top-right', 'top-left', 'bottom-right', 'bottom-left'] as const;
 export type QrCorner = typeof corners[number];
 export type QrStampSettings = { placement: 'none' } | { placement: QrCorner; sizePt: number; pattern: string; custodyRecord?: true };
 export type QrPrintRequest = { placement: QrCorner; sizePt: number; payloads: readonly (string | null)[] };
 export type BatchQrPrintRequest = QrPrintRequest | { placement: QrCorner; sizePt: number; custodyRecord: true };
 export type CoverLanguage = 'auto' | 'en' | 'ar' | 'bilingual';
-
-export const DEFAULT_QR_STAMP: QrStampSettings = { placement: 'none' };
-export const DEFAULT_QR_SIZE_PT = 48;
 
 function isRecord(data: unknown): data is Record<string, unknown> {
   if (typeof data !== 'object' || data === null) return false;

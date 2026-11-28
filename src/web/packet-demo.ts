@@ -1,4 +1,4 @@
-import { decodeBase64 } from './resources';
+import { decodeBase64 } from './bundled-assets';
 
 export async function loadPacketDemo(): Promise<{
   templates: { file: File; title: string; mapping: Record<string, string> }[];

@@ -4,6 +4,7 @@ import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
 import type { FourUpOptions } from '../core/pdf/imposition-settings';
 import type { FieldTypographyMap } from '../core/pdf/field-typography';
+import { DEFAULT_QR_STAMP, DEFAULT_WATERMARK } from '../core/pdf/print-setting-defaults';
 import type { CoverLanguage, QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import { hasVirtualFilenameToken } from '../core/roster/filenames';
@@ -17,6 +18,34 @@ export function parseMappingPreset(text: string): MappingPreset {
   const preset = validateMappingPreset(JSON.parse(text));
   if (!preset) throw new Error('invalid-mapping-preset');
   return preset;
+}
+
+export function restorePresetSettings(preset: MappingPreset) {
+  return {
+    mappingSettings: {
+      fromPreset: true,
+      values: preset.mapping,
+      alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
+      virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined,
+      typography: 'fieldTypography' in preset ? preset.fieldTypography : undefined,
+    },
+    conditionalRules: 'conditionalRules' in preset ? preset.conditionalRules : undefined,
+    schemaRules: 'schemaRules' in preset ? preset.schemaRules : undefined,
+    pattern: preset.filenamePattern,
+    minFontSize: preset.minFontSize,
+    font: preset.font,
+    flattenZip: preset.version !== 1 && preset.flattenZip,
+    group: 'groupByColumn' in preset ? preset.groupByColumn : null,
+    includeCover: 'includeCoverSheet' in preset && preset.includeCoverSheet,
+    watermark: 'watermark' in preset ? preset.watermark : DEFAULT_WATERMARK,
+    qrStamp: 'qrStamp' in preset ? preset.qrStamp : DEFAULT_QR_STAMP,
+    approvalSeal: 'approvalSeal' in preset ? preset.approvalSeal : null,
+    coverLanguage: 'coverLanguage' in preset ? preset.coverLanguage : 'auto' as const,
+    imposition: 'imposition' in preset ? preset.imposition : '1-up' as const,
+    fourUp: preset.version === 12 || (preset.version === 13 &&
+      (preset.imposition === '4-up' || preset.fourUpOrder !== 'sequential' || preset.centerCutGuides))
+      ? { fourUpOrder: preset.fourUpOrder, centerCutGuides: preset.centerCutGuides } : undefined,
+  };
 }
 
 export function makeDraftSettings(

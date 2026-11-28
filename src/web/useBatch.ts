@@ -18,7 +18,8 @@ import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { MergedPrintCache } from './batch-exports';
 import { resolveRowSelection, type RowSelection } from '../core/worker/row-selection';
 import type { FontMode } from './presets';
-import { errorCode, loadFonts, saveDownload } from './resources';
+import { loadFonts } from './bundled-assets';
+import { errorCode, saveDownload } from './resources';
 import { useRecordPreview, type RenderRecord } from './useRecordPreview';
 
 export type BatchWorker = ReturnType<typeof createBatchWorker>;

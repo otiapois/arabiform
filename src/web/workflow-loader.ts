@@ -1,9 +1,9 @@
-import { decodeBase64 } from './resources';
+import { decodeBase64 } from './bundled-assets';
 import { rosterViews } from './roster-source';
 import type { ConditionalFieldRule } from '../core/rules/conditional-fields';
 import type { FillSample, SampleWorkflow } from './useWorkbench';
 import { inspectFillTemplate, type FillTemplate } from './fill-template-source';
-import type { MappingPreset } from './presets';
+import type { restorePresetSettings } from './presets';
 import type { RosterSource } from './roster-source';
 
 // The sample-* chunks contain individual fixture bytes; this module only selects one of them.
@@ -25,7 +25,7 @@ type LoadedSample = {
   roster: RosterSource;
   notice: string;
   rules?: ConditionalFieldRule[];
-  preset?: MappingPreset;
+  restoredSettings?: ReturnType<typeof restorePresetSettings>;
 };
 
 export async function loadSampleWorkflow(workflow: FillSample, openedAt: Date, locale: 'en' | 'ar'): Promise<LoadedSample> {

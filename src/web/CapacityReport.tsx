@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { CAPACITY_SAMPLE_LIMIT, createCapacityCsv, inspectTemplateCapacities, type TemplateCapacityReport } from '../core/pdf/capacity-inspector';
 import type { translator } from './labels';
-import { loadFonts, saveDownload } from './resources';
+import { loadFonts } from './bundled-assets';
+import { saveDownload } from './resources';
 import type { TemplateInfo } from './useWorkbench';
 
 const CapacityTable = lazy(() => import('./CapacityTable'));

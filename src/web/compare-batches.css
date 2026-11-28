@@ -1,0 +1,59 @@
+.batch-diff-body, .batch-diff-results {
+  display: grid;
+  gap: .85rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+.batch-diff-sources, .batch-diff-counts {
+  display: grid;
+  gap: .65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.batch-diff-dropzone {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  gap: .36rem;
+  padding: .8rem 1rem;
+  border: 1px dashed var(--control-line);
+  border-radius: .45rem;
+  background: #f8f9f4;
+}
+.batch-diff-dropzone:is(:hover, :focus-within) { background: var(--green-soft); }
+.batch-diff-dropzone:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.batch-diff-dropzone input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.batch-diff-source-label { font-weight: 700; color: var(--forest); }
+.batch-diff-source-detail, .batch-diff .alert, .batch-diff-table { overflow-wrap: anywhere; }
+.batch-diff bdi[dir="ltr"] { white-space: nowrap; }
+.batch-diff bdi.filename { white-space: normal; }
+.batch-diff-progress:empty { position: absolute; }
+.batch-diff-results { padding-block-start: .85rem; border-block-start: 1px solid var(--line); }
+.batch-diff-counts { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.65fr); margin: 0; }
+.batch-diff-counts > div {
+  display: grid;
+  align-content: start;
+  gap: .18rem;
+  padding: .55rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: .42rem;
+  background: #f8f9f4;
+  color: var(--forest);
+}
+.batch-diff-counts .batch-diff-savings { background: var(--green-soft); border-color: var(--control-line); }
+.batch-diff-counts dt { font-size: .86rem; font-weight: 650; }
+.batch-diff-counts dd { margin: 0; }
+.batch-diff-counts dd:first-of-type { font-size: 1.45rem; font-weight: 720; font-variant-numeric: tabular-nums; }
+.batch-diff-filter { justify-self: start; min-inline-size: min(100%, 12rem); }
+.batch-diff-table, .batch-diff-fields { width: 100%; table-layout: fixed; }
+.batch-diff-table > thead > tr > th:first-child { width: 64%; }
+.batch-diff-table :is(th, td) { text-align: start; }
+.batch-diff-file tr { border-block-end: 1px solid var(--line); }
+.batch-diff-fields { border: 1px solid var(--line); }
+.batch-diff-fields thead th { background: var(--green-soft); }
+.batch-diff-value { white-space: break-spaces; }
+.batch-diff-choices { padding-inline-start: 1.25rem; }
+@media (max-width: 600px) {
+  .batch-diff-sources { grid-template-columns: minmax(0, 1fr); }
+  .batch-diff-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .batch-diff-savings { grid-column: 1 / -1; }
+  .batch-diff-table :is(th, td) { padding: .45rem; }
+}

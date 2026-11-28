@@ -6,43 +6,15 @@ import { QueuePanel } from './QueuePanel';
 import { saveDownload } from './resources';
 import type { FlatSource, MigratedTemplate } from './fill-template-source';
 import { sampleWorkflows, useWorkbench } from './useWorkbench';
+import type { DesignSession, UtilityMode } from './UtilityModes';
 import { WatermarkControls } from './WatermarkControls';
 
-const MappingRows = lazy(() => import('./MappingRows'));
-const ConditionalRules = lazy(() => import('./ConditionalRules'));
-const DataValidation = lazy(() => import('./DataValidation'));
-const PresetFeedback = lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback })));
-const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
-const WorkbenchPreview = lazy(() => import('./WorkbenchPreview'));
-const Hygiene = lazy(() => import('./Hygiene'));
-const BatchDraftControls = lazy(() => import('./BatchDraftControls'));
-const BatchSession = lazy(() => import('./BatchSession'));
+const DeferredFillView = lazy(() => import('./DeferredFillView'));
 const ShortcutsDialog = lazy(() => import('./ShortcutsDialog'));
-const QrStampOptions = lazy(() => import('./QrStampOptions'));
-const CoverOptions = lazy(() => import('./CoverOptions'));
-const CustomFontFeedback = lazy(() => import('./CustomFontFeedback'));
-const WorksheetPicker = lazy(() => import('./SourcePrintControls').then(({ WorksheetPicker }) => ({ default: WorksheetPicker })));
-const PdfExtractor = lazy(() => import('./PdfExtractor'));
-const FieldDesigner = lazy(() => import('./FieldDesigner'));
-const TemplateStudio = lazy(() => import('./TemplateStudio'));
-const ReceiptVerifier = lazy(() => import('./ReceiptVerifier'));
-const SourceError = lazy(() => import('./SourceError'));
-const FilenameOptions = lazy(() => import('./FillOutputExtras').then(({ FilenameOptions }) => ({ default: FilenameOptions })));
-const PrintLayout = lazy(() => import('./FillOutputExtras').then(({ PrintLayout }) => ({ default: PrintLayout })));
-const ApprovalSealControl = lazy(() => import('./FillOutputExtras').then(({ ApprovalSealControl }) => ({ default: ApprovalSealControl })));
-const CheckedExportCounts = lazy(() => import('./FillOutputExtras').then(({ CheckedExportCounts }) => ({ default: CheckedExportCounts })));
-const ExportDetails = lazy(() => import('./FillOutputExtras').then(({ ExportDetails }) => ({ default: ExportDetails })));
-const ExportFeedback = lazy(() => import('./FillOutputExtras').then(({ ExportFeedback }) => ({ default: ExportFeedback })));
-const SplitDownload = lazy(() => import('./FillOutputExtras').then(({ SplitDownload }) => ({ default: SplitDownload })));
-const PrintCertificateDownload = lazy(() => import('./FillOutputExtras').then(({ PrintCertificateDownload }) => ({ default: PrintCertificateDownload })));
-const CompletedCustody = lazy(() => import('./FillOutputExtras').then(({ CompletedCustody }) => ({ default: CompletedCustody })));
-const ReviewAndDispatchOptions = lazy(() => import('./ReviewAndDispatchOptions'));
-const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
-const PacketWorkbench = lazy(() => import('./PacketWorkbench'));
-const CompareTemplates = lazy(() => import('./CompareTemplates'));
+const UtilityModes = lazy(() => import('./UtilityModes'));
 
-const modes = ['fill', 'extract', 'design', 'create', 'verify', 'packet', 'compare'] as const;
-type Mode = typeof modes[number];
+type Mode = 'fill' | UtilityMode;
+const modes: readonly Mode[] = ['fill', 'extract', 'design', 'create', 'verify', 'packet', 'compare', 'compare-batches'];
 
 type AppProps = {
   language: ReturnType<typeof translator>;
@@ -55,15 +27,10 @@ export function App({ language, heading, summary, details }: AppProps) {
   const { arabic, labels } = language;
   const desk = useWorkbench(arabic ? 'ar' : 'en');
   const [mode, setMode] = useState<Mode>('fill');
-  const extractMode = mode === 'extract';
-  const designMode = mode === 'design';
   const fillMode = mode === 'fill';
   const activeMode = useRef(mode);
-  const [extractOpened, setExtractOpened] = useState(false);
-  const [studioOpened, setStudioOpened] = useState(false);
-  const [packetOpened, setPacketOpened] = useState(false);
-  const [compareOpened, setCompareOpened] = useState(false);
-  const [design, setDesign] = useState<{ revision: number; source?: FlatSource }>();
+  const [opened, setOpened] = useState<Partial<Record<UtilityMode, true>>>();
+  const [design, setDesign] = useState<DesignSession>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
   const [cliOpen, setCliOpen] = useState(false);
@@ -77,14 +44,12 @@ export function App({ language, heading, summary, details }: AppProps) {
     verify: arabic ? 'التحقق من بيان الحيازة' : 'Verify receipt',
     packet: labels.packetMode,
     compare: arabic ? 'مقارنة القوالب' : 'Compare templates',
+    'compare-batches': arabic ? 'مقارنة الدفعات' : 'Compare batches',
   };
 
   function openMode(next: Mode, source?: FlatSource) {
     activeMode.current = next;
-    if (next === 'extract') setExtractOpened(true);
-    if (next === 'create') setStudioOpened(true);
-    if (next === 'packet') setPacketOpened(true);
-    if (next === 'compare') setCompareOpened(true);
+    if (next !== 'fill') setOpened((previous) => previous?.[next] ? previous : { ...previous, [next]: true });
     if (next === 'design') setDesign((current) => !current || source
       ? { revision: (current?.revision ?? 0) + 1, source }
       : current);
@@ -135,7 +100,7 @@ export function App({ language, heading, summary, details }: AppProps) {
 
   return (
     <>
-      {desk.batchSession && <Suspense><BatchSession {...desk.batchSession} /></Suspense>}
+      {desk.batchSession && <Suspense><DeferredFillView view="BatchSession" {...desk.batchSession} /></Suspense>}
       <a className="skip-link" href="#workbench">{labels.skip}</a>
       <header className="site-header">
         <div className="shell header-inner">
@@ -197,7 +162,7 @@ export function App({ language, heading, summary, details }: AppProps) {
 
           <div className="workbench" hidden={!fillMode}>
             {desk.template && (
-              <Suspense><CapacityDisclosure template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
+              <Suspense><DeferredFillView view="CapacityDisclosure" template={desk.template.info} minFontSize={desk.minFontSize} arabic={arabic} labels={labels} /></Suspense>
             )}
             <div className="workbench-grid">
               <div className="setup">
@@ -216,7 +181,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                       onChoose={desk.loadPdf}
                       allowDrop
                     />
-                    {desk.errors.pdf && <Suspense><SourceError code={desk.errors.pdf} arabic={arabic}
+                    {desk.errors.pdf && <Suspense><DeferredFillView view="SourceError" code={desk.errors.pdf} arabic={arabic}
                       onDesign={desk.flatSource ? () => {
                         openMode('design', desk.flatSource);
                         document.getElementById('mode-design')?.focus();
@@ -232,8 +197,8 @@ export function App({ language, heading, summary, details }: AppProps) {
                       loadingLabel={labels.loading}
                       onChoose={desk.loadRoster}
                     />
-                    {desk.errors.roster && <Suspense><SourceError code={desk.errors.roster} arabic={arabic} /></Suspense>}
-                    {desk.roster?.workbook && <Suspense><WorksheetPicker desk={desk} language={language} /></Suspense>}
+                    {desk.errors.roster && <Suspense><DeferredFillView view="SourceError" code={desk.errors.roster} arabic={arabic} /></Suspense>}
+                    {desk.roster?.workbook && <Suspense><DeferredFillView view="WorksheetPicker" desk={desk} language={language} /></Suspense>}
                     <div className="source-note" aria-live="polite">
                       {(desk.sample || desk.template?.synthetic) && <strong className="tag tag-pass">{labels.synthetic}</strong>}
                       <p>{desk.sample?.notice ?? labels.realNotice}</p>
@@ -249,18 +214,18 @@ export function App({ language, heading, summary, details }: AppProps) {
                   </header>
                   <div className="panel-body">
                     {desk.templateFields.length > 0
-                      ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><MappingRows desk={desk} language={language} /></Suspense>
+                      ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><DeferredFillView view="MappingRows" desk={desk} language={language} /></Suspense>
                       : <p className="quiet">{labels.mappingWait}</p>}
                     <details className="conditional-rules" onToggle={(event) => setRulesOpen(event.currentTarget.open)}>
                       <summary data-testid="conditional-rules-toggle">{arabic ? 'قواعد التعبئة الشرطية' : 'Conditional rules'}</summary>
                       {rulesOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                        <ConditionalRules desk={desk} arabic={arabic} />
+                        <DeferredFillView view="ConditionalRules" desk={desk} arabic={arabic} />
                       </Suspense>}
                     </details>
                     <details className="conditional-rules" onToggle={(event) => setValidationOpen(event.currentTarget.open)}>
                       <summary data-testid="data-validation-toggle">{arabic ? 'التحقق من بيانات الجدول' : 'Data validation'}</summary>
                       {validationOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                        <DataValidation desk={desk} arabic={arabic} />
+                        <DeferredFillView view="DataValidation" desk={desk} arabic={arabic} />
                       </Suspense>}
                     </details>
                   </div>
@@ -300,7 +265,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                         {customFont && <button type="button" className="text-button" data-testid="custom-font-clear" onClick={desk.clearCustomFont}>{labels.clearFont}</button>}
                       </div>
                       {customFont && customFont.status !== 'loading' && (
-                        <Suspense><CustomFontFeedback customFont={customFont} desk={desk} arabic={arabic} /></Suspense>
+                        <Suspense><DeferredFillView view="CustomFontFeedback" customFont={customFont} desk={desk} arabic={arabic} /></Suspense>
                       )}
                     </div>
                     <label className="full-control">
@@ -309,13 +274,13 @@ export function App({ language, heading, summary, details }: AppProps) {
                         disabled={desk.exporting} onChange={(event) => desk.changePattern(event.currentTarget.value)} />
                       <small>{labels.patternHelp}</small>
                     </label>
-                    {(desk.template || desk.roster || desk.groupByColumn !== null) && <Suspense><FilenameOptions desk={desk} arabic={arabic} /></Suspense>}
+                    {(desk.template || desk.roster || desk.groupByColumn !== null) && <Suspense><DeferredFillView view="FilenameOptions" desk={desk} arabic={arabic} /></Suspense>}
                     <label className="output-mode zip-mode">
                       <input type="checkbox" data-testid="flatten-zip" checked={desk.flattenZip} disabled={desk.exporting}
                         onChange={(event) => desk.changeFlattenZip(event.currentTarget.checked)} />
                       <span>{labels.flattenZip}</span>
                     </label>
-                    {desk.template && <Suspense><PrintLayout desk={desk} arabic={arabic} /></Suspense>}
+                    {desk.template && <Suspense><DeferredFillView view="PrintLayout" desk={desk} arabic={arabic} /></Suspense>}
                     <label className="output-mode">
                       <input type="checkbox" data-testid="include-cover-sheet" checked={desk.includeCoverSheet} disabled={desk.exporting}
                         onChange={(event) => desk.changeIncludeCoverSheet(event.currentTarget.checked)} />
@@ -323,7 +288,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                     </label>
                     {desk.includeCoverSheet && (
                       <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                        <CoverOptions desk={desk} arabic={arabic} />
+                        <DeferredFillView view="CoverOptions" desk={desk} arabic={arabic} />
                       </Suspense>
                     )}
                     <WatermarkControls settings={desk.watermark} change={desk.changeWatermark} disabled={desk.exporting}
@@ -332,12 +297,12 @@ export function App({ language, heading, summary, details }: AppProps) {
                       <summary data-testid="qr-stamp-toggle">{arabic ? 'رمز QR للطباعة (اختياري)' : 'Print QR stamp (optional)'}</summary>
                       {desk.qrOpen && (
                         <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                          <QrStampOptions desk={desk} arabic={arabic} />
+                          <DeferredFillView view="QrStampOptions" desk={desk} arabic={arabic} />
                         </Suspense>
                       )}
                     </details>
-                    {(desk.template || desk.approvalSeal) && <Suspense><ApprovalSealControl desk={desk} arabic={arabic} /></Suspense>}
-                    {(desk.template || desk.roster) && <Suspense><ReviewAndDispatchOptions desk={desk} language={language} /></Suspense>}
+                    {(desk.template || desk.approvalSeal) && <Suspense><DeferredFillView view="ApprovalSealControl" desk={desk} arabic={arabic} /></Suspense>}
+                    {(desk.template || desk.roster) && <Suspense><DeferredFillView view="ReviewAndDispatchOptions" desk={desk} language={language} /></Suspense>}
                     <div className="preset-controls">
                       <h3>{labels.preset}</h3>
                       <p className="quiet">{labels.presetHelp}</p>
@@ -351,18 +316,18 @@ export function App({ language, heading, summary, details }: AppProps) {
                           onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                       </div>
                       {(desk.presetError || desk.presetWarnings) && (
-                        <Suspense><PresetFeedback invalid={desk.presetError} warnings={desk.presetWarnings} arabic={arabic} /></Suspense>
+                        <Suspense><DeferredFillView view="PresetFeedback" invalid={desk.presetError} warnings={desk.presetWarnings} arabic={arabic} /></Suspense>
                       )}
                       <details className="cli-command" data-testid="cli-command-helper" onToggle={(event) => setCliOpen(event.currentTarget.open)}>
                         <summary>{arabic ? 'أمر التشغيل المحلي' : 'Local CLI command'}</summary>
                         {cliOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                          <LocalCliCommand desk={desk} arabic={arabic} />
+                          <DeferredFillView view="LocalCliCommand" desk={desk} arabic={arabic} />
                         </Suspense>}
                       </details>
                     </div>
                     {desk.template && desk.sheet && (
                       <Suspense>
-                        <BatchDraftControls key={desk.sourceRevision} desk={desk} arabic={arabic} />
+                        <DeferredFillView view="BatchDraftControls" key={desk.sourceRevision} desk={desk} arabic={arabic} />
                       </Suspense>
                     )}
                   </div>
@@ -376,7 +341,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                       <h2 className="preview-heading" id="preview-heading">{labels.preview}</h2>
                       <div className="preview-bed"><p className="preview-message" role="status">{labels.previewBusy}</p></div>
                     </>}>
-                      <WorkbenchPreview template={desk.template} desk={desk} language={language} />
+                      <DeferredFillView view="WorkbenchPreview" template={desk.template} desk={desk} language={language} />
                     </Suspense>
                   )
                   : (
@@ -402,7 +367,7 @@ export function App({ language, heading, summary, details }: AppProps) {
 
             {desk.rows.length > 0 && (
               <Suspense>
-                <Hygiene key={desk.sourceRevision} desk={desk} arabic={arabic} />
+                <DeferredFillView view="Hygiene" key={desk.sourceRevision} desk={desk} arabic={arabic} />
               </Suspense>
             )}
             <QueuePanel desk={desk} language={language} characterKeys={characterKeys} />
@@ -411,20 +376,20 @@ export function App({ language, heading, summary, details }: AppProps) {
               <header>
                 <h2 id="export-heading">{labels.export}</h2>
                 {desk.results
-                  ? <Suspense><CheckedExportCounts desk={desk} arabic={arabic} /></Suspense>
+                  ? <Suspense><DeferredFillView view="CheckedExportCounts" desk={desk} arabic={arabic} /></Suspense>
                   : <p data-testid="export-counts">{labels.exportWait}</p>}
               </header>
               <div className="panel-body export-actions">
                 {!subset && <p role="status" className="tag tag-pass" data-testid="export-scope">{fillLabel(labels.exportAll, { count: desk.exportCount })}</p>}
                 {(subset || desk.checkedWorker || (desk.grouping && desk.results)) &&
-                  <Suspense><ExportDetails desk={desk} language={language} /></Suspense>}
+                  <Suspense><DeferredFillView view="ExportDetails" desk={desk} language={language} /></Suspense>}
                 <div className="actions">
                   <button type="button" className="button primary" data-testid="download-zip" disabled={!desk.exportCount || desk.exporting || desk.groupingBlocked || (desk.flattenZip && desk.printSettingsBlocked)}
                     onClick={() => desk.download('zip')}>{arabic ? <span>{labels.zip} <bdi dir="ltr">(ZIP)</bdi></span> : labels.zip}</button>
                   <button type="button" className="button secondary" disabled={!desk.exportCount || desk.exporting || desk.printSettingsBlocked}
                     onClick={() => desk.download('merged')}>{labels.merged}</button>
-                  {desk.template && <Suspense><PrintCertificateDownload desk={desk} arabic={arabic} /></Suspense>}
-                  {desk.grouping && <Suspense><SplitDownload desk={desk} arabic={arabic} /></Suspense>}
+                  {desk.template && <Suspense><DeferredFillView view="PrintCertificateDownload" desk={desk} arabic={arabic} /></Suspense>}
+                  {desk.grouping && <Suspense><DeferredFillView view="SplitDownload" desk={desk} arabic={arabic} /></Suspense>}
                 </div>
                 <div className="actions audit-actions" role="group" aria-label={labels.audit}>
                   <button type="button" className="button secondary" disabled={!desk.results || emptySubset || desk.exporting || desk.groupingBlocked}
@@ -435,41 +400,18 @@ export function App({ language, heading, summary, details }: AppProps) {
                 <div className="custody-controls">
                   {desk.custody ? (
                     <Suspense fallback={custodyPending}>
-                      <CompletedCustody desk={desk} arabic={arabic} label={custodyLabel} />
+                      <DeferredFillView view="CompletedCustody" desk={desk} arabic={arabic} label={custodyLabel} />
                     </Suspense>
                   ) : custodyPending}
                 </div>
-                {(desk.exporting || desk.exportError) && <Suspense><ExportFeedback desk={desk} language={language} /></Suspense>}
+                {(desk.exporting || desk.exportError) && <Suspense><DeferredFillView view="ExportFeedback" desk={desk} language={language} /></Suspense>}
               </div>
             </section>
           </div>
 
-          {extractOpened && <div hidden={!extractMode}>
-            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}><PdfExtractor arabic={arabic} /></Suspense>
-          </div>}
-          {design && <div hidden={!designMode}>
-            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
-              <FieldDesigner key={design.revision} arabic={arabic} initialSource={design.source} onUseInFill={useTemplateInFill} />
-            </Suspense>
-          </div>}
-          {studioOpened && <div hidden={mode !== 'create'}>
-            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
-              <TemplateStudio arabic={arabic} onUseInFill={useTemplateInFill} />
-            </Suspense>
-          </div>}
-          {mode === 'verify' && <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
-            <ReceiptVerifier arabic={arabic} />
+          {opened && <Suspense fallback={!fillMode && <p role="status" className="quiet">{labels.loading}</p>}>
+            <UtilityModes mode={mode} opened={opened} design={design} arabic={arabic} loading={labels.loading} onUseInFill={useTemplateInFill} />
           </Suspense>}
-          {packetOpened && <div hidden={mode !== 'packet'}>
-            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
-              <PacketWorkbench arabic={arabic} active={mode === 'packet'} />
-            </Suspense>
-          </div>}
-          {compareOpened && <div hidden={mode !== 'compare'}>
-            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
-              <CompareTemplates arabic={arabic} onUseInFill={useTemplateInFill} />
-            </Suspense>
-          </div>}
         </div>
 
         {details && <div className="route-details" dangerouslySetInnerHTML={details} />}

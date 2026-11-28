@@ -2,6 +2,7 @@ import * as engine from '../core/roster';
 import type { RosterSheet } from '../core/roster';
 import type { FieldMetadata } from '../core/pdf';
 import type { BatchDraft } from '../core/draft/batch-draft';
+import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import * as virtual from '../core/roster/virtual-columns';
 import { planGroupedOutput } from '../core/export/grouping';
 import { conditionalRuleColumns, type ConditionalFieldRule } from '../core/rules/conditional-fields';
@@ -9,6 +10,9 @@ import type { RosterSchemaRule } from '../core/validation/roster-schema';
 import { errorCode } from './resources';
 
 type ActiveSheet = { sheetName?: string; sheet?: RosterSheet; sheetError?: string };
+type Cells = Pick<BatchDraft, 'edits' | 'hygiene'>;
+export type CellState = Cells & { undo?: Cells; undoExpired?: boolean; revision: number };
+
 export type RosterSource = ActiveSheet & {
   name: string;
   bytes: Uint8Array;
@@ -23,6 +27,30 @@ export type RosterSource = ActiveSheet & {
 
 export const rosterViews = {
   planGroupedOutput,
+  editCell(current: CellState, row: number, column: string, value: string): CellState {
+    return {
+      ...current, undo: undefined, undoExpired: current.undoExpired || Boolean(current.undo),
+      edits: { ...current.edits, [row]: { ...current.edits[row], [column]: value } },
+    };
+  },
+  restoreRowEdit(current: CellState, row: number, original: Record<string, string> | undefined): CellState {
+    const edits = { ...current.edits };
+    if (original) edits[row] = original;
+    else delete edits[row];
+    return { ...current, edits, undo: undefined, undoExpired: current.undoExpired || Boolean(current.undo) };
+  },
+  applyHygiene(current: CellState, operation: HygieneOperation, preview: HygienePreview): CellState {
+    const edits = { ...current.edits };
+    for (const { rowIndex, column, after } of preview.changes) {
+      if (edits[rowIndex] === current.edits[rowIndex]) edits[rowIndex] = { ...current.edits[rowIndex] };
+      Object.defineProperty(edits[rowIndex], column, { value: after, enumerable: true, writable: true, configurable: true });
+    }
+    const { affectedRows, affectedCells } = preview;
+    return {
+      edits, hygiene: [...current.hygiene, { operation, affectedRows, affectedCells }],
+      undo: { edits: current.edits, hygiene: current.hygiene }, revision: current.revision + 1,
+    };
+  },
   fieldMapping(fields: readonly FieldMetadata[], headers: readonly string[], values: Record<string, string>,
     bindings: Record<string, virtual.VirtualColumnMapping>, fromPreset: boolean, remapMissing = false) {
     const auto = !fromPreset || remapMissing

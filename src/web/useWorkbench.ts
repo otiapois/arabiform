@@ -5,8 +5,9 @@ import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
 import type { FourUpOptions } from '../core/pdf/imposition-settings';
 import type { FieldTypography, FieldTypographyMap } from '../core/pdf/field-typography';
-import { DEFAULT_QR_STAMP, type CoverLanguage, type QrStampSettings } from '../core/pdf/qr-settings';
-import { DEFAULT_WATERMARK, type WatermarkSettings } from '../core/pdf/watermark-settings';
+import { DEFAULT_QR_STAMP, DEFAULT_WATERMARK } from '../core/pdf/print-setting-defaults';
+import type { CoverLanguage, QrStampSettings } from '../core/pdf/qr-settings';
+import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { HygieneOperation, HygienePreview } from '../core/roster/hygiene';
 import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
@@ -18,9 +19,9 @@ import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { RowSelection } from '../core/worker/row-selection';
 import type { BatchPublication } from './BatchSession';
 import type { FillTemplate, FlatSource, MigratedTemplate } from './fill-template-source';
-import type { FontMode, MappingPreset } from './presets';
+import type { FontMode, restorePresetSettings } from './presets';
 import { errorCode, saveDownload } from './resources';
-import type { RosterSource } from './roster-source';
+import type { CellState, RosterSource } from './roster-source';
 import type { planReviewOutput } from './RedactedReview';
 
 type PdfEngine = typeof import('../core/pdf');
@@ -64,9 +65,6 @@ type ReviewSettings = {
 };
 
 type FieldSelection = { fieldName: string; widgetIndex?: number };
-
-type Cells = Pick<BatchDraft, 'edits' | 'hygiene'>;
-type CellState = Cells & { undo?: Cells; undoExpired?: boolean; revision: number };
 
 export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [template, setTemplate] = useState<FillTemplate>();
@@ -269,7 +267,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
             request.current.customFont++;
             setCustomFont(undefined);
           }
-          restoreSettings(preset);
+          restoreSettings(codec.restorePresetSettings(preset));
         }
         setTemplate(migration?.synthetic ? { ...result.template, synthetic: true } : result.template);
       }
@@ -344,14 +342,14 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setBusy({ pdf: true, roster: true });
     try {
       const { loadSampleWorkflow } = await import('./workflow-loader');
-      const { template, roster, notice, rules, preset } = await loadSampleWorkflow(selectedSample, openedAt, locale);
+      const { template, roster, notice, rules, restoredSettings } = await loadSampleWorkflow(selectedSample, openedAt, locale);
       if (request.current.pdf === pdfId) setTemplate(template);
       if (request.current.roster === rosterId) setRoster(roster);
       if (request.current.pdf === pdfId && request.current.roster === rosterId) {
         setSample({ workflow: selectedSample, notice });
         if (request.current.preset === presetId) {
           if (rules) setConditionalRules(rules);
-          if (preset) restoreSettings(preset);
+          if (restoredSettings) restoreSettings(restoredSettings);
         }
       }
     } catch (error) {
@@ -437,39 +435,21 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }
 
   function editCell(row: number, column: string, value: string) {
+    if (!roster) return;
     recheck();
-    setCellState((current) => ({
-      ...current, undo: undefined, undoExpired: current.undoExpired || Boolean(current.undo),
-      edits: { ...current.edits, [row]: { ...current.edits[row], [column]: value } },
-    }));
+    setCellState((current) => roster.views.editCell(current, row, column, value));
   }
 
   function restoreRowEdit(row: number, original: Record<string, string> | undefined) {
-    if (edits[row] === original) return;
+    if (!roster || edits[row] === original) return;
     recheck();
-    setCellState((current) => {
-      const restored = { ...current.edits };
-      if (original) restored[row] = original;
-      else delete restored[row];
-      return { ...current, edits: restored, undo: undefined, undoExpired: current.undoExpired || Boolean(current.undo) };
-    });
+    setCellState((current) => roster.views.restoreRowEdit(current, row, original));
   }
 
   function applyHygiene(operation: HygieneOperation, preview: HygienePreview) {
-    if (!preview.affectedCells || exportLocked()) return;
+    if (!roster || !preview.affectedCells || exportLocked()) return;
     recheck();
-    setCellState((current) => {
-      const edits = { ...current.edits };
-      for (const { rowIndex, column, after } of preview.changes) {
-        if (edits[rowIndex] === current.edits[rowIndex]) edits[rowIndex] = { ...current.edits[rowIndex] };
-        Object.defineProperty(edits[rowIndex], column, { value: after, enumerable: true, writable: true, configurable: true });
-      }
-      const { affectedRows, affectedCells } = preview;
-      return {
-        edits, hygiene: [...current.hygiene, { operation, affectedRows, affectedCells }],
-        undo: { edits: current.edits, hygiene: current.hygiene }, revision: current.revision + 1,
-      };
-    });
+    setCellState((current) => roster.views.applyHygiene(current, operation, preview));
   }
 
   function undoHygiene() {
@@ -515,87 +495,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setCustomFont(undefined);
   }
 
-  function changePattern(value: string) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setPattern(value);
-  }
-
-  function changeRowSelection(selection: RowSelection) {
-    if (exportLocked()) return;
-    clearExportError();
-    setRowSelection(selection);
-  }
-
-  function changeFlattenZip(value: boolean) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setFlattenZip(value);
-  }
-
-  function changeGrouping(column: string | null) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setGroupByColumn(column);
-  }
-
-  function changeIncludeCoverSheet(value: boolean) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setIncludeCoverSheet(value);
-    if (!value) setIncludeCustody(false);
-  }
-
-  function changeIncludeCustody(value: boolean) {
-    if (exportLocked()) return;
-    clearExportError();
-    setIncludeCustody(value);
-  }
-
-  function changeWatermark(value: WatermarkSettings, valid: boolean) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setWatermark({ value, valid });
-  }
-
-  function changeQrStamp(value: QrStampSettings, valid: boolean) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setQrStamp({ value, valid });
-  }
-
-  function changeApprovalSeal(value: ApprovalSealSettings | null, valid: boolean) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setApprovalSeal({ value, valid });
-  }
-
-  function changeCoverLanguage(value: CoverLanguage) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setCoverLanguage(value);
-  }
-
-  function changeImposition(value: Imposition) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setImposition(value);
-  }
-
-  function changeFourUp(value: FourUpOptions) {
-    if (exportLocked()) return;
-    clearExportError();
-    request.current.draft++;
-    setFourUp(value);
+  function changeOutput<Args extends unknown[]>(apply: (...values: Args) => void, updateDraft = true) {
+    return (...values: Args) => {
+      if (exportLocked()) return;
+      clearExportError();
+      if (updateDraft) request.current.draft++;
+      apply(...values);
+    };
   }
 
   async function importPreset(file: File) {
@@ -611,36 +517,31 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setPresetCodec(codec);
       if (customFontId === request.current.customFont) clearCustomFont();
       else recheck();
-      restoreSettings(preset);
+      restoreSettings(codec.restorePresetSettings(preset));
     } catch {
       if (id === request.current.preset) setPresetError(true);
     }
   }
 
-  function restoreSettings(preset: MappingPreset) {
+  function restoreSettings(settings: ReturnType<typeof restorePresetSettings>) {
     setRoster((current) => current?.remapMissing ? { ...current, remapMissing: false } : current);
-    setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
-      virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined,
-      typography: 'fieldTypography' in preset ? preset.fieldTypography : undefined });
-    setConditionalRules('conditionalRules' in preset ? preset.conditionalRules : emptyRules);
-    setSchemaRules('schemaRules' in preset ? preset.schemaRules : emptySchema);
-    setPattern(preset.filenamePattern);
-    setMinFontSize(preset.minFontSize);
-    setFont(preset.font);
-    setFlattenZip(preset.version !== 1 && preset.flattenZip);
-    setGroupByColumn('groupByColumn' in preset ? preset.groupByColumn : null);
-    setIncludeCoverSheet('includeCoverSheet' in preset && preset.includeCoverSheet);
+    setMappingSettings(settings.mappingSettings);
+    setConditionalRules(settings.conditionalRules ?? emptyRules);
+    setSchemaRules(settings.schemaRules ?? emptySchema);
+    setPattern(settings.pattern);
+    setMinFontSize(settings.minFontSize);
+    setFont(settings.font);
+    setFlattenZip(settings.flattenZip);
+    setGroupByColumn(settings.group);
+    setIncludeCoverSheet(settings.includeCover);
     setIncludeCustody(false);
-    setWatermark({ value: 'watermark' in preset ? preset.watermark : DEFAULT_WATERMARK, valid: true });
-    const stamp = 'qrStamp' in preset ? preset.qrStamp : DEFAULT_QR_STAMP;
-    setQrStamp({ value: stamp, valid: true });
-    setQrOpen(stamp.placement !== 'none');
-    setApprovalSeal({ value: 'approvalSeal' in preset ? preset.approvalSeal : null, valid: true });
-    setCoverLanguage('coverLanguage' in preset ? preset.coverLanguage : 'auto');
-    setImposition('imposition' in preset ? preset.imposition : '1-up');
-    setFourUp(preset.version === 12 || (preset.version === 13 &&
-      (preset.imposition === '4-up' || preset.fourUpOrder !== 'sequential' || preset.centerCutGuides))
-      ? { fourUpOrder: preset.fourUpOrder, centerCutGuides: preset.centerCutGuides } : undefined);
+    setWatermark({ value: settings.watermark, valid: true });
+    setQrStamp({ value: settings.qrStamp, valid: true });
+    setQrOpen(settings.qrStamp.placement !== 'none');
+    setApprovalSeal({ value: settings.approvalSeal, valid: true });
+    setCoverLanguage(settings.coverLanguage);
+    setImposition(settings.imposition);
+    setFourUp(settings.fourUp);
   }
 
   function presetInputs() {
@@ -670,7 +571,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     else recheck();
     setPresetError(false);
     setPresetCodec(codec);
-    restoreSettings(draft.settings);
+    restoreSettings(codec.restorePresetSettings(draft.settings));
     setCellState((current) => ({ edits: draft.edits, hygiene: draft.hygiene, revision: current.revision + 1 }));
   }
 
@@ -678,22 +579,28 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     template, flatSource, roster, sample, busy, errors, sheet, rows, templateFields, fields, mapping, alignOverrides, changeAlignment,
     fieldTypography, changeFieldTypography, maskPolicies, changeMaskPolicy, protectedColumns,
     reviewFilenameFallback: plannedPattern !== pattern, groupProtected, qrProtected,
-    approvalSeal, changeApprovalSeal, sealSettingsBlocked, settingsSaveBlocked,
+    approvalSeal, changeApprovalSeal: changeOutput((value: ApprovalSealSettings | null, valid: boolean) => setApprovalSeal({ value, valid })),
+    sealSettingsBlocked, settingsSaveBlocked,
     conditionalRules, changeConditionalRules, conditionalSaveBlocked, schemaRules, changeSchemaRules,
     virtualMappings, virtualTemplateBlocked, changeVirtualMapping, fieldSelection, focusMappingField, selectWidget,
     sourceRevision: `${request.current.roster}:${roster?.sheetName ?? ''}`,
     cellRevision, edits, hygiene, canUndoHygiene: Boolean(undo), undoExpired, applyHygiene, undoHygiene,
     presetInputs, beginDraft, restoreDraft,
     hasMapping, selected, selectRow, previewPage, setPreviewPage: setRequestedPage, filter, setFilter,
-    rowSelection, changeRowSelection,
+    rowSelection, changeRowSelection: changeOutput(setRowSelection, false),
     minFontSize, font, customFont, fontBlocked, pattern, filenamePlans: grouping?.rows ?? filenamePlans,
-    flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
-    groupByColumn, grouping, groupingBlocked, changeGrouping,
+    flattenZip, changeFlattenZip: changeOutput(setFlattenZip), includeCoverSheet, changeIncludeCoverSheet: changeOutput((enabled: boolean) => {
+      setIncludeCoverSheet(enabled);
+      if (!enabled) setIncludeCustody(false);
+    }),
+    groupByColumn, grouping, groupingBlocked, changeGrouping: changeOutput(setGroupByColumn),
     output,
-    includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage, printLayout, changeImposition,
-    fourUp, changeFourUp,
-    watermark, watermarkBlocked, changeWatermark,
-    qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked, changeQrStamp,
+    includeCustody, changeIncludeCustody: changeOutput(setIncludeCustody, false), coverLanguage, changeCoverLanguage: changeOutput(setCoverLanguage),
+    printLayout, changeImposition: changeOutput(setImposition),
+    fourUp, changeFourUp: changeOutput(setFourUp),
+    watermark, watermarkBlocked, changeWatermark: changeOutput((value: WatermarkSettings, valid: boolean) => setWatermark({ value, valid })),
+    qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked,
+    changeQrStamp: changeOutput((value: QrStampSettings, valid: boolean) => setQrStamp({ value, valid })),
     ...job, batchSession, results, ready, flagged: results ? results.length - ready : 0, warningRows,
     exportScope: (hasMapping && job?.exportScope) || { exportScope: rowSelection === 'all-ready' ? 'all-ready' as const : 'selected-subset' as const, selectedRowNumbers: [] },
     exportCount: hasMapping ? job?.exportCount ?? 0 : 0,
@@ -703,7 +610,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     renderRecord: job?.renderRecord ?? idleRenderRecord,
     loadPdf, loadRoster, loadSample, changeSheet, changeMapping, resetMapping, editCell,
     rowEdit: edits[selected], restoreRowEdit,
-    changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
+    changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern: changeOutput(setPattern),
+    presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
     download: (kind: Parameters<NonNullable<typeof download>>[0]) => {
       if (!hasMapping && kind !== 'csv' && kind !== 'json') return;
