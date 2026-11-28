@@ -32,13 +32,19 @@ export const test = base.extend<{ traffic: Traffic }>({
 
     await use({ workers });
 
-    const evidence = { edge: browser.version(), viewport: page.viewportSize(), requests, workers, websockets, outside, errors };
+    const viewport = page.viewportSize()!;
+    const layout = await page.evaluate(() => ({
+      innerWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, bodyWidth: document.body.scrollWidth,
+    }));
+    const evidence = { edge: browser.version(), viewport, layout, requests, workers, websockets, outside, errors };
     await mkdir(testInfo.outputDir, { recursive: true });
     await writeFile(testInfo.outputPath('runtime.json'), JSON.stringify(evidence, null, 2));
     expect(outside, 'outbound HTTP/S requests').toEqual([]);
     expect(websockets, 'WebSocket connections').toEqual([]);
     expect(errors, 'browser errors, HTTP errors or PDF worker fallback').toEqual([]);
     expect(requests.length, 'the monitor observed genuine local traffic').toBeGreaterThan(0);
+    expect(layout.innerWidth, 'final browser viewport').toBe(viewport.width);
+    expect(Math.max(layout.documentWidth, layout.bodyWidth), 'final horizontal page extent').toBeLessThanOrEqual(viewport.width);
   }, { auto: true }],
 });
 
