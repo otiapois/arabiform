@@ -226,6 +226,41 @@ try {
   ]));
   await assert.rejects(lstat(m22Held), { code: 'ENOENT' });
 
+  const oldOffer = 'fixtures/m23/2026-offer.pdf';
+  const newOffer = 'fixtures/m23/2027-offer.pdf';
+  const diffArgs = ['--mode', 'diff-template', '--old', oldOffer, '--new'];
+  const presetArgs = ['--preset', 'fixtures/m23/offer-preset-v11.json'];
+  const cleanDiff = run(0, ...diffArgs, oldOffer, ...presetArgs, '--out-dir', join(directory, 'M23 Compatible'));
+  assert.equal(cleanDiff.status, 'clean');
+  assert.equal(cleanDiff.oldSha256, cleanDiff.newSha256);
+  const heldDiffDir = join(directory, 'M23 Unmapped');
+  const heldDiff = run(2, ...diffArgs, newOffer, ...presetArgs, '--out-dir', heldDiffDir);
+  assert.equal(heldDiff.presetStatus, 'blocked');
+  assert.equal(heldDiff.diagnostics[0].code, 'missing-target');
+  assert.deepEqual(await readdir(heldDiffDir), ['template-migration-report.csv', 'template-migration-report.json']);
+  const diffDir = join(directory, 'M23 Migrated');
+  const revised = run(2, ...diffArgs, newOffer, ...presetArgs, '--rename-map', 'fixtures/m23/offer-rename-map.json', '--out-dir', diffDir);
+  assert.equal(revised.presetStatus, 'ready');
+  assert.deepEqual(revised.appliedRenames, [{ field: 'FullName', target: 'EmployeeFullName' }]);
+  assert.equal(revised.geometryChangedFields[0].widthDeltaPt, -22);
+  assert.equal(revised.oldSha256, hash(await readFile(join(root, oldOffer))));
+  assert.equal(revised.newSha256, hash(await readFile(join(root, newOffer))));
+  const migrated = join(diffDir, 'migrated-preset.json');
+  assert.equal((await readJson(migrated)).version, 11);
+  const offerInputs = ['--template', newOffer, '--preset', migrated, '--roster', 'fixtures/m23/offer-roster.csv'];
+  assert.equal(run(0, '--mode', 'preflight', ...offerInputs, '--out-dir', join(directory, 'M23 Preflight')).ready, 2);
+
+  const staleDiff = join(directory, 'M23 Stale');
+  await mkdir(staleDiff);
+  await writeFile(join(staleDiff, 'migrated-preset.json'), 'previous');
+  assert.match(run(1, ...diffArgs, newOffer, ...presetArgs, '--out-dir', staleDiff).message, /already exists/);
+  assert.deepEqual(await readdir(staleDiff), ['migrated-preset.json']);
+  assert.equal(await readFile(join(staleDiff, 'migrated-preset.json'), 'utf8'), 'previous');
+  const blockedDiffDir = join(directory, 'M23 Rejected New');
+  const blocked = run(2, ...diffArgs, 'fixtures/golden/encrypted.pdf', '--out-dir', blockedDiffDir);
+  assert.deepEqual(blocked.issues, [{ side: 'new', code: 'encrypted-pdf' }]);
+  await assert.rejects(lstat(blockedDiffDir), { code: 'ENOENT' });
+
   const reserved = join(directory, 'Reserved');
   await mkdir(reserved);
   await writeFile(join(reserved, 'arabiform-preflight.json'), 'existing');
@@ -240,7 +275,7 @@ try {
   assert.match(run(1, '--mode', 'preflight', ...inputs, '--out-dir', join(link, 'nested')).message, /link, junction/);
   assert.deepEqual(await readdir(target), []);
   assert.equal(run(1, '--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir', 'safe/../escape').status, 'usage-error');
-  console.log('Real subprocess checks passed for all six modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, provenance audits, strict no-output refusal, and output-path guards.');
+  console.log('Real subprocess checks passed for all seven modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, M23 template diff exit 0/2 and v11 migration, strict no-output refusal, and output-path guards.');
 } finally {
   const actual = await realpath(directory);
   assert.equal(dirname(actual), tmp);

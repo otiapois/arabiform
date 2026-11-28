@@ -22,6 +22,8 @@ import { createCustodyManifest, MERGED_CUSTODY_FILENAME } from '../src/core/audi
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../src/core/custody/verify';
 import { generateStudioTemplate, STUDIO_TEMPLATE_IDS } from '../src/core/studio/templates';
 import { preflightPacket, type PacketTemplate } from '../src/core/packet/assembler';
+import { dispatchCli } from '../src/core/cli/dispatch';
+import { MIGRATED_PRESET_FILENAME } from '../src/core/template/diff-migrator';
 import type { ConditionalFieldRule, RuleApplication } from '../src/core/rules/conditional-fields';
 import type { BatchPreflightResult } from '../src/core/worker/protocol';
 
@@ -43,7 +45,7 @@ type AlignmentMode = 'auto' | 'rtl' | 'ltr' | 'center';
 type ExpectedAlignment = Record<string, { mode: AlignmentMode; anchor: 'rtl' | 'ltr' | 'center' }>;
 interface DesignerProof { source: string; rotation: number; rects: Record<string, NormalizedRect | readonly NormalizedRect[]> }
 const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean;
-  alignments?: ExpectedAlignment; designer?: DesignerProof; ruleApplied?: RuleApplication[] } & ExpectedChoices)[] = [];
+  alignments?: ExpectedAlignment; designer?: DesignerProof; ruleApplied?: RuleApplication[]; migratedPreset?: true } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
@@ -342,6 +344,51 @@ for (const [rowIndex, { values, outcomes, filename, label }] of statusExpected.e
   await compareRawPdf(consent, bytes, values, { checkboxes });
   await writeFile(resolve(root, filename), bytes);
   cases.push({ before: statusSource, after: filename, values, label, checkboxes, ruleApplied });
+}
+
+const [offerOld, offerNew, offerRoster, offerPreset, offerRename] = await Promise.all(
+  ['2026-offer.pdf', '2027-offer.pdf', 'offer-roster.csv', 'offer-preset-v11.json', 'offer-rename-map.json']
+    .map((name) => readFile(asset(`fixtures/m23/${name}`))),
+) as [Buffer, Buffer, Buffer, Buffer, Buffer];
+const offerDiff = await dispatchCli({
+  mode: 'diff-template', old: offerOld, new: offerNew, presetJson: offerPreset.toString('utf8'), renameMapJson: offerRename.toString('utf8'),
+});
+assert.equal(offerDiff.exitCode, 2);
+assert.deepEqual(offerDiff.report.appliedRenames, [{ field: 'FullName', target: 'EmployeeFullName' }]);
+const migratedOfferPreset = offerDiff.artifacts.find(({ name }) => name === MIGRATED_PRESET_FILENAME)?.data;
+assert(typeof migratedOfferPreset === 'string' && JSON.parse(migratedOfferPreset).version === 11);
+const offerFiles = { template: '2027-offer.pdf', roster: 'offer-roster.csv', outDir: '.', date: '2027-01-08' };
+const offerSources = {
+  template: offerNew, roster: offerRoster, templateName: offerFiles.template, rosterName: offerFiles.roster,
+  fonts: settings.fonts, date: offerFiles.date, presetJson: migratedOfferPreset,
+};
+const offerChecked = await dispatchCli({ mode: 'preflight', command: { mode: 'preflight', files: offerFiles }, sources: offerSources });
+const offerFilled = await dispatchCli({ mode: 'fill', command: { mode: 'fill', files: offerFiles, strict: true, cover: false, qr: false },
+  sources: offerSources });
+assert.equal(offerChecked.exitCode, 0, JSON.stringify(offerChecked.report));
+assert.equal(offerChecked.report.ready, 2);
+assert.equal(offerFilled.exitCode, 0, JSON.stringify(offerFilled.report));
+assert.equal(offerFilled.report.ready, 2);
+const offerZip = offerFilled.artifacts.find(({ name }) => name === 'arabiform-editable.zip')?.data;
+assert(offerZip instanceof Uint8Array);
+const offerMembers = unzipSync(offerZip);
+const offerExpected = [
+  { EmployeeFullName: 'مُحَمَّد سَالِم ١٢', EmployeeCode: '00123', ReviewReference: 'HR-0001', Department: 'ENG' },
+  { EmployeeFullName: 'سَلْمَى يَاسِين', EmployeeCode: '00007', ReviewReference: 'HR-0002', Department: 'OPS' },
+];
+const offerRules = [[{ field: 'EmployeeFullName', ruleIndex: 1 }, { field: 'Department', ruleIndex: 2 }], []];
+assert.deepEqual((offerChecked.report.rows as { ruleApplied?: RuleApplication[] }[]).map(({ ruleApplied }) => ruleApplied), offerRules);
+assert.deepEqual(Object.keys(offerMembers).sort(), ['00007.pdf', '00123.pdf']);
+const offerBefore = await snapshotSource(offerNew);
+for (const [index, values] of offerExpected.entries()) {
+  const raw = offerMembers[`${values.EmployeeCode}.pdf`];
+  assert(raw);
+  const filename = `m23-migrated-offer-${values.EmployeeCode}.pdf`;
+  const dropdowns = { Department: { label: index === 0 ? 'Engineering' : 'Operations' } };
+  await compareRawPdf(offerNew, raw, values, { dropdowns });
+  await writeFile(resolve(root, filename), raw);
+  cases.push({ before: offerBefore, after: filename, values, dropdowns, migratedPreset: true,
+    label: `M23 migrated v11 employment offer ${values.EmployeeCode}`, ruleApplied: offerRules[index] });
 }
 
 const m4 = await readFile(asset('fixtures/m4/multi-page-hr-choices.pdf'));

@@ -2,6 +2,7 @@ import { lstat, mkdir, open, readFile, readdir, realpath, stat, unlink, type Fil
 import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { CLI_USAGE, CliUsageError, isSafeLocalComponent, isSafeLocalPath, parseCliArgs, type CliCommand } from '../src/core/cli/arguments';
 import { dispatchCli, type CliJob } from '../src/core/cli/dispatch';
+import { MIGRATED_PRESET_FILENAME } from '../src/core/template/diff-migrator';
 
 function nativePath(path: string) {
   if (!isSafeLocalPath(path) || process.platform !== 'win32' && (path.includes('\\') || /^[A-Za-z]:/.test(path))) {
@@ -42,6 +43,17 @@ async function loadFonts() {
 }
 
 async function loadJob(command: Exclude<CliCommand, { mode: 'help' }>, date: string): Promise<{ job: CliJob; outDir?: string }> {
+  if (command.mode === 'diff-template') {
+    const { outDir, old, new: revised, preset, renameMap } = command;
+    nativePath(outDir);
+    const [oldBytes, newBytes, presetBytes, renameMapBytes] = await Promise.all([
+      readLocal(old), readLocal(revised), preset && readLocal(preset), renameMap && readLocal(renameMap),
+    ]);
+    const utf8 = new TextDecoder('utf-8', { fatal: true });
+    return { outDir, job: { mode: 'diff-template', old: oldBytes, new: newBytes,
+      presetJson: presetBytes ? utf8.decode(presetBytes) : undefined,
+      renameMapJson: renameMapBytes ? utf8.decode(renameMapBytes) : undefined } };
+  }
   if (command.mode === 'packet') {
     const { outDir, templates, roster, mappings, sheet, groupBy, cover } = command;
     nativePath(outDir);
@@ -131,7 +143,7 @@ async function outputDirectory(path: string) {
   return lstat(path);
 }
 
-async function writeArtifacts(outDir: string, artifacts: Awaited<ReturnType<typeof dispatchCli>>['artifacts']) {
+async function writeArtifacts(outDir: string, artifacts: Awaited<ReturnType<typeof dispatchCli>>['artifacts'], reservedNames: readonly string[] = []) {
   const directory = nativePath(outDir);
   const names = new Set<string>();
   for (const { name } of artifacts) {
@@ -147,7 +159,7 @@ async function writeArtifacts(outDir: string, artifacts: Awaited<ReturnType<type
       throw new Error('Output directory changed during the operation: ' + directory);
     }
   };
-  for (const { name } of artifacts) {
+  for (const name of new Set([...artifacts.map(({ name }) => name), ...reservedNames])) {
     if (await inspectPath(join(directory, name))) throw new Error('Output already exists: ' + join(directory, name));
   }
   const opened: { path: string; file: FileHandle; identity: FileIdentity }[] = [];
@@ -192,7 +204,9 @@ async function main() {
   }
   const { job, outDir } = await loadJob(command, date);
   const result = await dispatchCli(job);
-  if (outDir !== undefined && result.artifacts.length) await writeArtifacts(outDir, result.artifacts);
+  if (outDir !== undefined && result.artifacts.length) {
+    await writeArtifacts(outDir, result.artifacts, command.mode === 'diff-template' ? [MIGRATED_PRESET_FILENAME] : []);
+  }
   const channel = result.diagnostic ? process.stderr : process.stdout;
   channel.write(JSON.stringify({ ...result.report, ...(result.artifacts.length && { outputs: result.artifacts.map(({ name }) => name) }) }, null, 2) + '\n');
   process.exitCode = result.exitCode;

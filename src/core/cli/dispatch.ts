@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 import { createCustodyManifest, MERGED_CUSTODY_FILENAME, type CustodyVariant } from '../audit/custody';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../custody/verify';
-import { validateMappingPreset } from '../draft/mapping-preset';
+import { isRecord, validateMappingPreset } from '../draft/mapping-preset';
 import { planGroupedOutput } from '../export/grouping';
 import { extractBatch, type ExtractInput } from '../extractor/extract';
 import { createAudit, inspectTemplate } from '../pdf';
@@ -15,6 +15,9 @@ import { autoMap, inspectRosterWorkbook, planFilenames, readRoster, type RosterS
 import { filenameKey, physicalFilenameColumns } from '../roster/filenames';
 import { resolveVirtualMapping } from '../roster/virtual-columns';
 import { generateStudioTemplate } from '../studio/templates';
+import { buildTemplateMigrationReport, inspectTemplateDiff, migrateTemplatePreset,
+  MIGRATED_PRESET_FILENAME, serializeTemplateMigrationReportCsv, TEMPLATE_MIGRATION_CSV_FILENAME,
+  TEMPLATE_MIGRATION_JSON_FILENAME, TemplateDiffIntakeError } from '../template/diff-migrator';
 import { createBatchProcessor } from '../worker/batch';
 import type { BatchMergedResult, BatchPreflightResult, BatchZipResult } from '../worker/protocol';
 import { resolveRowSelection } from '../worker/row-selection';
@@ -33,6 +36,7 @@ type BatchSources = {
 export type CliJob =
   | (({ mode: 'preflight' } | { mode: 'fill' }) & { command: BatchCommandLine; sources: BatchSources })
   | { mode: 'packet'; input: PacketInput; mappingsJson?: string }
+  | { mode: 'diff-template'; old: Uint8Array; new: Uint8Array; presetJson?: string; renameMapJson?: string }
   | { mode: 'extract'; inputs: readonly ExtractInput[] }
   | { mode: 'verify'; manifestJson: string; source: { qrPayload: string } | {
     inputs: readonly (ExtractInput & { parentFolder?: string })[];
@@ -46,6 +50,42 @@ type CliResult = { exitCode: 0 | 1 | 2; report: { status: string } & Record<stri
 const idle = () => {};
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+async function runTemplateDiff(job: Extract<CliJob, { mode: 'diff-template' }>): Promise<CliResult> {
+  let preset: unknown;
+  let renameMap: unknown;
+  try {
+    if (job.presetJson !== undefined) preset = JSON.parse(job.presetJson);
+    if (job.renameMapJson !== undefined) {
+      renameMap = JSON.parse(job.renameMapJson);
+      // JSON.parse keeps only the last duplicate key. Count separators outside quoted strings
+      // in the flat map so duplicate source keys cannot silently replace an explicit choice.
+      if (isRecord(renameMap) && Object.values(renameMap).every((value) => typeof value === 'string')) {
+        const separators = [...job.renameMapJson.matchAll(/"(?:[^"\\]|\\[\s\S])*"|:/g)].filter(([token]) => token === ':');
+        if (separators.length !== Object.keys(renameMap).length) renameMap = null;
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return { exitCode: 1, report: { status: 'usage-error', message: 'Use valid JSON for --preset and --rename-map.' }, artifacts: [], diagnostic: true };
+  }
+  let diff: Awaited<ReturnType<typeof inspectTemplateDiff>>;
+  try {
+    diff = await inspectTemplateDiff(job.old, job.new);
+  } catch (error) {
+    if (!(error instanceof TemplateDiffIntakeError)) throw error;
+    return { exitCode: 2, report: { status: 'blocked', issues: [{ side: error.side, code: error.code }] },
+      artifacts: [], diagnostic: true };
+  }
+  const migration = job.presetJson === undefined ? undefined : migrateTemplatePreset(diff, preset, renameMap);
+  const report = buildTemplateMigrationReport(diff, migration);
+  const artifacts: CliArtifact[] = [
+    { name: TEMPLATE_MIGRATION_CSV_FILENAME, data: serializeTemplateMigrationReportCsv(report) },
+    { name: TEMPLATE_MIGRATION_JSON_FILENAME, data: json(report) },
+  ];
+  if (migration?.preset) artifacts.push({ name: MIGRATED_PRESET_FILENAME, data: json(migration.preset) });
+  return { exitCode: report.status === 'clean' ? 0 : 2, report, artifacts };
+}
 
 async function runPacket(input: PacketInput, mappingsJson?: string): Promise<CliResult> {
   if (mappingsJson !== undefined) {
@@ -232,6 +272,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
 export async function dispatchCli(job: CliJob): Promise<CliResult> {
   if (job.mode === 'preflight' || job.mode === 'fill') return runBatch(job.command, job.sources);
   if (job.mode === 'packet') return runPacket(job.input, job.mappingsJson);
+  if (job.mode === 'diff-template') return runTemplateDiff(job);
   if (job.mode === 'studio') {
     const { pdfBytes, csv, filename, csvFilename } = await generateStudioTemplate(job.template, {}, job.fonts);
     return { exitCode: 0, report: { status: 'clean', template: job.template }, artifacts: [
