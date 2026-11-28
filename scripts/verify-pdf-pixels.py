@@ -136,6 +136,7 @@ def check_case(case, directory):
     dropdowns = case.get("dropdowns", {})
     radios = case.get("radios", {})
     alignments = case.get("alignments", {})
+    rule_applied = case.get("ruleApplied")
     label = case.get("label", after_path.name)
     seen = Counter()
     results = []
@@ -197,8 +198,22 @@ def check_case(case, directory):
                         elif designer and field in radios:
                             assert amount == 0, (label, field, "unselected authored radio changed its off pixels")
                         state_key = "checkboxState" if field in checkboxes else "radioState"
+                        canonical = {}
+                        if rule_applied is not None and field in checkboxes:
+                            field_xref = widget.xref
+                            while True:
+                                kind, parent = filled.xref_get_key(field_xref, "Parent")
+                                if kind != "xref":
+                                    break
+                                field_xref = int(parent.split()[0])
+                            kind, value = filled.xref_get_key(field_xref, "V")
+                            assert (kind, value) == ("name", f"/{expected[field]}"), (label, field, "canonical /V", value)
+                            kind, appearance = filled.xref_get_key(widget.xref, f"AP/N/{state}")
+                            assert kind == "xref" and filled.xref_stream(int(appearance.split()[0])), (label, field, "empty active /AP")
+                            canonical = {"canonicalValue": value, "activeAppearanceNonempty": True}
                         results.append({"field": field, "page": page.number + 1, state_key: state,
-                                        "inkBboxAt4x": bounds if amount else None, "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset})
+                                        "inkBboxAt4x": bounds if amount else None, "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset,
+                                        **canonical})
                         continue
                     assert (widget.field_value or "") == expected[field], (label, field, widget.field_value, expected[field])
                     bounds, amount = ink_bounds(text_only_baseline, after, box)
@@ -213,6 +228,7 @@ def check_case(case, directory):
                     measured_alignment = check_alignment(alignments[field], filled, widget, page, bounds, box, label, bool(designer)) if field in alignments else {}
                     results.append({"field": field, "page": page.number + 1, "inkBboxAt4x": bounds if amount else None,
                                     "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset, **measured_alignment,
+                                    **({"canonicalValue": widget.field_value or "", "activeAppearanceNonempty": True} if rule_applied is not None else {}),
                                     **({"dropdownLabel": display} if field in dropdowns else {})})
                 assert_same_outside(before, after, allowed, f"{label} page {page.number + 1}")
                 assert_same_outside(text_only_baseline, after, allowed, f"{label} text on page {page.number + 1}")
@@ -221,6 +237,7 @@ def check_case(case, directory):
         warnings = fitz.TOOLS.mupdf_warnings(reset=True)
         assert not warnings, f"{label}: MuPDF emitted font or appearance warnings: {warnings}"
     return {"label": label, "outsideMappedWidgetChangedPixels": 0, "clippedInkPixels": 0, "widgets": results,
+            **({"ruleApplied": rule_applied} if rule_applied is not None else {}),
             **({"designer": designer} if designer else {})}
 
 
@@ -859,6 +876,11 @@ def main():
     if packet:
         print(f"M21: {len(packet['documents'])} exact bilingual packet index entries, {packet['formPagesIdenticalAt4x']} individually matched form pages at 4x, "
               "Arabic with harakat and English preserved, 0 clipped/outside pixels, 0 widgets and exact SHA-256.")
+    conditional = [case for case in results if "ruleApplied" in case]
+    if conditional:
+        widgets = sum(len(case["widgets"]) for case in conditional)
+        print(f"M22: {len(conditional)} conditional fills and {widgets} widgets with exact Arabic/checkbox values, "
+              "active appearances, 0 clipped pixels and 0 outside changes at 4x.")
 
 
 if __name__ == "__main__":

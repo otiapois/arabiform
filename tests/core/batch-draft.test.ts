@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { hashBatchDraftInput, parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
-import { validateMappingPreset, type MappingPresetV7, type MappingPresetV8 } from '../../src/core/draft/mapping-preset';
+import { validateMappingPreset, type MappingPresetV7, type MappingPresetV8, type MappingPresetV11 } from '../../src/core/draft/mapping-preset';
 
 const draft: BatchDraft = {
   kind: 'arabiform-batch-draft', version: 1,
@@ -76,6 +76,26 @@ describe('portable batch draft boundary', () => {
     expect(() => parseBatchDraft(text, { ...saved.source, sheetName: 'Summary' })).toThrow('batch-draft-source-mismatch');
     expect(validateMappingPreset({ ...settings, imposition: 'duplex' })).toBeUndefined();
     expect(validateMappingPreset({ ...settings, version: 7 })).toBeUndefined();
+  });
+
+  it('roundtrips ordered v11 rules in an outer v1 draft and rejects mismatched exact source references', () => {
+    const settings: MappingPresetV11 = {
+      ...draft.settings, version: 11, watermark: { kind: 'none' }, virtualMappings: {},
+      qrStamp: { placement: 'none' }, coverLanguage: 'auto', imposition: '1-up', groupByColumn: null,
+      fieldTypography: { ID: { numeralPolicy: 'eastern-arabic' } }, approvalSeal: null,
+      conditionalRules: [
+        { field: 'Name', column: 'Badge', operator: 'gte-number', operand: '00007', action: { type: 'set-text', value: 'مُعْتَمَد {{الاسم}} {{__proto__}}' } },
+        { field: 'ID', column: 'الاسم', operator: 'is-blank', action: { type: 'clear-field' } },
+      ],
+    };
+    const saved = { ...draft, settings };
+    expect(parseBatchDraft(serializeBatchDraft(saved), draft.source)).toEqual(saved);
+    const rule = settings.conditionalRules[0]!;
+    for (const invalid of [{ ...rule, field: 'Missing' }, { ...rule, column: 'badge' },
+      { ...rule, action: { type: 'set-text', value: '{{missing}}' } }]) {
+      expect(() => parseBatchDraft(JSON.stringify({ ...saved, settings: { ...settings, conditionalRules: [invalid] } }), draft.source))
+        .toThrow('invalid-batch-draft');
+    }
   });
 
   it('requires active custom font content to match without carrying binary bytes', () => {
