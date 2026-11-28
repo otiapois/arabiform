@@ -141,6 +141,22 @@ for (const locale of ['en', 'ar']) {
     await expect(sources.locator('bdi.packet-number[dir=ltr]')).toHaveText(['#1', '#2']);
     await expect(page.getByTestId('packet-download-zip').locator('bdi[dir=ltr]')).toHaveText('(.zip)');
     await expect(page.getByTestId('packet-download-manifest').locator('bdi[dir=ltr]')).toHaveText('(.json)');
+    const rtlExtensions = [];
+    if (ar) {
+      for (const id of ['packet-download-zip', 'packet-download-manifest']) {
+        const glyphs = await page.getByTestId(id).locator('bdi').evaluate(el => {
+          const node = el.firstChild!;
+          return Array.from(node.textContent!, (char, index) => {
+            const range = document.createRange();
+            range.setStart(node, index);
+            range.setEnd(node, index + 1);
+            return { char, x: range.getBoundingClientRect().left };
+          });
+        });
+        for (let i = 1; i < glyphs.length; i++) expect(glyphs[i]!.x, id + ' ' + glyphs[i]!.char).toBeGreaterThan(glyphs[i - 1]!.x);
+        rtlExtensions.push({ id, glyphs });
+      }
+    }
     await noOverflow(page);
     const accessibility = await auditPage(page, 'workbench');
     await capture(page, info, ar);
@@ -155,7 +171,7 @@ for (const locale of ['en', 'ar']) {
     await expect(table).toHaveCount(0);
     await expect(page.getByTestId('packet-download-zip')).toBeDisabled();
     await expect(page.getByTestId('packet-download-manifest')).toBeDisabled();
-    await writeFile(info.outputPath('packet-ui.json'), JSON.stringify({ idle, accessibility }, null, 2));
+    await writeFile(info.outputPath('packet-ui.json'), JSON.stringify({ idle, accessibility, rtlExtensions }, null, 2));
   });
 
   test('M21 ' + locale + ' real upload holds the whole recipient when document two is too narrow', async ({ page }, info) => {
