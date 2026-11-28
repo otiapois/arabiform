@@ -52,6 +52,7 @@ import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
 import { generateStudioTemplate, STUDIO_ACCENT_PALETTES, STUDIO_HEADER_LANGUAGES, STUDIO_TEMPLATE_IDS } from '../../src/core/studio/templates';
 import { inspectTemplateDiff, migrateTemplatePreset } from '../../src/core/template/diff-migrator';
+import { prepareRosterSchema } from '../../src/core/validation/roster-schema';
 
 import { proveQrMatrix } from './qr-proof';
 
@@ -88,7 +89,106 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(50_000);
+  expect(acceptedCases).toBeGreaterThanOrEqual(53_246);
+});
+
+describe('M26 seeded roster validation', () => {
+  const examples = [
+    ['SA', '00' + '0'.repeat(18)], ['AE', '0'.repeat(19)], ['QA', 'AAAA' + '0'.repeat(21)],
+    ['KW', 'AAAA' + '0'.repeat(22)], ['BH', 'AAAA' + '0'.repeat(14)], ['OM', '0'.repeat(19)],
+    ['EG', '0'.repeat(25)], ['JO', 'AAAA' + '0'.repeat(22)], ['GB', 'AAAA' + '0'.repeat(14)], ['DE', '0'.repeat(18)],
+  ] as const;
+  const ibanCheck = prepareRosterSchema([{ column: 'IBAN', kind: 'iban-mod97' }], ['IBAN']);
+  // Independent rolling decimal oracle, with no whole-integer conversion.
+  function remainder(value: string): number {
+    let residue = 0;
+    for (const character of value.slice(4) + value.slice(0, 4)) {
+      const ascii = character.charCodeAt(0);
+      residue = ascii >= 65 ? (100 * residue + ascii - 55) % 97 : (10 * residue + ascii - 48) % 97;
+    }
+    return residue;
+  }
+
+  it('rejects every digit substitution and changed neighboring swap of admitted IBANs across ten countries', async () => {
+    let admitted = 0;
+    let held = 0;
+    const initial = examples.map((example): [typeof examples[number], number] => [example, 12345678]);
+    await verify(fc.asyncProperty(fc.constantFrom(...examples), fc.nat(99_999_999), async ([country, empty], salt) => {
+      const bban = empty.slice(0, -8) + String(salt).padStart(8, '0');
+      const digits = String(98 - remainder(country + '00' + bban)).padStart(2, '0');
+      const iban = country + digits + bban;
+      const compact = ibanCheck({ IBAN: iban }, 1);
+      const spaced = iban.match(/.{1,4}/g)!.join(' ');
+      expect(ibanCheck({ IBAN: spaced }, 1)).toEqual(compact);
+      expect(remainder(iban)).toBe(1);
+      const swaps = [];
+      for (let i = 0; i < iban.length - 1; i++) {
+        const left = iban[i]!;
+        const right = iban[i + 1]!;
+        if (left !== right) swaps.push(iban.slice(0, i) + right + left + iban.slice(i + 2));
+      }
+      const boundarySwap = iban.slice(0, 3) + iban[4] + iban[3] + iban.slice(5);
+      const boundaryCollision = /^[A-Z]{2}[0-9]{2}/.test(boundarySwap) && /[0-9]/.test(iban[4]!)
+        && boundarySwap.slice(2, 4) >= '02' && boundarySwap.slice(2, 4) <= '98'
+        && boundarySwap !== iban && remainder(boundarySwap) === 1;
+      // These generated BBANs contain only a fixed alphabetic bank prefix and digits.
+      // Any distinct category-crossing swap away from the check digits violates that prefix.
+      if (boundaryCollision) {
+        expect(compact.map(({ reasonCode }) => reasonCode)).toEqual(['iban-ambiguous-transposition']);
+        expect(ibanCheck({ IBAN: boundarySwap }, 1).map(({ reasonCode }) => reasonCode)).toEqual(['iban-ambiguous-transposition']);
+        held++;
+      } else {
+        expect(compact).toEqual([]);
+        admitted++;
+      }
+      for (const swapped of swaps) expect(ibanCheck({ IBAN: swapped }, 5)).toHaveLength(1);
+      for (let i = 2; i < iban.length; i++) {
+        const original = iban[i]!;
+        if (original >= 'A') continue;
+        for (const digit of '0123456789') if (digit !== original) {
+          const typo = iban.slice(0, i) + digit + iban.slice(i + 1);
+          expect(remainder(typo)).not.toBe(1);
+          expect(ibanCheck({ IBAN: typo }, 2)[0]?.rowNumber).toBe(2);
+        }
+      }
+    }), 1_100, initial);
+    expect(admitted).toBeGreaterThan(1_000);
+    expect(admitted + held).toBe(1_100);
+  }, 180_000);
+
+  it('verifies Gregorian month boundaries and preserves exact leading-zero identifiers', async () => {
+    await verify(fc.asyncProperty(fc.oneof(fc.constantFrom(1900, 2000, 2024, 2026), fc.integer({ min: 1, max: 9999 })),
+      fc.integer({ min: 1, max: 12 }), fc.integer({ min: 1, max: 32 }), fc.nat(8), async (year, month, digits, code) => {
+        const days = new Date(Date.UTC(year + 400, month, 0)).getUTCDate();
+        const day = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+        const valid = `${day}-${days}`;
+        const invalid = `${day}-${days + 1}`;
+        const id = String(code).padStart(digits, '0');
+        const sheet = (await readRoster(encoder.encode(`Date,ID\r\n${valid},${id}\r\n${invalid},${id}0`), 'roster.csv')).sheets[0]!;
+        const check = prepareRosterSchema([{ column: 'Date', kind: 'iso-date' }, { column: 'ID', kind: 'exact-digits', digits }], sheet.headers);
+        expect(check(sheet.rows[0]!.values, 1)).toEqual([]);
+        expect(check(sheet.rows[1]!.values, 2).map(({ rule, rowNumber }) => [rule, rowNumber])).toEqual([['iso-date', 2], ['exact-digits', 2]]);
+        expect(sheet.rows.map(({ values }) => values.ID)).toEqual([id, id + '0']);
+      }), 800, [[1900, 2, 1, 0], [2000, 2, 10, 1], [2024, 2, 15, 2], [2026, 2, 32, 3], [2026, 4, 10, 4]]);
+  });
+
+  it('strictly roundtrips v13 and holds malformed rules while retaining v12 settings', async () => {
+    const raw = JSON.parse(await readFile('fixtures/m26/gcc-payroll-preset-v13.json', 'utf8'));
+    const { schemaRules: _, ...settings } = raw;
+    await verify(fc.asyncProperty(fc.string({ minLength: 1, maxLength: 40 }), fc.integer({ min: 1, max: 32 }), fc.boolean(),
+      async (literal, digits, trim) => {
+        const v12 = { ...settings, version: 12, imposition: '4-up', centerCutGuides: trim };
+        const schemaRules = [{ column: '__proto__', kind: 'allowed-values', values: [literal], match: trim ? 'trimmed' : 'exact' },
+          { column: 'EmployeeID', kind: 'exact-digits', digits }];
+        const v13 = { ...v12, version: 13, schemaRules };
+        expect(validateMappingPreset(JSON.parse(JSON.stringify(v12)))).toEqual(v12);
+        expect(validateMappingPreset(JSON.parse(JSON.stringify(v13)))).toEqual(v13);
+        for (const rule of [{ ...schemaRules[0], execute: literal }, { ...schemaRules[1], digits: String(digits) },
+          { ...schemaRules[0], values: [null] }, { column: 'EmployeeID', kind: 'regex', pattern: literal }]) {
+          expect(validateMappingPreset({ ...v13, schemaRules: [rule] })).toBeUndefined();
+        }
+      }), 650);
+  });
 });
 
 describe('M25 seeded email and redaction properties', () => {

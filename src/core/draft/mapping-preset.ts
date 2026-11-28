@@ -6,6 +6,7 @@ import { isCoverLanguage, validateQrStampSettings, type CoverLanguage, type QrSt
 import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
 import { isVirtualColumnId, validateVirtualTemplate, type VirtualColumnMapping } from '../roster/virtual-columns';
 import { readConditionalRules, type ConditionalFieldRule } from '../rules/conditional-fields';
+import { readRosterSchemaRules, type RosterSchemaRule } from '../validation/roster-schema';
 
 export type FontMode = 'auto' | 'arabic' | 'latin';
 
@@ -36,12 +37,14 @@ export type MappingPresetV11 = Omit<MappingPresetV10, 'version'> & {
   version: 11; conditionalRules: ConditionalFieldRule[];
 };
 export type MappingPresetV12 = Omit<MappingPresetV11, 'version'> & FourUpOptions & { version: 12 };
+export type MappingPresetV13 = Omit<MappingPresetV12, 'version'> & { version: 13; schemaRules: RosterSchemaRule[] };
 
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10 | MappingPresetV11 | MappingPresetV12;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10
+  | MappingPresetV11 | MappingPresetV12 | MappingPresetV13;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -97,8 +100,9 @@ function validateFieldTypography(value: unknown, mapping: PresetSettings['mappin
 
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
   if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5
-    && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10 && data.version !== 11 && data.version !== 12)
-    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version >= 10 ? 1 : 0) + (data.version === 12 ? 1 : 0)
+    && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10 && data.version !== 11
+    && data.version !== 12 && data.version !== 13)
+    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version >= 10 ? 1 : 0) + (data.version >= 12 ? 1 : 0)
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
@@ -159,5 +163,9 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   if (!conditionalRules) return undefined;
   if (data.version === 11) return { version: 11, ...typographySettings, conditionalRules };
   const fourUp = Object.hasOwn(data, 'fourUpOrder') && Object.hasOwn(data, 'centerCutGuides') && validateFourUpOptions(data);
-  return fourUp ? { version: 12, ...typographySettings, conditionalRules, ...fourUp } : undefined;
+  if (!fourUp) return undefined;
+  const fourUpSettings = { ...typographySettings, conditionalRules, ...fourUp };
+  if (data.version === 12) return { version: 12, ...fourUpSettings };
+  const schemaRules = Object.hasOwn(data, 'schemaRules') && readRosterSchemaRules(data.schemaRules);
+  return schemaRules ? { version: 13, ...fourUpSettings, schemaRules } : undefined;
 }

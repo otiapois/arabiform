@@ -1,0 +1,49 @@
+{
+  "version": 13,
+  "mapping": {
+    "Name": "Name",
+    "IBAN": "IBAN",
+    "Effective Date": "Effective Date",
+    "EmployeeID": "EmployeeID"
+  },
+  "filenamePattern": "{{EmployeeID}}",
+  "minFontSize": 8,
+  "font": "auto",
+  "flattenZip": false,
+  "includeCoverSheet": false,
+  "alignOverrides": {},
+  "watermark": {
+    "kind": "none"
+  },
+  "virtualMappings": {},
+  "qrStamp": {
+    "placement": "none"
+  },
+  "coverLanguage": "auto",
+  "imposition": "1-up",
+  "groupByColumn": null,
+  "fieldTypography": {},
+  "approvalSeal": null,
+  "conditionalRules": [],
+  "fourUpOrder": "sequential",
+  "centerCutGuides": false,
+  "schemaRules": [
+    {
+      "column": "Name",
+      "kind": "required"
+    },
+    {
+      "column": "IBAN",
+      "kind": "iban-mod97"
+    },
+    {
+      "column": "Effective Date",
+      "kind": "iso-date"
+    },
+    {
+      "column": "EmployeeID",
+      "kind": "exact-digits",
+      "digits": 10
+    }
+  ]
+}

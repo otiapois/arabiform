@@ -615,6 +615,61 @@ async function printshopBadge(rotated = false) {
   return doc.save({ updateFieldAppearances: false });
 }
 
+const payrollColumns = ['Name', 'IBAN', 'Effective Date', 'EmployeeID'];
+const payrollPreset = {
+  version: 13,
+  mapping: Object.fromEntries(payrollColumns.map((column) => [column, column])),
+  filenamePattern: '{{EmployeeID}}',
+  minFontSize: 8,
+  font: 'auto',
+  flattenZip: false,
+  includeCoverSheet: false,
+  alignOverrides: {},
+  watermark: { kind: 'none' },
+  virtualMappings: {},
+  qrStamp: { placement: 'none' },
+  coverLanguage: 'auto',
+  imposition: '1-up',
+  groupByColumn: null,
+  fieldTypography: {},
+  approvalSeal: null,
+  conditionalRules: [],
+  fourUpOrder: 'sequential',
+  centerCutGuides: false,
+  schemaRules: [
+    { column: 'Name', kind: 'required' },
+    { column: 'IBAN', kind: 'iban-mod97' },
+    { column: 'Effective Date', kind: 'iso-date' },
+    { column: 'EmployeeID', kind: 'exact-digits', digits: 10 },
+  ],
+};
+
+async function payrollTemplate() {
+  const pdf = await createPdf('GCC payroll validation');
+  const page = pdf.addPage([510, 412]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const form = pdf.getForm();
+  page.drawRectangle({ x: 34, y: 316, width: 442, height: 62, color: forest });
+  page.drawText('GCC Payroll', { x: 51, y: 347, size: 22, color: rgb(1, 1, 1), font: bold });
+  page.drawText('Synthetic Sample / Validation Demo', { x: 51, y: 328, size: 10, color: rgb(1, 1, 1), font });
+  for (const [name, label, x, y, width] of [
+    ['Name', 'EMPLOYEE NAME', 34, 240, 442],
+    ['IBAN', 'IBAN', 34, 161, 442],
+    ['Effective Date', 'EFFECTIVE DATE', 34, 83, 202],
+    ['EmployeeID', 'EMPLOYEE ID', 274, 83, 202],
+    ['Sentinel', 'TEMPLATE REFERENCE', 34, 22, 125],
+  ]) {
+    page.drawText(label, { x, y: y + 37, size: 10, color: forest, font: bold });
+    const field = form.createTextField(name);
+    addWidget(field, page, [x, y, width, 30], font);
+    field.setFontSize(12);
+    if (name === 'Sentinel') field.setText('KEEP 00109');
+  }
+  form.updateFieldAppearances(font);
+  return pdf.save({ updateFieldAppearances: false });
+}
+
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
 }
@@ -674,9 +729,17 @@ const fixtures = {
     ['أَحْمَد مَازِن', '00006', 'South'],
     ['قَاسِم عُمَر', '00007', 'North'],
   ]),
+  'm26/gcc-payroll.pdf': await payrollTemplate(),
+  'm26/gcc-payroll.csv': csv([
+    [...payrollColumns, 'Department'],
+    ['مُحَمَّد سَالِم', 'SA58 0000 0000 0000 0001 0000', '2024-02-29', '0012345678', 'Payroll'],
+    ['سَلْمَى بِنْت يَاسِين', 'SA31 0000 0000 0000 0001 0002', '2026-04-30', '0012345679', 'Finance'],
+    ['يُسْرَى مُؤْمِن', 'SA04 0000 0000 0000 0001 0002', '2026-02-29', '0012345680', 'Payroll'],
+  ]),
+  'm26/gcc-payroll-preset-v13.json': JSON.stringify(payrollPreset, null, 2) + '\n',
 };
 
-if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23', 'm24'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23', 'm24', 'm26'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {

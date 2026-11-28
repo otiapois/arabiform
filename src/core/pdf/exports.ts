@@ -6,6 +6,7 @@ import type { CustodyQrRecord } from '../custody/records';
 import { isSafeGroupedPdfPath, SPLIT_CUSTODY_PATH, type OutputGroup } from '../export/grouping';
 import { escapeSpreadsheetCell } from '../roster/spreadsheet-csv';
 import { filenameKey, isSafePdfFilename } from '../roster/filenames';
+import type { RosterSchemaDiagnostic } from '../validation/roster-schema';
 import type { ExportScope } from '../worker/row-selection';
 import { ApprovalSealError, validateApprovalSealSettings, type ApprovalSealSettings } from './approval-seal-settings';
 import type { prepareApprovalSeal } from './approval-seal';
@@ -35,6 +36,7 @@ export interface AuditRow {
   fontSizes: Record<string, number[]>;
   zipPath?: string;
   ruleApplied?: RowPreflightResult['ruleApplied'];
+  schemaDiagnostics?: RosterSchemaDiagnostic[];
 }
 
 type ExportProgress = (completed: number, total: number) => void;
@@ -368,7 +370,7 @@ async function buildMergedPdf(
   return { bytes: await merged.save({ updateFieldAppearances: false }), pageCount: merged.getPageCount(), coverPages, recordScales };
 }
 
-export function createAudit(rows: readonly AuditRow[], scope?: ExportScope): { json: string; csv: string } {
+export function createAudit(rows: readonly AuditRow[], scope?: ExportScope, options?: { schemaEnabled?: boolean }): { json: string; csv: string } {
   let included = rows;
   if (scope?.exportScope === 'selected-subset') {
     const selected = new Set(scope.selectedRowNumbers);
@@ -377,18 +379,21 @@ export function createAudit(rows: readonly AuditRow[], scope?: ExportScope): { j
   }
   const grouped = included.some(({ zipPath }) => zipPath !== undefined);
   const hasRules = included.some(({ ruleApplied }) => ruleApplied !== undefined);
-  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath, ruleApplied }) => ({
+  const hasSchema = options?.schemaEnabled || included.some(({ schemaDiagnostics }) => schemaDiagnostics?.length);
+  const ordered = included.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath, ruleApplied, schemaDiagnostics }) => ({
     rowNumber, filename, status,
     diagnostics: diagnostics.map(({ pageNumbers, ...issue }) => issue.ruleIndex === undefined ? issue : { ...issue, pageNumbers }),
     fontSizes: Object.fromEntries(Object.keys(fontSizes).sort().map((field) => [field, fontSizes[field]])),
     ...(zipPath !== undefined && { zipPath }),
     ...(hasRules && { ruleApplied: ruleApplied ?? [] }),
+    ...(hasSchema && { schemaDiagnostics: schemaDiagnostics ?? [] }),
   }));
   const fields = ['rowNumber', 'filename', 'status', 'diagnostics', 'fontSizes'];
   if (grouped) fields.push('zipPath');
   if (hasRules) fields.push('ruleApplied');
-  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath, ruleApplied }) => [rowNumber,
+  if (hasSchema) fields.push('schemaDiagnostics');
+  const data = ordered.map(({ rowNumber, filename, status, diagnostics, fontSizes, zipPath, ruleApplied, schemaDiagnostics }) => [rowNumber,
     ...[filename, status, JSON.stringify(diagnostics), JSON.stringify(fontSizes), ...(grouped ? [zipPath ?? ''] : []),
-      ...(hasRules ? [JSON.stringify(ruleApplied)] : [])].map(escapeSpreadsheetCell)]);
+      ...(hasRules ? [JSON.stringify(ruleApplied)] : []), ...(hasSchema ? [JSON.stringify(schemaDiagnostics)] : [])].map(escapeSpreadsheetCell)]);
   return { json: `${JSON.stringify(ordered, null, 2)}\n`, csv: `${Papa.unparse({ fields, data })}\r\n` };
 }

@@ -24,9 +24,10 @@ import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../src/
 import { generateStudioTemplate, STUDIO_TEMPLATE_IDS } from '../src/core/studio/templates';
 import { preflightPacket, type PacketTemplate } from '../src/core/packet/assembler';
 import { dispatchCli } from '../src/core/cli/dispatch';
+import { validateMappingPreset } from '../src/core/draft/mapping-preset';
 import { MIGRATED_PRESET_FILENAME } from '../src/core/template/diff-migrator';
 import type { ConditionalFieldRule, RuleApplication } from '../src/core/rules/conditional-fields';
-import type { BatchMergedResult, BatchPreflightResult } from '../src/core/worker/protocol';
+import type { BatchInput, BatchMergedResult, BatchPreflightResult, BatchZipResult } from '../src/core/worker/protocol';
 import type { PrintJobEstimate } from '../src/core/export/print-estimator';
 
 const assetRoot = process.env.ARABIFORM_ASSET_ROOT ?? '.';
@@ -1179,6 +1180,47 @@ const flatReviewName = 'm25-redacted-flattened.pdf';
 const redactedPrint = unzipSync(await createFlattenedZip([redactedProof]));
 await writeFile(resolve(root, flatReviewName), redactedPrint[redactedProof.filename]!);
 cases.at(-1)!.redaction = { fields: ['Name', 'ID'], concealedPrefixes: ['مُحَمَّد', '529816'], flattened: flatReviewName };
+
+const [payrollTemplate, payrollRoster, payrollPresetBytes] = await Promise.all(
+  ['gcc-payroll.pdf', 'gcc-payroll.csv', 'gcc-payroll-preset-v13.json'].map((name) => readFile(asset(`fixtures/m26/${name}`))),
+);
+assert(payrollTemplate && payrollRoster && payrollPresetBytes);
+const payrollPreset = validateMappingPreset(JSON.parse(payrollPresetBytes.toString('utf8')));
+assert(payrollPreset?.version === 13);
+const payroll = (await readRoster(payrollRoster, 'gcc-payroll.csv')).sheets[0]!;
+const payrollCells = payroll.rows.map(({ values }) => values);
+const payrollInput = (cells: typeof payrollCells): BatchInput => ({
+  template: payrollTemplate, roster: payrollRoster, options: settings,
+  rows: cells.map((values) => Object.fromEntries(Object.entries(payrollPreset.mapping).map(([field, column]) => [field, values[column]!]))),
+  schema: { rules: payrollPreset.schemaRules, columns: payroll.headers, rows: cells },
+});
+const payrollWorker = createBatchProcessor();
+const payrollProgress = () => {};
+const payrollChecked = await payrollWorker({ phase: 'preflight', input: payrollInput(payrollCells) }, payrollProgress) as BatchPreflightResult;
+assert.deepEqual(payrollChecked.rows.map(({ status }) => status), ['pass', 'flagged', 'flagged']);
+assert.deepEqual(payrollChecked.rows.flatMap(({ schemaDiagnostics }) => schemaDiagnostics?.map(({ reasonCode }) => reasonCode) ?? []),
+  ['iban-checksum', 'iso-date']);
+assert.equal(await payrollWorker({ phase: 'preview', rowIndex: 1 }, payrollProgress), undefined);
+const repairedPayroll = payrollInput([
+  payrollCells[0]!,
+  { ...payrollCells[1]!, IBAN: 'SA31 0000 0000 0000 0001 0001' },
+  { ...payrollCells[2]!, 'Effective Date': '2026-02-28' },
+]);
+const repairedWorker = createBatchProcessor();
+const repairedChecked = await repairedWorker({ phase: 'preflight', input: repairedPayroll }, payrollProgress) as BatchPreflightResult;
+assert.deepEqual(repairedChecked.rows.map(({ status }) => status), ['pass', 'pass', 'pass']);
+const payrollFilenames = repairedPayroll.rows.map(({ EmployeeID }) => `m26-payroll-${EmployeeID}.pdf`);
+const payrollZip = await repairedWorker({ phase: 'zip', filenames: payrollFilenames }, payrollProgress) as BatchZipResult;
+const payrollPdfs = unzipSync(payrollZip.bytes);
+assert.deepEqual(Object.keys(payrollPdfs), payrollFilenames);
+const payrollBefore = await snapshotSource(payrollTemplate);
+for (const [index, values] of repairedPayroll.rows.entries()) {
+  const filename = payrollFilenames[index]!;
+  const bytes = payrollPdfs[filename]!;
+  await compareRawPdf(payrollTemplate, bytes, values, {});
+  await writeFile(resolve(root, filename), bytes);
+  cases.push({ before: payrollBefore, after: filename, values, label: `M26 GCC payroll row ${index + 1}${index ? ' (corrected)' : ''}` });
+}
 
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
