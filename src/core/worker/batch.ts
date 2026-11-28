@@ -1,4 +1,4 @@
-import { hashCustodySources, sha256, type CustodySources } from '../audit/custody';
+import { createCustodyManifest, hashCustodySources, sha256, type CustodySources } from '../audit/custody';
 import { createCustodyQrRecords } from '../custody/records';
 import { validateGroupingPlan } from '../export/grouping';
 import type { preparePrintJobEstimator } from '../export/print-estimator';
@@ -11,6 +11,7 @@ import { validateBatchQrPrintRequest, type BatchQrPrintRequest, type QrPrintRequ
 import { selectBoundaryRows } from '../preflight/spotlight';
 import { localVirtualDate } from '../roster/virtual-columns';
 import { prepareConditionalFields } from '../rules/conditional-fields';
+import { maskText } from '../shaping/redaction';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 import { resolveRowSelection } from './row-selection';
 
@@ -35,7 +36,9 @@ async function preflightBatch(input: RowInputs, progress: (completed: number, to
     progress(results.length, rows.length);
     if (results.length < rows.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
-  return { rows: results, spotlight: selectBoundaryRows(renderRows, results, fields), renderRows };
+  const spotlightRows = options.maskPolicies ? renderRows.map((row) => Object.fromEntries(Object.entries(row).map(([field, value]) =>
+    [field, maskText(value, Object.hasOwn(options.maskPolicies!, field) ? options.maskPolicies![field] : undefined)]))) : renderRows;
+  return { rows: results, spotlight: selectBoundaryRows(spotlightRows, results, fields), renderRows };
 }
 
 async function selectPrintQr(qr: BatchQrPrintRequest | undefined, rowCount: number, custody: CustodySources, rowNumbers: readonly number[]) {
@@ -101,34 +104,55 @@ export function createBatchProcessor() {
       return createStampedPreview(await getPdfBytes(command.rowIndex), approvalSeal, qrStamp);
     }
 
-    const coverSheet = phase === 'zip' ? undefined : command.coverSheet;
-    const filenames = phase === 'zip' ? command.filenames : coverSheet?.filenames;
+    const individualZip = phase === 'zip' || phase === 'dispatch';
+    const coverSheet = individualZip ? undefined : command.coverSheet;
+    const filenames = individualZip ? command.filenames : coverSheet?.filenames;
     if (filenames && filenames.length !== results.length) {
-      throw new Error(phase === 'zip' ? 'batch-filename-count-mismatch' : 'cover-sheet-invalid-metadata');
+      throw new Error(individualZip ? 'batch-filename-count-mismatch' : 'cover-sheet-invalid-metadata');
     }
     const grouping = phase === 'merged' ? undefined : command.grouping;
-    if (grouping) validateGroupingPlan(grouping, results.length);
     const scope = resolveRowSelection(results, command.rowSelection);
     const { selectedRowNumbers } = scope;
     if (!selectedRowNumbers.length) throw new Error('empty-export');
+    const fields = [...new Set(selectedRowNumbers.flatMap((number) => results[number - 1]!.redactedFields ?? []))];
+    const redactedFields = fields.length ? fields : undefined;
+    const dispatch = phase === 'dispatch' && await import('../dispatch/eml-pack');
+    const prepared = phase === 'dispatch' && dispatch ? (() => {
+      if (command.rows.length !== results.length) throw new Error('dispatch-row-count-mismatch');
+      const unsafe = new Set(command.unsafeFilenameRows);
+      return dispatch.prepareDispatchRows(command.settings, selectedRowNumbers.map((rowNumber) => ({
+        rowNumber, values: command.rows[rowNumber - 1]!,
+        filename: grouping?.rows[rowNumber - 1]?.filename ?? command.filenames[rowNumber - 1]!,
+        zipPath: grouping?.rows[rowNumber - 1]?.zipPath, unsafeFilename: unsafe.has(rowNumber),
+      })), new Set(command.protectedColumns));
+    })() : undefined;
+    if (prepared?.status === 'blocked') return prepared;
+    if (grouping) validateGroupingPlan(grouping, results.length);
     const outputRows = (rowNumbers: readonly number[], names: readonly string[]) =>
       rowNumbers.map((number, index) => ({ filename: names[index]!, getPdfBytes: () => getPdfBytes(number - 1) }));
     const watermark = command.watermark && { settings: command.watermark, fonts: input.options.fonts };
-    const { qrStamp, qrRecords } = await selectPrintQr(phase !== 'zip' || command.flattenZip ? command.qrStamp : undefined,
+    const { qrStamp, qrRecords } = await selectPrintQr(!individualZip || command.flattenZip ? command.qrStamp : undefined,
       results.length, custody, selectedRowNumbers);
-    if (phase === 'zip') {
+    if (individualZip) {
       const paths = grouping && selectedRowNumbers.map((number) => grouping.rows[number - 1]!.zipPath);
       const ready = outputRows(selectedRowNumbers,
         selectedRowNumbers.map((number) => grouping?.rows[number - 1]?.filename ?? command.filenames[number - 1] ?? ''));
       const zip = await createGeneratedZip(ready, progress, command.flattenZip, watermark, qrStamp, paths, approvalSeal);
-      return { ...zip, ...(grouping && { groupByColumn: grouping.groupByColumn }), ...(qrRecords && { qrRecords }) };
+      const pdfZip = { ...zip, ...(grouping && { groupByColumn: grouping.groupByColumn }), ...(qrRecords && { qrRecords }),
+        ...(redactedFields && { redactedFields }) };
+      if (phase !== 'dispatch' || !dispatch || !prepared) return pdfZip;
+      const custodyManifest = createCustodyManifest(custody, {
+        entries: zip.entries, groupByColumn: grouping?.groupByColumn, qrRecords, redactedFields,
+      }, scope);
+      const pack = await dispatch.createDispatchPack(prepared, zip, { redactedFields, custodyManifest });
+      return pack.status === 'ready' && command.includePdfZip ? { ...pack, pdfZip } : pack;
     }
     const context = { rows: results, rowNumbers: selectedRowNumbers, coverSheet, exportedAt: new Date(), preflight: input.options, custody };
     if (phase === 'split') {
       const groups = planSplitPrint(context, command.grouping).map(({ filenames, ...group }) => ({
         ...group, rows: outputRows(group.rowNumbers, filenames),
       }));
-      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords, approvalSeal, command.fourUp);
+      return createSplitMergedZip(groups, custody, scope, command.grouping.groupByColumn, progress, watermark, qrStamp, command.imposition, qrRecords, approvalSeal, command.fourUp, redactedFields);
     }
     const combined = planCombinedPrint(context);
     const imposition = command.imposition ?? '1-up';
@@ -145,7 +169,7 @@ export function createBatchProcessor() {
     lastMergedReceipt = { sources: custody, mergedPdfSha256, readyCount: selectedRowNumbers.length, excludedCount: results.length - selectedRowNumbers.length,
       exportScope: scope.exportScope, imposition, pageCount, coverPages, mappedInkOutsidePrint,
       ...(Number.isFinite(minimum) && { minimumMappedFontPt: minimum }) };
-    return { bytes, mergedPdfSha256, ...(qrRecords && { qrRecords }) };
+    return { bytes, mergedPdfSha256, ...(qrRecords && { qrRecords }), ...(redactedFields && { redactedFields }) };
   }
 
   return (command: BatchCommand, notify: ProgressListener) => {

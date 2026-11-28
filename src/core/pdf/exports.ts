@@ -297,7 +297,7 @@ type SplitPrintGroup = OutputGroup & { rows: readonly GeneratedPdfExportRow[]; c
 export async function createSplitMergedZip(
   groups: readonly SplitPrintGroup[], sources: CustodySources, scope: ExportScope, groupByColumn: string, onProgress?: ExportProgress,
   watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest, imposition: Imposition = '1-up', qrRecords?: readonly CustodyQrRecord[],
-  approvalSeal?: PrintApprovalSealOptions, fourUp?: FourUpOptions,
+  approvalSeal?: PrintApprovalSealOptions, fourUp?: FourUpOptions, redactedFields?: string[],
 ) {
   if (!groups.length) throw new Error('empty-export');
   if (!isImposition(imposition)) throw new Error('invalid-imposition');
@@ -323,9 +323,9 @@ export async function createSplitMergedZip(
     zip.add(bytes);
     completed += rows.length;
   }
-  const receipt = createCustodyManifest(sources, { groupByColumn, groups: entries, qrRecords }, scope);
+  const receipt = createCustodyManifest(sources, { groupByColumn, groups: entries, qrRecords, redactedFields }, scope);
   zip.add(new TextEncoder().encode(receipt));
-  return { bytes: zip.finish(), groupByColumn, groups: entries, ...(qrRecords && { qrRecords }) };
+  return { bytes: zip.finish(), groupByColumn, groups: entries, ...(qrRecords && { qrRecords }), ...(redactedFields && { redactedFields }) };
 }
 
 async function buildMergedPdf(

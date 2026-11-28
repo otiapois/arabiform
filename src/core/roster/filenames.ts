@@ -4,7 +4,7 @@ import { resolveVirtualColumn, VIRTUAL_COLUMNS, type VirtualColumnId } from './v
 
 const illegal = /[\\/:*?"<>|\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
 const reserved = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)$/;
-const defaultPattern = '{{ID}}-{{Name}}.pdf';
+export const DEFAULT_FILENAME_PATTERN = '{{ID}}-{{Name}}.pdf';
 const encoder = new TextEncoder();
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const physicalTokens = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -40,7 +40,7 @@ export type FilenamePlan = { filename: string } & (
 );
 
 export function planFilenames(
-  rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern, context?: { localDate: string },
+  rows: readonly (Record<string, string> | RosterRow)[], pattern = DEFAULT_FILENAME_PATTERN, context?: { localDate: string },
   scope?: { folders?: readonly string[]; spreadsheetSafe?: boolean },
 ): FilenamePlan[] {
   const seen = new Set<string>();
