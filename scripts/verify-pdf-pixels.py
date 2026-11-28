@@ -229,15 +229,53 @@ def check_case(case, directory):
                     measured_alignment = check_alignment(alignments[field], filled, widget, page, bounds, box, label, bool(designer)) if field in alignments else {}
                     results.append({"field": field, "page": page.number + 1, "inkBboxAt4x": bounds if amount else None,
                                     "inkPixelsAt4x": amount, "minWidgetEdgeInsetAt4x": inset, **measured_alignment,
-                                    **({"canonicalValue": widget.field_value or "", "activeAppearanceNonempty": True} if rule_applied is not None else {}),
+                                    **({"canonicalValue": widget.field_value or "", "activeAppearanceNonempty": True}
+                                       if rule_applied is not None or case.get("redaction") else {}),
                                     **({"dropdownLabel": display} if field in dropdowns else {})})
                 assert_same_outside(before, after, allowed, f"{label} page {page.number + 1}")
                 assert_same_outside(text_only_baseline, after, allowed, f"{label} text on page {page.number + 1}")
     assert set(seen) == set(expected), (label, seen, list(expected))
+    redaction = case.get("redaction")
+    redaction_proof = {}
+    if redaction:
+        with fitz.open(after_path) as editable, fitz.open(directory / redaction["flattened"]) as flattened:
+            assert len(editable) == len(flattened), label
+            forbidden = [(prefix.encode(), prefix.encode("utf-16-be").hex().upper().encode(), prefix.encode("utf-16-be").hex().encode())
+                         for prefix in redaction["concealedPrefixes"]]
+            def objects(document):
+                for xref in range(1, document.xref_length()):
+                    content = document.xref_object(xref).encode()
+                    if document.xref_is_stream(xref):
+                        content += document.xref_stream(xref)
+                    yield xref, content
+            with fitz.open(before_path) as original:
+                original_objects = [content for _, content in objects(original)]
+            assert all(any(encoding in content for content in original_objects for encoding in prefix) for prefix in forbidden), (
+                label, "the source must contain each tested prefix"
+            )
+            for pdf in (editable, flattened):
+                for xref, content in objects(pdf):
+                    assert not any(encoding in content for prefix in forbidden for encoding in prefix), (label, "concealed prefix survived", xref)
+            for page in editable:
+                printed = flattened[page.number]
+                assert not list(printed.widgets()) and render(page) == render(printed), label
+                for widget in page.widgets():
+                    name = widget.field_name
+                    if name not in redaction["fields"]:
+                        continue
+                    assert editable.xref_get_key(widget.xref, "DV") == ("null", "null"), (label, name, "stale /DV")
+                    assert editable.xref_get_key(widget.xref, "RV") == ("null", "null"), (label, name, "stale /RV")
+                    assert editable.xref_get_key(widget.xref, "AP/R") == ("null", "null"), (label, name, "stale rollover")
+                    stream = editable.xref_stream(appearance_xref(editable, widget))
+                    actual = "".join(bytes.fromhex(span.group(1).decode()).decode("utf-16") for span in COVER_SPAN.finditer(stream))
+                    assert actual == widget.field_value == expected[name], (label, name, actual)
+        redaction_proof = {"redactedFields": redaction["fields"], "concealedPrefixMatches": 0,
+                           "editableAndFlattenedPixelsIdenticalAt4x": True}
     if case.get("customFont"):
         warnings = fitz.TOOLS.mupdf_warnings(reset=True)
         assert not warnings, f"{label}: MuPDF emitted font or appearance warnings: {warnings}"
     return {"label": label, "outsideMappedWidgetChangedPixels": 0, "clippedInkPixels": 0, "widgets": results,
+            **redaction_proof,
             **({"ruleApplied": rule_applied} if rule_applied is not None else {}),
             **({"migratedPreset": True} if case.get("migratedPreset") else {}),
             **({"designer": designer} if designer else {})}
@@ -927,6 +965,8 @@ def main():
         sheets = [sheet for proof in m24_proofs for sheet in proof["sheets"]]
         print(f"M24: {len(sheets)} imposed A4 sheets, {sum(len(sheet['records']) for sheet in sheets)} A6 records, "
               f"{sum(sheet['cutLines'] for sheet in sheets)} disjoint vector trim lines, two one-page bilingual certificates with exact SHA-256, and 0 outside ink.")
+    if any("redactedFields" in item for item in results):
+        print("M25: exact masked Arabic and ID values and appearance text, 0 concealed prefix matches, 0 clipping, identical flattened pixels at 4x.")
     if m20:
         print(f"M20: {len(m20['pages'])} preview/ZIP/merged seal pages (including rotated UserUnit 2), Eastern ٠٠١٢٣ and Western 00123, "
               "custom typography, unchanged QR modules, 0 widget overlap, and both collisions blocked.")

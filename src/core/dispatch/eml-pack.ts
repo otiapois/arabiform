@@ -56,7 +56,7 @@ export interface DispatchLedgerEntry {
 }
 
 export type DispatchPackResult =
-  | { status: 'ready'; bytes: Uint8Array; ledgerCsv: string; ledgerJson: string; entries: DispatchLedgerEntry[];
+  | { status: 'ready'; bytes: Uint8Array; ledgerCsv: string; ledgerJson: string; ledgerEntries: DispatchLedgerEntry[];
     pdfEntries: CustodyEntry[]; redactedFields?: string[] }
   | { status: 'blocked'; issues: DispatchIssue[] };
 
@@ -167,8 +167,7 @@ function subjectHeader(subject: string): string {
   return 'Subject: ' + words.join(CRLF + ' ');
 }
 
-function attachmentHeader(filename: string, rowNumber: number): string {
-  const fallback = 'filename="row-' + rowNumber + '.pdf"';
+function attachmentHeader(filename: string): string {
   if (filename.length <= 62 && /^[\x20-\x7E]+$/.test(filename)) {
     // The ZIP filename gate already rejects quotes and backslashes.
     return 'Content-Disposition: attachment;' + CRLF + ' filename="' + filename + '"';
@@ -188,7 +187,7 @@ function attachmentHeader(filename: string, rowNumber: number): string {
   segments.push(segment);
   const parameters = segments.length === 1 ? ["filename*=UTF-8''" + segments[0]] : segments.map((part, index) =>
     'filename*' + index + '*=' + (index === 0 ? "UTF-8''" : '') + part);
-  return ['Content-Disposition: attachment', ...parameters, fallback].join(';' + CRLF + ' ');
+  return ['Content-Disposition: attachment', ...parameters].join(';' + CRLF + ' ');
 }
 
 function createDraft(draft: PreparedDraft, bytes: Uint8Array, date: string) {
@@ -212,7 +211,7 @@ function createDraft(draft: PreparedDraft, bytes: Uint8Array, date: string) {
     wrapBase64(encoder.encode(body.replace(/\r\n|\r|\n/g, CRLF))),
     '--' + boundary,
     'Content-Type: application/pdf',
-    attachmentHeader(filename, rowNumber),
+    attachmentHeader(filename),
     'Content-Transfer-Encoding: base64',
     '',
     wrapBase64(bytes),
@@ -274,5 +273,5 @@ export async function createDispatchPack(
   files[DISPATCH_JSON_FILENAME] = encoder.encode(ledgerJson);
   if (options.custodyManifest !== undefined) files['custody-manifest.json'] = encoder.encode(options.custodyManifest);
   return { status: 'ready', bytes: zipSync(files, { level: 1, mtime: new Date(2000, 0, 1, 12) }),
-    ledgerCsv, ledgerJson, entries, pdfEntries: pdfZip.entries, ...(review && { redactedFields }) };
+    ledgerCsv, ledgerJson, ledgerEntries: entries, pdfEntries: pdfZip.entries, ...(review && { redactedFields }) };
 }

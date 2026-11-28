@@ -79,6 +79,6 @@ export function planFilenames(
   });
 }
 
-export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = defaultPattern, context?: { localDate: string }): string[] {
+export function makeFilenames(rows: readonly (Record<string, string> | RosterRow)[], pattern = DEFAULT_FILENAME_PATTERN, context?: { localDate: string }): string[] {
   return planFilenames(rows, pattern, context).map(({ filename }) => filename);
 }

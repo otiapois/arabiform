@@ -78,9 +78,9 @@ export async function parseCustodyManifest(json: string): Promise<VerifiedCustod
     return invalid();
   }
   if (!isObject(data) || !hasOnlyKeys(data, ['version', 'templateSha256', 'rosterSha256', 'sheetName', 'exportScope', 'selectedRowNumbers',
-    'entries', 'flattenedEntries', 'mergedPdfSha256', 'groupByColumn', 'groups', 'qrRecords', 'redactedReview', 'redactedFields'])) return invalid();
+    'entries', 'flattenedEntries', 'mergedPdfSha256', 'groupByColumn', 'groups', 'qrRecords', 'redactedReview', 'redactedFields', 'attachmentVariant'])) return invalid();
   const { version, templateSha256, rosterSha256, sheetName, exportScope, selectedRowNumbers, entries, flattenedEntries,
-    mergedPdfSha256, groupByColumn, groups, qrRecords, redactedReview, redactedFields } = data;
+    mergedPdfSha256, groupByColumn, groups, qrRecords, redactedReview, redactedFields, attachmentVariant } = data;
   if (version !== 1 && version !== 2 || !isDigest(templateSha256) || !isDigest(rosterSha256)
     || (sheetName !== undefined && (typeof sheetName !== 'string' || !sheetName.length || /[\p{Cc}\p{Cs}]/u.test(sheetName)))
     || (groupByColumn !== undefined && (typeof groupByColumn !== 'string' || !groupByColumn.trim()))) return invalid();
@@ -91,7 +91,12 @@ export async function parseCustodyManifest(json: string): Promise<VerifiedCustod
   if (exportScope !== 'all-ready' && exportScope !== 'selected-subset' && exportScope !== undefined
     || (selectedRowNumbers === undefined) !== (exportScope === undefined)) return invalid();
   const selected = selectedRowNumbers === undefined ? undefined : rowNumbers(selectedRowNumbers);
-  if (version === 1 ? flattenedEntries !== undefined
+  if (attachmentVariant !== undefined) {
+    if (version !== 1 || !selected?.length || mergedPdfSha256 !== undefined || groups !== undefined
+      || (attachmentVariant !== 'editable' && attachmentVariant !== 'flattened')
+      || (attachmentVariant === 'editable' ? !Array.isArray(entries) || flattenedEntries !== undefined
+        : !Array.isArray(flattenedEntries) || entries !== undefined)) return invalid();
+  } else if (version === 1 ? flattenedEntries !== undefined
     : !Array.isArray(entries) || !Array.isArray(flattenedEntries) || !selected?.length || !isDigest(mergedPdfSha256) || groups !== undefined) return invalid();
   const selectedSet = new Set(selected);
   const outputs: ReceiptPdf[] = [];
@@ -128,6 +133,9 @@ export async function parseCustodyManifest(json: string): Promise<VerifiedCustod
     const flattened = readEntries(flattenedEntries, 'flattened');
     if (editable.some(({ filename, zipPath }, index) => filename !== flattened[index]!.filename || zipPath !== flattened[index]!.zipPath
       || (zipPath !== undefined) !== (groupByColumn !== undefined))) return invalid();
+  } else if (attachmentVariant === 'editable' || attachmentVariant === 'flattened') {
+    const attachments = readEntries(attachmentVariant === 'editable' ? entries : flattenedEntries, attachmentVariant);
+    if (attachments.some(({ zipPath }) => (zipPath !== undefined) !== (groupByColumn !== undefined))) return invalid();
   } else if (entries !== undefined) {
     readEntries(entries);
   }

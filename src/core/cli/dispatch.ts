@@ -292,7 +292,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
       { name: MERGED_CUSTODY_FILENAME, data: merged.bytes },
       { name: 'custody-manifest.json', data: manifest },
     ];
-    if (dispatch) artifacts.push(
+    if (dispatch?.status === 'ready') artifacts.push(
       { name: DISPATCH_ZIP_FILENAME, data: dispatch.bytes },
       { name: DISPATCH_CSV_FILENAME, data: dispatch.ledgerCsv },
       { name: DISPATCH_JSON_FILENAME, data: dispatch.ledgerJson },
@@ -345,7 +345,7 @@ export async function dispatchCli(job: CliJob): Promise<CliResult> {
     return { exitCode: verdict.status === 'VERIFIED_QR_RECORD' ? 0 : 2, report: { ...verdict }, artifacts: [] };
   }
   if (source.variant && !receipt.outputs.some(({ variant }) => variant)) {
-    return { exitCode: 1, report: { status: 'usage-error', message: '--variant requires a v2 CLI custody manifest.' }, artifacts: [], diagnostic: true };
+    return { exitCode: 1, report: { status: 'usage-error', message: '--variant requires a custody manifest that records the PDF variant.' }, artifacts: [], diagnostic: true };
   }
   const folders = new Set(receipt.outputs.flatMap(({ variant, path }) => variant && path?.includes('/') ? [filenameKey(path.split('/')[0]!)] : []));
   const verdicts = await Promise.all(source.inputs.map(({ bytes, filename, parentFolder }) => verifyCustodyPdf(receipt, {

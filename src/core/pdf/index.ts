@@ -11,7 +11,7 @@ import { embedCustomFont, loadCustomFont } from './custom-font';
 import { preparePrintWidgetCheck } from './exports';
 import type { FieldTypographyMap } from './field-typography';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
-import { key, number, openTemplate, PdfIntakeError, type TemplateMetadata, type WidgetTarget } from './template';
+import { fieldAttributes, key, number, openTemplate, PdfIntakeError, type TemplateMetadata, type WidgetTarget } from './template';
 
 export type { AlignOverride } from './alignment';
 export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './exports';
@@ -186,7 +186,10 @@ function planRow(
       if (review) value = maskText(value, policy);
       value = applyNumeralPolicy(value, typography?.numeralPolicy);
       const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
-      const unsupportedMode = !meta.supportsTextCapacity;
+      // A shared parent value can belong to another field that must remain intact.
+      const parent = review ? canonical.lookupMaybe(key('Parent'), PDFDict) : undefined;
+      const inheritedValue = parent && ['V', 'DV', 'RV'].some((attribute) => fieldAttributes(parent, attribute) !== undefined);
+      const unsupportedMode = !meta.supportsTextCapacity || inheritedValue;
       if (excess > 0) flag({ code: 'exceeds-maxlen', maxLengthExcess: excess });
       if (unsupportedMode) flag({ code: 'unsupported-field-mode' });
       if (excess > 0 || unsupportedMode) continue;
@@ -281,13 +284,13 @@ function planRow(
 function removeUnreferencedObjects(doc: PDFDocument) {
   const { context } = doc;
   const seen = new Set<PDFObject>();
-  const pending = Object.values(context.trailerInfo);
+  const pending: (PDFObject | undefined)[] = Object.values(context.trailerInfo);
   while (pending.length) {
     const object = pending.pop();
     if (!object || seen.has(object)) continue;
     seen.add(object);
     if (object instanceof PDFRef) pending.push(context.lookup(object));
-    else if (object instanceof PDFArray) pending.push(...object.asArray());
+    else if (object instanceof PDFArray) for (const value of object.asArray()) pending.push(value);
     else if (object instanceof PDFDict) for (const [, value] of object.entries()) pending.push(value);
     else if (object instanceof PDFStream) pending.push(object.dict);
   }

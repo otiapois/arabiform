@@ -22,6 +22,7 @@ type RowInputs = Omit<BatchInput, 'roster' | 'sheetName'>;
 
 async function preflightBatch(input: RowInputs, progress: (completed: number, total: number) => void) {
   const { rows, template, options, conditional } = input;
+  const { maskPolicies } = options;
   const results: BatchRowResult[] = [];
   progress(0, rows.length);
   if (!rows.length) return { rows: results, spotlight: {}, renderRows: rows };
@@ -36,8 +37,8 @@ async function preflightBatch(input: RowInputs, progress: (completed: number, to
     progress(results.length, rows.length);
     if (results.length < rows.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
-  const spotlightRows = options.maskPolicies ? renderRows.map((row) => Object.fromEntries(Object.entries(row).map(([field, value]) =>
-    [field, maskText(value, Object.hasOwn(options.maskPolicies!, field) ? options.maskPolicies![field] : undefined)]))) : renderRows;
+  const spotlightRows = maskPolicies ? renderRows.map((row) => Object.fromEntries(Object.entries(row).map(([field, value]) =>
+    [field, maskText(value, Object.hasOwn(maskPolicies, field) ? maskPolicies[field] : undefined)]))) : renderRows;
   return { rows: results, spotlight: selectBoundaryRows(spotlightRows, results, fields), renderRows };
 }
 
@@ -117,16 +118,20 @@ export function createBatchProcessor() {
     const fields = [...new Set(selectedRowNumbers.flatMap((number) => results[number - 1]!.redactedFields ?? []))];
     const redactedFields = fields.length ? fields : undefined;
     const dispatch = phase === 'dispatch' && await import('../dispatch/eml-pack');
-    const prepared = phase === 'dispatch' && dispatch ? (() => {
+    let prepared: ReturnType<typeof import('../dispatch/eml-pack')['prepareDispatchRows']> | undefined;
+    if (phase === 'dispatch' && dispatch) {
       if (command.rows.length !== results.length) throw new Error('dispatch-row-count-mismatch');
       const unsafe = new Set(command.unsafeFilenameRows);
-      return dispatch.prepareDispatchRows(command.settings, selectedRowNumbers.map((rowNumber) => ({
+      const protectedColumns = new Set(command.protectedColumns);
+      if (grouping && protectedColumns.has(grouping.groupByColumn)) return { status: 'blocked',
+        issues: selectedRowNumbers.map((rowNumber) => ({ rowNumber, code: 'protected-column', field: 'attachment' })) };
+      prepared = dispatch.prepareDispatchRows(command.settings, selectedRowNumbers.map((rowNumber) => ({
         rowNumber, values: command.rows[rowNumber - 1]!,
         filename: grouping?.rows[rowNumber - 1]?.filename ?? command.filenames[rowNumber - 1]!,
         zipPath: grouping?.rows[rowNumber - 1]?.zipPath, unsafeFilename: unsafe.has(rowNumber),
-      })), new Set(command.protectedColumns));
-    })() : undefined;
-    if (prepared?.status === 'blocked') return prepared;
+      })), protectedColumns);
+      if (prepared.status === 'blocked') return prepared;
+    }
     if (grouping) validateGroupingPlan(grouping, results.length);
     const outputRows = (rowNumbers: readonly number[], names: readonly string[]) =>
       rowNumbers.map((number, index) => ({ filename: names[index]!, getPdfBytes: () => getPdfBytes(number - 1) }));
@@ -142,7 +147,9 @@ export function createBatchProcessor() {
         ...(redactedFields && { redactedFields }) };
       if (phase !== 'dispatch' || !dispatch || !prepared) return pdfZip;
       const custodyManifest = createCustodyManifest(custody, {
-        entries: zip.entries, groupByColumn: grouping?.groupByColumn, qrRecords, redactedFields,
+        ...(command.flattenZip ? { attachmentVariant: 'flattened', flattenedEntries: zip.entries }
+          : { attachmentVariant: 'editable', entries: zip.entries }),
+        groupByColumn: grouping?.groupByColumn, qrRecords, redactedFields,
       }, scope);
       const pack = await dispatch.createDispatchPack(prepared, zip, { redactedFields, custodyManifest });
       return pack.status === 'ready' && command.includePdfZip ? { ...pack, pdfZip } : pack;

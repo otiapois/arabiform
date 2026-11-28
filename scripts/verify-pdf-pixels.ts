@@ -7,6 +7,7 @@ import { unzipSync } from 'fflate';
 import { createAudit, createFlattenedZip, createMergedPdf, createZip, inspectCustomFont, inspectTemplate, preflightRow, type PdfExportRow } from '../src/core/pdf';
 import type { ApprovalSealSettings } from '../src/core/pdf/approval-seal-settings';
 import type { FieldTypographyMap } from '../src/core/pdf/field-typography';
+import type { MaskPolicy } from '../src/core/shaping/redaction';
 import { inspectRosterWorkbook, makeFilenames, readRoster } from '../src/core/roster';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, virtualFilenameToken } from '../src/core/roster/virtual-columns';
 import { createBatchProcessor } from '../src/core/worker/batch';
@@ -46,7 +47,8 @@ type AlignmentMode = 'auto' | 'rtl' | 'ltr' | 'center';
 type ExpectedAlignment = Record<string, { mode: AlignmentMode; anchor: 'rtl' | 'ltr' | 'center' }>;
 interface DesignerProof { source: string; rotation: number; rects: Record<string, NormalizedRect | readonly NormalizedRect[]> }
 const cases: ({ before: string; after: string; values: Record<string, string>; label: string; customFont?: boolean;
-  alignments?: ExpectedAlignment; designer?: DesignerProof; ruleApplied?: RuleApplication[]; migratedPreset?: true } & ExpectedChoices)[] = [];
+  alignments?: ExpectedAlignment; designer?: DesignerProof; ruleApplied?: RuleApplication[]; migratedPreset?: true;
+  redaction?: { fields: string[]; concealedPrefixes: string[]; flattened: string } } & ExpectedChoices)[] = [];
 const templateResults: { name: string; sha256: string; expected: string; result: string; detail?: string }[] = [];
 const m2TemplateResults: { name: string; sha256: string; expected: string; detail?: string }[] = [];
 const originalSnapshots = new Set<string>();
@@ -139,11 +141,12 @@ async function snapshotSource(source: Uint8Array) {
 }
 
 async function passingCase(source: Buffer, values: Record<string, string>, filename: string, label: string, minFontSize = settings.minFontSize,
-  { customFont, expected = values, alignments, designer, fieldTypography, ...choices }: ExpectedChoices & {
+  { customFont, expected = values, alignments, designer, fieldTypography, maskPolicies, ...choices }: ExpectedChoices & {
     customFont?: Uint8Array; expected?: Record<string, string>; alignments?: ExpectedAlignment; designer?: DesignerProof; fieldTypography?: FieldTypographyMap;
+    maskPolicies?: Readonly<Record<string, MaskPolicy>>;
   } = {}) {
   const alignOverrides = !designer && alignments ? Object.fromEntries(Object.entries(alignments).map(([name, { mode }]) => [name, mode])) : undefined;
-  const options = { ...settings, minFontSize, customFont, alignOverrides, fieldTypography };
+  const options = { ...settings, minFontSize, customFont, alignOverrides, fieldTypography, maskPolicies };
   const result = await preflightRow(source, values, options);
   assert.equal(result.status, 'pass', `${label}: ${JSON.stringify(result.diagnostics)}`);
   assert(result.pdfBytes);
@@ -1152,6 +1155,30 @@ for (const [templateName, fourUpOrder, centerCutGuides, kind] of [
   await writeFile(resolve(root, spec.certificate), certificate);
   m24Proofs.push(spec);
 }
+
+const reviewValues = { Name: 'مُحَمَّدسَالِم', ID: '5298160042' };
+const oldReview = await preflightRow(source, reviewValues, settings);
+assert(oldReview.pdfBytes);
+const reviewTemplate = await PDFDocument.load(oldReview.pdfBytes, { updateMetadata: false });
+for (const [name, value] of Object.entries(reviewValues)) {
+  const field = reviewTemplate.getForm().getTextField(name).acroField;
+  const oldValue = reviewTemplate.context.register(PDFHexString.fromText(value));
+  field.dict.set(key('DV'), oldValue);
+  for (const widget of field.getWidgets()) {
+    widget.dict.set(key('RV'), oldValue);
+    const ap = widget.dict.lookup(key('AP'), PDFDict);
+    ap.set(key('R'), ap.get(key('N'))!);
+  }
+}
+const reviewSource = Buffer.from(await reviewTemplate.save({ updateFieldAppearances: false }));
+const reviewExpected = { Name: '****سَالِم', ID: '******٠٠٤٢' };
+const redactedProof = await passingCase(reviewSource, reviewValues, 'm25-redacted-review.pdf', 'M25 redacted Arabic name and ID',
+  settings.minFontSize, { expected: reviewExpected, maskPolicies: { Name: 'keep-last-4', ID: 'keep-last-4' },
+    fieldTypography: { ID: { numeralPolicy: 'eastern-arabic' } } });
+const flatReviewName = 'm25-redacted-flattened.pdf';
+const redactedPrint = unzipSync(await createFlattenedZip([redactedProof]));
+await writeFile(resolve(root, flatReviewName), redactedPrint[redactedProof.filename]!);
+cases.at(-1)!.redaction = { fields: ['Name', 'ID'], concealedPrefixes: ['مُحَمَّد', '529816'], flattened: flatReviewName };
 
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
