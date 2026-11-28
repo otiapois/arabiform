@@ -69,6 +69,12 @@
   - The `Browser-local` badge describes the local processing and production `CSP: connect-src 'none'`. Verify network behavior in DevTools.
   - `Download scope checklist` is a planning aid for recurring batches. The landing claim gate rules apply to any future pricing or customer evidence.
 
+## Dispatch drafts and review masks
+
+- Lazy-load **Email drafts (.eml)** in **Output settings** in both locales. Use the exact **Recipient email column** selected from the active sheet and the entered **Subject** and **Message** templates. Show a preview without sending any email. Respect the explicit ready selection and attach the current editable or flattened per-row ZIP variant. Display localized row diagnostics for rejected addresses, unsafe headers, and other blocked dispatch inputs.
+- **Offline Email Drafts (.zip)** downloads the ZIP and its embedded CSV and JSON ledgers and custody manifest. Enable **Dispatch Ledger (.csv)** after a successful ZIP generation and invalidate the cached ledger when the dispatch inputs, roster, mapping, scope, filename plan or output settings change. Isolate extensions and their parentheses in Arabic with `<bdi dir="ltr">`. Both downloads keep recipient data local to the device.
+- Open **Redacted review** in **Output settings**. **Mask for review** applies to each mapped text field, defaults to **None**, and updates the current preview and preflight for **Keep last 4** and **Full mask**. Review policy belongs to the current browser session. Existing saved mapping preset and batch draft formats continue to load their usual settings. Enforce the shared protected-column rules for filenames, grouping, QR and email inputs. [Dispatch and MIME contract](pdf-engine.md#offline-email-dispatch-pack) · [Review mask contract](pdf-engine.md#redacted-review-copies)
+
 ## Assemble packets
 
 - **Assemble packets** opens a lazy-loaded mode in the existing English and Arabic workbenches. **Fill PDFs** remains the default at the same routes. On idle visits, defer packet code and the synthetic demo alongside the PDF engine, QR code, and PDF-embedding fonts.

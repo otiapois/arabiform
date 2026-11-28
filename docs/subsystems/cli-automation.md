@@ -57,6 +57,32 @@ Expect two A4 sheets in `arabiform-merged.pdf` with the cover off, and a separat
 
 مع إيقاف الغلاف، يحتوي `arabiform-merged.pdf` على ورقتَي A4، وتصدر شهادة منفصلة من صفحة واحدة باسم `print-shop-certificate.pdf`. للتحقّق من الملف عند تسليمه، احسب بصمة SHA-256 لملف PDF المدمج وطابقها مع بصمة المخرَج الكاملة المطبوعة في الشهادة. تخصّ نتيجة فحص الملاءمة الحقول المرتبطة في الصفوف المدرجة. الشهادة غير موقّعة.
 
+## Email drafts and review masks / مسودات البريد وحجب القيم
+
+Save this fictional roster as `./arabiform-dispatch.csv` in UTF-8. Use a fresh output directory for each run. The bundled clinic PDF has mapped `Name`, `ID`, and `Consent` fields.
+
+احفظ هذا الجدول الخيالي باسم `./arabiform-dispatch.csv` بترميز UTF-8. استخدم مجلد إخراج جديدًا في كل تشغيل. يضمّ قالب العيادة المرفق حقول `Name` و`ID` و`Consent` التي تُربط بأعمدة الجدول.
+
+```csv
+Name,ID,Consent,Email,CopyEmail
+ليلى حسن,0012345678,true,layla@example.test,review@example.test
+أحمد سالم,012,false,ahmad@example.test,
+```
+
+```sh
+npm run arabiform-cli -- --mode fill --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./arabiform-dispatch.csv --strict --dispatch-eml Email --dispatch-cc CopyEmail --dispatch-subject "Clinic record / سجل العيادة — {{Name}}" --dispatch-body "Hello / مرحبًا {{Name}}" --out-dir ./arabiform-demo/dispatch
+npm run arabiform-cli -- --mode preflight --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./arabiform-dispatch.csv --redact-field "ID=keep-last-4" --out-dir ./arabiform-demo/review-check
+npm run arabiform-cli -- --mode fill --template ./fixtures/m3/clinic-consent-mixed.pdf --roster ./arabiform-dispatch.csv --strict --redact-field "ID=keep-last-4" --out-dir ./arabiform-demo/review
+```
+
+The dispatch run adds `arabiform-email-drafts.zip`, `dispatch-ledger.csv`, and `dispatch-ledger.json` to the usual fill outputs. Each draft has one **To** address and the exact PDF from the editable ZIP. The first draft has one **Cc**, and the second omits it because its Cc cell is blank. Omit `--dispatch-cc` to exclude Cc entirely. The ZIP also contains the CSV and JSON ledgers. To confirm the handoff, compare the original row, recipient, and SHA-256 of the decoded attachment and the draft against the ledger. Keep all of these files private. Draft generation runs locally without SMTP or mail-provider authorization. An invalid ready-row recipient or unsafe dispatch header stops the whole run with exit `2` before outputs are written.
+
+يضيف أمر تجهيز البريد `arabiform-email-drafts.zip` و`dispatch-ledger.csv` و`dispatch-ledger.json` إلى ملفات التعبئة المعتادة. تضمّ كل مسودة عنوان مستلم واحدًا وملف PDF المطابق من أرشيف الملفات القابلة للتعبئة. تحتوي المسودة الأولى على عنوان نسخة واحد، ويغيب هذا العنوان عن الثانية لأن خليتها فارغة. احذف `--dispatch-cc` لاستبعاد النسخ كلها. يضمّ الأرشيف السجل بصيغتَي CSV وJSON أيضًا. للتحقّق عند التسليم، طابق رقم الصف الأصلي وعنوان المستلم وبصمتَي SHA-256 للمرفق بعد فك ترميزه وللمسودة مع السجل. احتفظ بهذه الملفات في مكان آمن. تُنشأ المسودات محليًا دون SMTP أو تفويض لخدمة البريد. إذا احتوى صف جاهز على عنوان مستلم غير صالح أو ترويسة غير آمنة، يتوقّف التشغيل كله بالرمز `2` قبل كتابة الملفات.
+
+The review PDFs contain `******5678` for the first ID and `***` for the short ID. Their `custody-manifest.json` records `redactedReview: true` and `redactedFields: ["ID"]`. Set `ID=full-mask` to hide every grapheme. Repeat `--redact-field` with a different mapped text field name to mask more fields in the same run. A mask applies to the named PDF field. Review other contents before sharing. [Dispatch and masking contracts](pdf-engine.md#offline-email-dispatch-pack)
+
+تعرض ملفات PDF للمراجعة `******5678` للمعرّف الأول و`***` للمعرّف القصير. يسجّل `custody-manifest.json` القيمتَين `redactedReview: true` و`redactedFields: ["ID"]`. استخدم `ID=full-mask` لحجب كل المحارف. كرّر `--redact-field` مع اسم حقل نصي مرتبط آخر لحجب عدة حقول في التشغيل نفسه. يختصّ الحجب بحقل PDF المحدّد. راجع بقية المحتوى قبل المشاركة.
+
 ## Conditional rule walkthrough / تجربة القواعد الشرطية
 
 Save this fictional roster as `./arabiform-rules.csv` in UTF-8. Use the repository’s synthetic clinic template, which has the `Name`, `ID`, and `Consent` fields.
@@ -188,6 +214,10 @@ npm run arabiform-cli -- --mode preflight --template ./fixtures/m23/2027-offer.p
 | `--group-by-base64url <header>` | Encoded equivalent of `--group-by`. Use canonical UTF-8 base64url with no padding. Supply just one of the two forms. | بديل مرمّز لـ `--group-by`. استخدم UTF-8 بترميز base64url القياسي دون حشو، واختر إحدى الصيغتين. |
 | `--date YYYY-MM-DD` | Date for virtual roster values and print cover dates in `preflight` or `fill`. The default is the current UTC date. Pin the date to repeat a run with date-based fields or a cover. | تاريخ القيم المحسوبة وأغلفة الطباعة في `preflight` أو `fill`. التاريخ الافتراضي هو اليوم بالتوقيت العالمي UTC. حدّده عند تكرار دفعة تستخدم التاريخ في الحقول أو الغلاف. |
 | `--strict` | For `fill`, exit `2` with JSON diagnostics on stderr and write no output files if any row fails preflight. | في `fill`، يكتب تفاصيل الإخفاق بصيغة JSON إلى مخرج الأخطاء القياسي ويخرج بالرمز `2` دون إنشاء ملفات إذا أخفق أي صف. |
+| `--dispatch-eml <header>` | In `fill`, choose the exact single-address recipient column, and add the drafts and ledgers. Supply both template flags below. | في `fill`، حدّد عنوان العمود الذي يضمّ عنوان بريد واحدًا لكل مستلم، وأنشئ المسودات والسجلات. مرّر خيارَي القوالب أدناه معًا. |
+| `--dispatch-cc <header>` | Optional exact column for one Cc address per ready row. Blank cells omit Cc. Requires `--dispatch-eml`. | عمود اختياري بعنوان مطابق حرفيًا لعنوان نسخة واحد لكل صف جاهز. تُترك النسخة عند فراغ الخلية. يتطلّب `--dispatch-eml`. |
+| `--dispatch-subject <template>` / `--dispatch-body <template>` | Supply both with `--dispatch-eml`. Literal text and one-pass `{{Column}}` references work in each. Use line breaks in the body only. | مرّر الخيارَين مع `--dispatch-eml`. يقبل كل قالب النص الحرفي ومراجع `{{Column}}` التي تُستبدل مرة واحدة. استخدم فواصل الأسطر في نص الرسالة وحده. |
+| `--redact-field <field>=<policy>` | In `preflight` and `fill`, pass one `keep-last-4` or `full-mask` policy for each exact mapped text field. Repeat the flag for distinct fields. | في `preflight` و`fill`، استخدم `keep-last-4` أو `full-mask` مع الاسم المطابق لكل حقل نصي مرتبط. كرّر الخيار للحقول المختلفة. |
 | `--imposition 1-up`, `--imposition 2-up` or `--imposition 4-up` | Combined merged PDF layout in `fill`. An eligible one-page template can place up to two or four records per A4 sheet. Imposed layouts fail for multi-page templates or when embedding would drop printable annotations. Use `1-up` for those sources. | تخطيط PDF المدمج في `fill`. يمكن وضع سجلَّين أو أربعة سجلات على ورقة A4 للقوالب المؤهّلة من صفحة واحدة. يتوقّف التصدير بهذَين التخطيطَين مع القوالب متعددة الصفحات أو عند إسقاط تعليق ظاهر معدّ للطباعة. استخدم `1-up` مع هذه القوالب. |
 | `--print-certificate` | In `fill`, write a separate one-page English and Arabic receipt for the exact merged PDF. Requires a successful combined export with at least one ready row. | يكتب في `fill` وثيقة من صفحة واحدة بالعربية والإنجليزية لبصمة ملف PDF المدمج وبيانات فحصه. يتطلّب نجاح تجهيز الملف المدمج ووجود صف جاهز واحد على الأقل. |
 | `--cover` | In `fill`, adds an index cover to the merged PDF using the preset's cover language, or English when set to `auto` or omitted. In `packet`, adds a bilingual cover with a document index to each packet PDF. | في `fill` يضيف غلافًا بفهرس إلى ملف PDF المدمج بلغة الغلاف المحفوظة، أو بالإنجليزية إذا كانت اللغة `auto` أو غير محدّدة. في `packet` يضيف غلافًا ثنائي اللغة بفهرس المستندات إلى كل حزمة PDF. |
