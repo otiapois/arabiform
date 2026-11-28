@@ -33,3 +33,7 @@ PyMuPDF 1.26.7 逐项保留前版 91 个表单样本标签，检查 274 个带�
 首次冻结提交 `493424f` 跑完桌面 102 个场景后，有四个英阿用例报告加载了额外脚本。在提取工具和本地 CLI 帮助中分别观察到多余的 `UtilityModes` 和 `DeferredFillView`。修复时把对应操作接回各自的加载入口，并把 QR 打印校验延迟到实际启用 QR 时再加载。四项旧断言保留原样。旧运行在桌面回执存档后结束，端口 4187 随即关闭。修复后的专项回归通过了 10 个 Edge 场景和 21 项 QR 等相关单测。[首次桌面回执](../../test-results/m27-evidence/qa-main/first-493424f/desktop-discovery.json) · [旧进程退出](../../test-results/m27-evidence/qa-main/first-493424f/teardown.json) · [修复后 Edge](../../test-results/m27-evidence/worker-web/m27-lazy-regression-edge-final.log) · [QR 回归](../../test-results/m27-evidence/worker-web/m27-lazy-regression-qr.log)
 
 首次冻结提交上，沙箱中的 tsx 在执行业务代码前返回 `uv_os_get_passwd ENOMEM`。使用同一冻结提交、命令、D 盘输入和临时目录，本机复跑通过 CLI 与像素检查。首轮专项 Edge 的两个阿语用例在测量扩展名时遇到分段文本节点。测量代码改为逐节点读取括号、点号与字母的实际字形位置，英阿桌面和手机八个场景全量复验通过。[CLI 启动日志](../../test-results/m27-evidence/qa-main/sandbox-cli/clean.stderr) · [像素启动日志](../../test-results/m27-evidence/qa-main/sandbox-pixels/pixels.log) · [专项首轮](../../test-results/m27-evidence/qa-focused/first-edge/edge-results.json) · [八项复验](../../test-results/m27-evidence/qa-focused/edge-results.json)
+
+## 主线收尾
+
+已确认三个本机测试端口均关闭，删除 D 盘四个已合并的临时工作树和专用临时目录。Git 仅登记主工作树。冻结验收后提交的文件限于报告、复盘与项目规范。夹具属性哈希仍为 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[实际清理回执](../../test-results/m27-evidence/lead-worktree-cleanup.json)
