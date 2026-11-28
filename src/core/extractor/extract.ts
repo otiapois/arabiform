@@ -1,10 +1,7 @@
-import {
-  AcroButtonFlags, AcroChoiceFlags, PDFArray, PDFDict, PDFHexString, PDFName, PDFNull, PDFNumber,
-  PDFString, pdfDocEncodingDecode, type PDFObject,
-} from 'pdf-lib';
+import { PDFArray, PDFDict, PDFName, PDFNumber, type PDFObject } from 'pdf-lib';
 import { sha256 } from '../audit/custody';
-import { buttonNormal, buttonOnState } from '../pdf/choices';
-import { collectPageWidgets, inspectAcroFormCatalog, key, loadPdf, PdfIntakeError, requireUnsignedAcroForm } from '../pdf/template';
+import { decodeText, invalidPdf, optionLabels, radioOption, readSavedFields } from '../pdf/saved-fields';
+import { key, loadPdf, PdfIntakeError } from '../pdf/template';
 import { makeSpreadsheets } from './spreadsheets';
 
 export interface ExtractInput {
@@ -58,63 +55,6 @@ const statuses = {
 } as const;
 
 const encoder = new TextEncoder();
-const utf16be = new TextDecoder('utf-16be', { fatal: true });
-const utf16le = new TextDecoder('utf-16le', { fatal: true });
-const utf8 = new TextDecoder('utf-8', { fatal: true });
-
-function invalidPdf(): never {
-  throw new PdfIntakeError('invalid-pdf');
-}
-
-function lookup(dict: PDFDict, name: string): PDFObject | undefined {
-  const entry = dict.get(key(name));
-  if (entry === undefined) return;
-  const resolved = dict.context.lookup(entry);
-  if (resolved === undefined) invalidPdf();
-  return resolved === PDFNull ? undefined : resolved;
-}
-
-function decodeText(value: unknown): string {
-  let bytes: Uint8Array;
-  if (value instanceof PDFHexString) {
-    const hex = value.asString().replace(/[\0\t\n\f\r ]/g, '');
-    if (/[^0-9a-f]/i.test(hex)) invalidPdf();
-    bytes = PDFHexString.of(hex).asBytes();
-  } else if (value instanceof PDFString) {
-    // Literal PDF strings normalize physical line breaks and omit escaped continuations.
-    const literal = value.asString().replace(/\\(?:\r\n|\r|\n)|\\[\s\S]|\r\n|\r|\n/g, (part) =>
-      part[0] !== '\\' ? '\n' : /[\r\n]/.test(part) ? '' : part);
-    bytes = PDFString.of(literal).asBytes();
-  } else {
-    return invalidPdf();
-  }
-  if (bytes[0] === 0xfe && bytes[1] === 0xff) return utf16be.decode(bytes);
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) return utf16le.decode(bytes);
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return utf8.decode(bytes);
-  // Decode in bounded blocks because pdf-lib spreads all decoded code points in a call.
-  let text = '';
-  for (let offset = 0; offset < bytes.length; offset += 8192) {
-    const part = bytes.subarray(offset, offset + 8192);
-    if (part.some((byte) => byte === 0x7f || byte === 0x9f || byte === 0xad)) invalidPdf();
-    text += pdfDocEncodingDecode(part);
-  }
-  return text;
-}
-
-function optionLabels(options: PDFObject | undefined) {
-  if (options === undefined) return [];
-  if (!(options instanceof PDFArray)) return invalidPdf();
-  return Array.from({ length: options.size() }, (_, index) => {
-    const option = options.lookup(index);
-    if (!(option instanceof PDFArray)) {
-      const value = decodeText(option);
-      return { value, label: value };
-    }
-    if (option.size() !== 2) return invalidPdf();
-    return { value: decodeText(option.lookup(0)), label: decodeText(option.lookup(1)) };
-  });
-}
-
 function choiceValue(kind: 'dropdown' | 'listbox', raw: PDFObject | undefined, options: PDFObject | undefined, indices: PDFObject | undefined): ExtractFieldValue {
   const selected = raw instanceof PDFArray
     ? Array.from({ length: raw.size() }, (_, index) => decodeText(raw.lookup(index)))
@@ -153,31 +93,12 @@ function buttonValue(kind: 'checkbox' | 'radio', raw: PDFObject | undefined, opt
   if (state === key('Off')) return { kind, value: '', nativeValue };
   if (options === undefined) return { kind, value: nativeValue };
 
-  const choices = optionLabels(options);
-  const matchingWidgets = widgets.flatMap((widget, index) => buttonOnState(buttonNormal(widget)) === state ? [index] : []);
-  const selectedWidgets = matchingWidgets.filter((index) => lookup(widgets[index]!, 'AS') === state);
-  const indices = selectedWidgets.length ? selectedWidgets : matchingWidgets;
-  const indexed = /^(0|[1-9]\d*)$/.test(nativeValue) ? choices[Number(nativeValue)] : undefined;
-  const candidates = indices.length
-    ? indices.map((index) => choices[index] ?? invalidPdf())
-    : indexed ? [indexed] : choices.filter(({ value }) => value === nativeValue);
-  const option = candidates[0];
-  if (!option || candidates.some(({ value, label }) => value !== option.value || label !== option.label)) return invalidPdf();
+  const option = radioOption(state, options, widgets);
   return {
     kind, value: option.value,
     ...(nativeValue === option.value ? {} : { nativeValue }),
     ...(option.label === option.value ? {} : { displayLabel: option.label }),
   };
-}
-
-interface FieldNode {
-  dict: PDFDict;
-  parent?: PDFDict;
-  name?: string;
-  type?: PDFObject;
-  flags?: PDFObject;
-  value?: PDFObject;
-  options?: PDFObject;
 }
 
 async function readFields(bytes: Uint8Array): Promise<FieldEntry[]> {
@@ -186,66 +107,11 @@ async function readFields(bytes: Uint8Array): Promise<FieldEntry[]> {
   while (end && [0, 9, 10, 12, 13, 32].includes(bytes[end - 1]!)) end--;
   if (end < 5 || ![37, 37, 69, 79, 70].every((byte, index) => bytes[end - 5 + index] === byte)) invalidPdf();
   const doc = await loadPdf(bytes);
-  const acroForm = inspectAcroFormCatalog(doc);
-  const widgets = collectPageWidgets(doc.getPages());
-  const { roots } = requireUnsignedAcroForm(doc, acroForm, widgets.keys());
-
-  const stack: FieldNode[] = [];
-  for (let index = roots.size() - 1; index >= 0; index--) stack.push({ dict: roots.lookup(index, PDFDict) });
-  const seen = new Set<PDFDict>();
-  const names = new Set<string>();
-  const fields: FieldEntry[] = [];
-  while (stack.length) {
-    const inherited = stack.pop()!;
-    const { dict } = inherited;
-    const parent = lookup(dict, 'Parent');
-    if (seen.has(dict) || parent !== undefined && parent !== inherited.parent) invalidPdf();
-    seen.add(dict);
-    const partial = lookup(dict, 'T');
-    const name = partial === undefined ? inherited.name
-      : inherited.name === undefined ? decodeText(partial) : inherited.name + '.' + decodeText(partial);
-    const type = lookup(dict, 'FT') ?? inherited.type;
-    const flags = lookup(dict, 'Ff') ?? inherited.flags;
-    const value = lookup(dict, 'V') ?? inherited.value;
-    const options = lookup(dict, 'Opt') ?? inherited.options;
-    const kids = lookup(dict, 'Kids');
-    if (kids !== undefined && !(kids instanceof PDFArray)) invalidPdf();
-    const childFields: PDFDict[] = [];
-    const childWidgets: PDFDict[] = [];
-    for (let index = 0; kids && index < kids.size(); index++) {
-      const child = kids.lookup(index, PDFDict);
-      if (lookup(child, 'Subtype') === key('Widget') && !child.has(key('T')) && !child.has(key('FT'))) {
-        const widgetParent = lookup(child, 'Parent');
-        if (seen.has(child) || widgetParent !== undefined && widgetParent !== dict || child.has(key('Kids'))) invalidPdf();
-        seen.add(child);
-        childWidgets.push(child);
-      } else {
-        childFields.push(child);
-      }
-    }
-    if (childFields.length) {
-      if (childWidgets.length) invalidPdf();
-      for (const child of childFields.reverse()) stack.push({ dict: child, parent: dict, name, type, flags, value, options });
-      continue;
-    }
-
-    if (flags !== undefined && (!(flags instanceof PDFNumber) || !Number.isSafeInteger(flags.asNumber()))) invalidPdf();
-    const bits = flags?.asNumber() ?? 0;
-    if (type === key('Btn') && bits & AcroButtonFlags.PushButton) continue;
-    if (!name || names.has(name)) invalidPdf();
-    names.add(name);
-    if (type === key('Tx')) {
-      fields.push([name, { kind: 'text', value: value === undefined ? '' : decodeText(value) }]);
-    } else if (type === key('Ch')) {
-      const kind = bits & AcroChoiceFlags.Combo ? 'dropdown' : 'listbox';
-      fields.push([name, choiceValue(kind, value, options, lookup(dict, 'I'))]);
-    } else if (type === key('Btn')) {
-      const kind = bits & AcroButtonFlags.Radio ? 'radio' : 'checkbox';
-      fields.push([name, buttonValue(kind, value, options, childWidgets.length ? childWidgets : [dict])]);
-    } else {
-      invalidPdf();
-    }
-  }
+  const fields = readSavedFields(doc).map(({ name, kind, value, options, indices, widgets }): FieldEntry => {
+    if (kind === 'text') return [name, { kind, value: value === undefined ? '' : decodeText(value) }];
+    if (kind === 'checkbox' || kind === 'radio') return [name, buttonValue(kind, value, options, widgets)];
+    return [name, choiceValue(kind, value, options, indices)];
+  });
   if (!fields.length) throw new PdfIntakeError('flat-scanned-no-fields');
   return fields;
 }

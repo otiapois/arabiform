@@ -2,6 +2,8 @@ import Papa from 'papaparse';
 import { createCustodyManifest, MERGED_CUSTODY_FILENAME, type CustodyVariant } from '../audit/custody';
 import { DISPATCH_CSV_FILENAME, DISPATCH_JSON_FILENAME, DISPATCH_ZIP_FILENAME, unsafeDispatchFilenameRows } from '../dispatch/eml-pack';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../custody/verify';
+import { BATCH_DIFF_CSV_FILENAME, BATCH_DIFF_JSON_FILENAME, BatchDiffError, compareBatches, DELTA_ZIP_FILENAME } from '../diff/batch-diff';
+import { buildBatchDiffSummary, DELTA_SUMMARY_FILENAME } from '../diff/summary';
 import { isRecord, validateMappingPreset } from '../draft/mapping-preset';
 import { planGroupedOutput } from '../export/grouping';
 import { extractBatch, type ExtractInput } from '../extractor/extract';
@@ -39,6 +41,7 @@ export type CliJob =
   | (({ mode: 'preflight' } | { mode: 'fill' }) & { command: BatchCommandLine; sources: BatchSources })
   | { mode: 'packet'; input: PacketInput; mappingsJson?: string }
   | { mode: 'diff-template'; old: Uint8Array; new: Uint8Array; presetJson?: string; renameMapJson?: string }
+  | { mode: 'diff-batch'; previous: Uint8Array; next: Uint8Array; fonts: FontBytes }
   | { mode: 'extract'; inputs: readonly ExtractInput[] }
   | { mode: 'verify'; manifestJson: string; source: { qrPayload: string } | {
     inputs: readonly (ExtractInput & { parentFolder?: string })[];
@@ -52,6 +55,22 @@ type CliResult = { exitCode: 0 | 1 | 2; report: { status: string } & Record<stri
 const idle = () => {};
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+async function runBatchDiff({ previous, next, fonts }: Extract<CliJob, { mode: 'diff-batch' }>): Promise<CliResult> {
+  try {
+    const result = await compareBatches(previous, next);
+    return { exitCode: 0, report: { status: 'clean', counts: result.counts, reprint: result.reprint, hashes: result.hashes }, artifacts: [
+      { name: DELTA_ZIP_FILENAME, data: result.deltaZip },
+      { name: BATCH_DIFF_CSV_FILENAME, data: result.auditCsv },
+      { name: BATCH_DIFF_JSON_FILENAME, data: result.auditJson },
+      { name: DELTA_SUMMARY_FILENAME, data: await buildBatchDiffSummary(result, fonts) },
+    ] };
+  } catch (error) {
+    if (!(error instanceof BatchDiffError)) throw error;
+    return { exitCode: 2, report: { status: 'blocked', issues: [{ batch: error.batch, code: error.code, path: error.path }] },
+      artifacts: [], diagnostic: true };
+  }
+}
 
 async function runTemplateDiff(job: Extract<CliJob, { mode: 'diff-template' }>): Promise<CliResult> {
   let preset: unknown;
@@ -320,6 +339,7 @@ export async function dispatchCli(job: CliJob): Promise<CliResult> {
   if (job.mode === 'preflight' || job.mode === 'fill') return runBatch(job.command, job.sources);
   if (job.mode === 'packet') return runPacket(job.input, job.mappingsJson);
   if (job.mode === 'diff-template') return runTemplateDiff(job);
+  if (job.mode === 'diff-batch') return runBatchDiff(job);
   if (job.mode === 'studio') {
     const { pdfBytes, csv, filename, csvFilename } = await generateStudioTemplate(job.template, {}, job.fonts);
     return { exitCode: 0, report: { status: 'clean', template: job.template }, artifacts: [

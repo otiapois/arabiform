@@ -17,6 +17,7 @@ export type CliCommand =
   | { mode: 'extract'; outDir: string; source: { inDir: string } | { paths: string[] } }
   | { mode: 'verify'; manifest: string; source: { qrPayload: string } | { paths: string[]; variant?: CustodyVariant } }
   | { mode: 'studio'; template: StudioTemplateId; outDir: string }
+  | { mode: 'diff-batch'; previous: string; next: string; outDir: string }
   | { mode: 'diff-template'; old: string; new: string; preset?: string; renameMap?: string; outDir: string };
 
 export const CLI_USAGE = [
@@ -33,6 +34,7 @@ export const CLI_USAGE = [
   '  studio IDs: ' + STUDIO_TEMPLATE_IDS.join(', '),
   'npm run arabiform-cli -- --mode diff-template --old <pdf> --new <pdf> [--preset <json>] [--rename-map <json>] --out-dir <dir>',
   '  Rename map is a JSON object from old field names to exact new field names. Requires --preset.',
+  'npm run arabiform-cli -- --mode diff-batch --previous <zip> --next <zip> --out-dir <dir>',
   'npm run arabiform-cli -- --mode extract (--in-dir <dir> | <pdf>...) --out-dir <dir>',
   'npm run arabiform-cli -- --mode verify --manifest <json> ([--variant editable|flattened|merged] <pdf>... | --qr-payload <payload>)',
   'Exit codes: 0 clean, 2 flagged/blocked/unverified, 1 usage or local I/O error.',
@@ -66,6 +68,7 @@ const flagsByMode = {
   verify: ['manifest', 'qr-payload', 'variant'],
   studio: ['template', 'out-dir'],
   'diff-template': ['old', 'new', 'preset', 'rename-map', 'out-dir'],
+  'diff-batch': ['previous', 'next', 'out-dir'],
 };
 const boolFlags = new Set(['strict', 'cover', 'qr', 'print-certificate']);
 const valueFlags = new Set(['mode', ...Object.values(flagsByMode).flat()].filter((flag) => !boolFlags.has(flag)));
@@ -132,8 +135,8 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
   }
   const mode = values.get('mode');
   if (mode !== 'preflight' && mode !== 'fill' && mode !== 'packet' && mode !== 'extract' && mode !== 'verify' && mode !== 'studio'
-    && mode !== 'diff-template') {
-    throw new CliUsageError('Choose --mode preflight, fill, packet, extract, verify, studio, or diff-template.');
+    && mode !== 'diff-template' && mode !== 'diff-batch') {
+    throw new CliUsageError('Choose --mode preflight, fill, packet, extract, verify, studio, diff-template, or diff-batch.');
   }
   if (mode !== 'packet' && templates.length > 1) throw new CliUsageError('Duplicate option --template.');
   for (const flag of values.keys()) {
@@ -170,6 +173,10 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     } };
   }
   const outDir = pathValue(required('out-dir'), '--out-dir');
+  if (mode === 'diff-batch') {
+    return { mode, outDir, previous: pathValue(required('previous'), '--previous', /\.zip$/i),
+      next: pathValue(required('next'), '--next', /\.zip$/i) };
+  }
   if (mode === 'diff-template') {
     const preset = optionalPath('preset', /\.json$/i);
     const renameMap = optionalPath('rename-map', /\.json$/i);

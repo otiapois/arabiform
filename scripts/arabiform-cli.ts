@@ -2,6 +2,7 @@ import { lstat, mkdir, open, readFile, readdir, realpath, stat, unlink, type Fil
 import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { CLI_USAGE, CliUsageError, isSafeLocalComponent, isSafeLocalPath, parseCliArgs, type CliCommand } from '../src/core/cli/arguments';
 import { dispatchCli, type CliJob } from '../src/core/cli/dispatch';
+import { BatchDiffError, MAX_BATCH_ZIP_BYTES } from '../src/core/diff/batch-diff';
 import { MIGRATED_PRESET_FILENAME } from '../src/core/template/diff-migrator';
 
 function nativePath(path: string) {
@@ -25,6 +26,24 @@ async function readLocal(path: string) {
   return readFile(await localInput(path, 'file'));
 }
 
+async function readBatchInput(path: string, batch: BatchDiffError['batch']) {
+  const file = await open(await localInput(path, 'file'), 'r');
+  try {
+    const { size } = await file.stat();
+    if (size > MAX_BATCH_ZIP_BYTES) throw new BatchDiffError(batch, 'zip-limit');
+    const bytes = new Uint8Array(size + 1);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset);
+      if (!bytesRead) return bytes.subarray(0, offset);
+      offset += bytesRead;
+    }
+    throw new BatchDiffError(batch, offset > MAX_BATCH_ZIP_BYTES ? 'zip-limit' : 'invalid-zip');
+  } finally {
+    await file.close();
+  }
+}
+
 async function readPdfFiles(paths: readonly string[]) {
   const inputs = [];
   for (const path of paths) {
@@ -43,6 +62,13 @@ async function loadFonts() {
 }
 
 async function loadJob(command: Exclude<CliCommand, { mode: 'help' }>, date: string): Promise<{ job: CliJob; outDir?: string }> {
+  if (command.mode === 'diff-batch') {
+    nativePath(command.outDir);
+    const [previous, next, fonts] = await Promise.all([
+      readBatchInput(command.previous, 'previous'), readBatchInput(command.next, 'next'), loadFonts(),
+    ]);
+    return { outDir: command.outDir, job: { mode: 'diff-batch', previous, next, fonts } };
+  }
   if (command.mode === 'diff-template') {
     const { outDir, old, new: revised, preset, renameMap } = command;
     nativePath(outDir);
@@ -213,6 +239,11 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
+  if (error instanceof BatchDiffError) {
+    process.stderr.write(JSON.stringify({ status: 'blocked', issues: [{ batch: error.batch, code: error.code, path: error.path }] }) + '\n');
+    process.exitCode = 2;
+    return;
+  }
   const status = error instanceof CliUsageError ? 'usage-error' : 'io-error';
   process.stderr.write(JSON.stringify({ status, message: error instanceof Error ? error.message : String(error) }) + '\n');
   process.exitCode = 1;

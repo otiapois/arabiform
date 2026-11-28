@@ -5,7 +5,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import {
   PDFDocument, PDFHexString, PDFName, PDFOperator, PDFOperatorNames as Op, PDFString,
-  StandardFonts, beginText, degrees, endMarkedContent, endText, popGraphicsState, pushGraphicsState, rgb,
+  StandardFonts, TextAlignment, beginText, degrees, endMarkedContent, endText, popGraphicsState, pushGraphicsState, rgb,
   setFillingRgbColor, setFontAndSize, setTextMatrix, showText,
 } from 'pdf-lib';
 
@@ -670,6 +670,40 @@ async function payrollTemplate() {
   return pdf.save({ updateFieldAppearances: false });
 }
 
+async function correctionCertificate(id, name, verified, arabicBytes) {
+  const pdf = await createPdf('Certificate batch correction');
+  pdf.registerFontkit(fontkit);
+  const arabic = await pdf.embedFont(arabicBytes);
+  const latin = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([595.28, 841.89]);
+  page.drawText('Synthetic Sample', { x: 48, y: 770, size: 11, font: latin, color: forest });
+  page.drawText('Workshop certificate', { x: 48, y: 720, size: 28, font: latin, color: ink });
+  page.drawText('Record ' + id, { x: 48, y: 681, size: 13, font: latin, color: muted });
+  const form = pdf.getForm();
+  const participant = form.createTextField('NameAr');
+  addWidget(participant, page, [48, 575, 499, 55], arabic);
+  participant.setAlignment(TextAlignment.Right);
+  participant.setFontSize(22);
+  participant.setText(name);
+  participant.updateAppearances(arabic);
+  const check = form.createCheckBox('Verified');
+  check.addToPage(page, { x: 48, y: 520, width: 17, height: 17, borderColor: rule });
+  if (verified) check.check();
+  else check.uncheck();
+  check.updateAppearances();
+  page.drawText('Verified', { x: 74, y: 523, size: 12, font: latin, color: ink });
+  return pdf.save({ updateFieldAppearances: false });
+}
+
+const correctionFont = await readFile(new URL('../public/fonts/NotoNaskhArabic-Regular.ttf', import.meta.url));
+const unchangedCertificate = await correctionCertificate('001', 'ليلى حسن', true, correctionFont);
+const previousCertificate = await correctionCertificate('002', 'سارة أحمد', false, correctionFont);
+const nextCertificate = await correctionCertificate('002', 'سارة محمد', true, correctionFont);
+const certificateZip = (corrected) => zipSync({
+  'certificates/record-001.pdf': unchangedCertificate,
+  'certificates/record-002.pdf': corrected,
+}, { level: 1, mtime: new Date(2000, 0, 1, 12) });
+
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
 }
@@ -737,9 +771,11 @@ const fixtures = {
     ['يُسْرَى مُؤْمِن', 'SA04 0000 0000 0000 0001 0002', '2026-02-29', '0012345680', 'Payroll'],
   ]),
   'm26/gcc-payroll-preset-v13.json': JSON.stringify(payrollPreset, null, 2) + '\n',
+  'm27/previous-batch.zip': certificateZip(previousCertificate),
+  'm27/next-batch.zip': certificateZip(nextCertificate),
 };
 
-if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23', 'm24', 'm26'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23', 'm24', 'm26', 'm27'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {
