@@ -4,7 +4,7 @@
 
 ## 离线邮件草稿
 
-在英文首页和阿语工作台上传合成诊所表单，填入六行名单，按第 4、3、1 行的顺序勾选。实际下载的草稿 ZIP 和独立 PDF ZIP 都只包含第 1、3、4 行。两个阿语文件名去掉非法字符后同名，最终分别是 `ملفمشترك.pdf`、`ملفمشترك-2.pdf`，第三人收到 `Summary.pdf`。测试还切换为扁平 PDF，重新验证三位收件人、附件和清单。旧 CSV 在范围或附件设置改变后立即失效。[Edge 场景](../../tests/e2e/m25-dispatch.spec.ts) · [实际下载与浏览器收据](../../test-results/m25-evidence/qa-main/runtime/)
+在英文首页和阿语工作台上传合成诊所表单，填入六行名单，按第 4、3、1 行的顺序勾选。实际下载的草稿 ZIP 和独立 PDF ZIP 都只包含第 1、3、4 行。两个阿语文件名去掉非法字符后同名，最终分别是 `ملفمشترك.pdf`、`ملفمشترك-2.pdf`，第三份草稿附上 `Summary.pdf`。测试还切换为扁平 PDF，重新验证三位收件人、附件和清单。旧 CSV 在范围或附件设置改变后立即失效。[Edge 场景](../../tests/e2e/m25-dispatch.spec.ts) · [实际下载与浏览器收据](../../test-results/m25-evidence/qa-main/runtime/)
 
 Python 标准库独立解析实际邮件。每份草稿只有一段双语纯文本和一份 PDF，读取的收件人、可选抄送人、UTF-8 主题、正文换行和原样保留的 `{{ID}}` 等单元格文字均与名单一致。长主题的编码词可分别解码，邮件使用 CRLF、正确折行、`MIME-Version: 1.0` 和 `X-Unsent: 1`。解码后的附件逐字节等于本行 PDF ZIP 成员。重新计算的 PDF 和 EML SHA-256 匹配 JSON 和 CSV，单独下载的 CSV 与包内 CSV 完全相同。清单也注明可编辑或扁平附件版本。[独立 MIME、CSV 和 SHA-256 检查](../../tests/e2e/m25-dispatch-proof.py)
 
@@ -25,3 +25,7 @@ Microsoft Edge 124.0.2478.80 用一个 worker 串行运行 19 分 33.09 秒，�
 默认来源、严格来源 `https://arabiform-qa.test` 和恢复默认后的三次构建均通过发布校验。五个预渲染路由的最大入口 JS 为 272,338 字节，gzip 后 84,769 字节，均低于 274,000 / 85,800 字节的预算。严格来源检查正确拒绝默认占位域名。发布检查同时覆盖 sitemap、生产隐私响应头、第三方许可及 CI。[严格来源](../../test-results/m25-evidence/qa-main/verify-strict.log) · [占位域名拒绝](../../test-results/m25-evidence/qa-main/verify-strict-negative.log) · [恢复默认](../../test-results/m25-evidence/qa-main/verify-restored.log)
 
 第一次聚焦运行把阿语页面的两个本地 CSS 字体也算进空闲脚本，并在重跑预检时截到模板过渡帧。改为逐个记录同源字体请求，只允许一个入口 JS，并在就绪行的实际 PDF 验值后采集画布。最终聚焦 8/8 通过。Windows 沙箱中 tsx 启动时报 `uv_os_get_passwd ENOMEM`。含 tsx 的 CLI、默认单测和像素验收使用本机 Node，临时目录、输入和回执均在 D 盘。[首次聚焦结果](../../test-results/m25-evidence/qa-focused/initial-results.utf16.json) · [修正后复跑](../../test-results/m25-evidence/qa-focused/edge-final.json) · [沙箱启动日志](../../test-results/m25-evidence/qa-focused/cli/valid.stderr)
+
+## 主线收尾
+
+已确认三个本机测试端口均关闭，删除 D 盘四个已合并的临时工作树和专用临时目录。Git 注销文档工作树后，已核实并删除其空目录。Git 仅登记主工作树。冻结验收后提交的文件限于报告与复盘。夹具属性哈希仍为 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[实际清理回执](../../test-results/m25-evidence/lead-worktree-cleanup.json)
