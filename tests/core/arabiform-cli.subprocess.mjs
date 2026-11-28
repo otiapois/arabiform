@@ -5,7 +5,7 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeF
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { unzipSync } from 'fflate';
+import { unzipSync, zipSync } from 'fflate';
 import Papa from 'papaparse';
 import { decodePDFRawStream, PDFArray, PDFDocument, PDFHexString, PDFName, PDFRawStream } from 'pdf-lib';
 
@@ -307,6 +307,38 @@ try {
   assert.equal(repaired.getTextField('EmployeeID').getText(), '0012345679');
   assert.equal(repaired.getTextField('Sentinel').getText(), 'KEEP 00109');
 
+  const previousBatch = 'fixtures/m27/previous-batch.zip';
+  const nextBatch = 'fixtures/m27/next-batch.zip';
+  const batchFlags = ['--mode', 'diff-batch', '--previous', previousBatch];
+  const batchOut = join(directory, 'M27 Delta');
+  const batchReport = run(0, ...batchFlags, '--next', nextBatch, '--out-dir', batchOut);
+  assert.deepEqual(batchReport.counts, { unchanged: 1, modified: 1, added: 0, removed: 0 });
+  assert.equal(batchReport.reprint.savingsPercent, 50);
+  const delta = await readFile(join(batchOut, 'delta-reprint-pdfs.zip'));
+  const revisedBatch = await readFile(join(root, nextBatch));
+  const deltaMembers = unzipSync(delta);
+  const changedMember = 'certificates/record-002.pdf';
+  assert.deepEqual(Object.keys(deltaMembers), [changedMember]);
+  assert(Buffer.from(deltaMembers[changedMember]).equals(Buffer.from(unzipSync(revisedBatch)[changedMember])));
+  const batchAudit = await readJson(join(batchOut, 'batch-diff-audit.json'));
+  assert.deepEqual(batchAudit.hashes, { previousSha256: hash(await readFile(join(root, previousBatch))),
+    nextSha256: hash(revisedBatch), deltaSha256: hash(delta) });
+  const changedPdf = batchAudit.entries.find(({ status }) => status === 'modified');
+  assert.equal(changedPdf.nextSha256, hash(deltaMembers[changedMember]));
+  assert.deepEqual(changedPdf.fieldChanges, [{ field: 'NameAr', oldValue: 'سارة أحمد', newValue: 'سارة محمد' },
+    { field: 'Verified', oldValue: 'Off', newValue: 'Yes' }]);
+  assert.equal((await PDFDocument.load(await readFile(join(batchOut, 'delta-reprint-summary.pdf')))).getPageCount(), 1);
+  const heldBatch = join(directory, 'M27 Held');
+  const badBatch = join(directory, 'M27 malformed.zip');
+  const corrupted = zipSync({ 'valid.pdf': deltaMembers[changedMember] }, { level: 0 });
+  corrupted[45] ^= 1;
+  for (const [bytes, code] of [[corrupted, 'invalid-zip'],
+    [zipSync({ '../escape.pdf': deltaMembers[changedMember] }), 'unsafe-path']]) {
+    await writeFile(badBatch, bytes);
+    assert.equal(run(2, ...batchFlags, '--next', badBatch, '--out-dir', heldBatch).issues[0].code, code);
+    await assert.rejects(lstat(heldBatch), { code: 'ENOENT' });
+  }
+
   const reserved = join(directory, 'Reserved');
   await mkdir(reserved);
   await writeFile(join(reserved, 'arabiform-preflight.json'), 'existing');
@@ -321,7 +353,7 @@ try {
   assert.match(run(1, '--mode', 'preflight', ...inputs, '--out-dir', join(link, 'nested')).message, /link, junction/);
   assert.deepEqual(await readdir(target), []);
   assert.equal(run(1, '--mode', 'studio', '--template', 'visitor-badge-a6', '--out-dir', 'safe/../escape').status, 'usage-error');
-  console.log('Real subprocess checks passed for all seven modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, M23 template diff and v11 migration, M26 v13 audit and strict exit 2/0, and output-path guards.');
+  console.log('Real subprocess checks passed for all eight modes, exact custody, M20 typography and seal, M21 packet exit 0/2, M22 v11 Arabic and checkbox /V, M23 template diff and v11 migration, M26 v13 audit and strict exit 2/0, M27 Delta byte identity and unsafe ZIP exit 2 with zero outputs, and output-path guards.');
 } finally {
   const actual = await realpath(directory);
   assert.equal(dirname(actual), tmp);

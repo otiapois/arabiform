@@ -90,6 +90,14 @@
 - Summarize structural changes and show exact widget deltas where available. Keep comparison reports available when structural warnings or unresolved preset references require review. Offer explicit replacement fields for affected preset references and validate the resulting preset before enabling its download or the Fill PDFs handoff.
 - **Open New Template & Migrated Preset in Fill PDFs** carries the revised PDF and validated preset through ordinary template intake and keeps the current roster. Use normal roster preflight to determine row readiness for fill export. Replacing an input or changing a replacement must invalidate results that depend on the previous selection. [Comparison and migration contract](pdf-engine.md#template-version-comparison-and-preset-migration)
 
+## Compare batches
+
+- Open **Compare batches** from the secondary tools in the English and Arabic workbenches. The comparison mode, shared engine and synthetic Monday vs Tuesday data load on demand. The tool uses the existing pages and processes ZIPs and PDFs locally.
+- Select or drop the previous and new PDF ZIPs, then run **Compare ZIPs**, or start with the labeled synthetic demo. Show the four file counts and estimated reprint savings, allow filtering by file status, and display supported saved field values in old-to-new order for modified files. Keep byte-only changes visible with the corresponding reason.
+- A successful comparison enables the delta ZIP, CSV and JSON audit, and bilingual PDF summary downloads for the current inputs. Show a local diagnostic when an archive is rejected. Isolate each file extension and its parentheses with `<bdi dir="ltr">` in the Arabic controls. [Engine and output contract](pdf-engine.md#batch-pdf-comparison-and-delta-reprints)
+
+افتح «مقارنة الدفعات» من الأدوات الإضافية. اختر أرشيفَي ZIP السابق والجديد أو جرّب مثال الاثنين والثلاثاء الاصطناعي. صفِّ النتائج حسب الحالة، وراجع القيم قبل التعديل وبعده، ثم نزّل أرشيف إعادة الطباعة والتقرير بصيغتَي CSV وJSON وملخّص PDF الثنائي اللغة. تُعالَج الملفات على جهازك ضمن الصفحات القائمة.
+
 ## Local Batch Drafts
 
 - **Save Draft (.json)** downloads a local v1 file with effective cell edits, applied hygiene summaries, and mapping and output settings. It embeds v13 for active data validation rules, otherwise v12 for 4-up settings, v11 for active conditional rules, v10 for an active text formatting override or approval seal, v9 for an active grouping column, v8 for 2-up, v7 for QR or a different cover language, v6 when virtual columns are in use, v5 with an active watermark, or v4. Each settings version loads under the same source matching rules. A draft may contain roster cell values. Source PDF, roster, and font bytes are supplied locally when restoring. The draft is persisted in the downloaded file only, with no cloud storage or `localStorage`.
@@ -97,7 +105,7 @@
 - Export row selection is a workbench control outside the saved settings.
 
 ## Static Pre-Rendered SEO Routes (Strictly <= 5 per `SEO完整策略.md`!)
-1. `/` — Main workbench for creating or comparing templates, designing fields, filling AcroForm PDFs from CSV or Excel, assembling per-person packets, extracting saved values, and checking batch receipts.
+1. `/` — Main workbench for creating or comparing templates, designing fields, filling AcroForm PDFs from CSV or Excel, assembling per-person packets, extracting saved values, comparing batch exports and checking batch receipts.
 2. `/arabic-pdf-form-filler` — Focused English landing page (`fill pdf from csv arabic`, comparison against WinAnsi/clipping failures)
 3. `/ar/pdf-mail-merge` — Clean Arabic RTL landing page (`dir="rtl"`, concise verified Arabic UI/copy, clearly marked for native reader verification before launch)
 4. `/preserve-leading-zeros-pdf` — Focused page on preserving `00123` / `00007` IDs from CSV & Excel into PDFs
@@ -109,5 +117,5 @@ The English Arabic PDF guide and the Arabic mail merge guide offer an interactiv
 - Build outputs `dist/_headers` with `Content-Security-Policy` including `default-src 'self'`, `connect-src 'none'`, `worker-src 'self'` and `form-action 'none'`, plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
 - Cloudflare Pages `dist/_redirects` and local production preview send `/ar` and `/ar/` to the existing Arabic canonical route `/ar/pdf-mail-merge` with HTTP 301.
 - Check that `dist/` contains precisely the five HTML routes above with JSON-LD and no named `<form>` elements. The Arabic route declares `lang="ar" dir="rtl"`. `dist/sitemap.xml` and `dist/robots.txt` use the `SITE_URL` origin, with `https://arabiform.example` as the local default.
-- CI builds with `SITE_URL=https://release-check.invalid` and runs both `npm run verify:release` and the strict-origin check. The gate checks the five routes, sitemap, response headers, included license notices, and each route's entry JavaScript budget of under 274,000 raw bytes and under 85,800 gzip bytes.
+- CI builds with `SITE_URL=https://release-check.invalid` and runs both `npm run verify:release` and the strict-origin check. The gate checks the five routes, sitemap, response headers, included license notices, and each route's entry JavaScript budget of under 268,000 raw bytes and under 83,500 gzip bytes. It sums the distinct module scripts and module preloads declared by each page.
 - For the release candidate, verify all five routes in desktop and mobile Edge. Check text contrast (4.5:1 for normal text), control and focus contrast (3:1), landmark and control names, status announcements, focus restoration, and idle deferral of PDF engine and embedding-font requests. Use the preflight and export scenarios with representative synthetic data. [Release commands and hosted checks](../launch/cloudflare-pages-7day-launch.md)

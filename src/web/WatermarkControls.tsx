@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
-import { DEFAULT_WATERMARK, DEFAULT_WATERMARK_ANGLE, DEFAULT_WATERMARK_OPACITY, type WatermarkSettings } from '../core/pdf/watermark-settings';
+import { DEFAULT_WATERMARK, DEFAULT_WATERMARK_ANGLE, DEFAULT_WATERMARK_OPACITY } from '../core/pdf/print-setting-defaults';
+import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 
 const WatermarkOptions = lazy(() => import('./WatermarkOptions'));
 

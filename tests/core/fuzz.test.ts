@@ -13,6 +13,7 @@ import { dispatchCli } from '../../src/core/cli/dispatch';
 import { createCustodyQrRecords } from '../../src/core/custody/records';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../../src/core/custody/verify';
 import { createDispatchPack, prepareDispatchRows, previewDispatch, unsafeDispatchFilenameRows } from '../../src/core/dispatch/eml-pack';
+import { compareBatches } from '../../src/core/diff/batch-diff';
 import { extractBatch } from '../../src/core/extractor/extract';
 import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
@@ -89,7 +90,73 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(53_246);
+  expect(acceptedCases).toBeGreaterThanOrEqual(55_796);
+});
+
+describe('M27 batch PDF ZIP comparison', () => {
+  const arabic = fc.tuple(fc.integer({ min: 0, max: 99999 }), fc.constantFrom('س', 'م', 'ع', 'ي', 'ش'));
+  const memberPath = (id: number) => 'الدفعة/group-' + id + '/record.pdf';
+  async function filled(name: string, checked: boolean) {
+    const doc = await PDFDocument.create({ updateMetadata: false });
+    doc.addPage([100, 100]);
+    const form = doc.getForm();
+    form.createTextField('NameAr').setText(name);
+    form.createCheckBox('Verified').acroField.dict.set(key('V'), key(checked ? 'Approved' : 'Off'));
+    return doc.save({ updateFieldAppearances: false });
+  }
+  const archive = (members: Record<string, Uint8Array>, level: 0 | 1 = 0) =>
+    zipSync(members, { level, mtime: new Date(2000, 0, 1, 12) });
+
+  it('classifies identical and recompressed inputs member-for-member with 100% savings', async () => {
+    await verify(fc.asyncProperty(arabic, fc.boolean(), async ([id, character], recompress) => {
+      const pdfs = { [memberPath(id)]: await filled(character + id, true) };
+      const previous = archive(pdfs);
+      const next = recompress ? archive(pdfs, 1) : previous;
+      const result = await compareBatches(previous, next);
+      expect(result.counts).toEqual({ unchanged: 1, modified: 0, added: 0, removed: 0 });
+      expect(result.reprint.savingsPercent).toBe(100);
+      expect(result.hashes.previousSha256 === result.hashes.nextSha256).toBe(!recompress);
+      expect(Object.keys(unzipSync(result.deltaZip))).toEqual([]);
+    }), 1000);
+  }, 180_000);
+
+  it('preserves only the changed member after one Arabic character or export checkbox mutation', async () => {
+    await verify(fc.asyncProperty(arabic, fc.boolean(), async ([id, character], text) => {
+      const oldName = character + id + 'أ';
+      const newName = text ? character + id + 'ب' : oldName;
+      const oldPdf = await filled(oldName, false);
+      const newPdf = await filled(newName, !text);
+      const samePdf = await filled('سجل ثابت', false);
+      const path = memberPath(id);
+      const previous = archive({ 'reference.pdf': samePdf, [path]: oldPdf });
+      const next = archive({ [path]: newPdf, 'reference.pdf': samePdf }, 1);
+      const result = await compareBatches(previous, next);
+      expect(result.counts).toEqual({ unchanged: 1, modified: 1, added: 0, removed: 0 });
+      expect(result.reprint.savingsPercent).toBe(50);
+      expect(result.entries.find((item) => item.path === path)?.fieldChanges).toEqual([text
+        ? { field: 'NameAr', oldValue: oldName, newValue: newName }
+        : { field: 'Verified', oldValue: 'Off', newValue: 'Approved' }]);
+      const delta = unzipSync(result.deltaZip);
+      expect(Object.keys(delta)).toEqual([path]);
+      expect(Buffer.from(delta[path]!).equals(Buffer.from(unzipSync(next)[path]!))).toBe(true);
+    }), 1000);
+  }, 180_000);
+
+  it('fails closed on ZIP traversal and CRC-invalid members in either source', async () => {
+    const pdf = await filled('سجل', false);
+    await verify(fc.asyncProperty(arabic, fc.boolean(), fc.boolean(), async ([id], traversal, previous) => {
+      const good = archive({ [memberPath(id)]: pdf });
+      const malformed = traversal ? archive({ ['folder-' + id + '/\uFF0E\uFF0E/escape.pdf']: pdf }) : good.slice();
+      if (!traversal) {
+        const view = new DataView(malformed.buffer);
+        const offset = 30 + view.getUint16(26, true) + id % pdf.length;
+        malformed[offset] = malformed[offset]! ^ 1;
+      }
+      await expect(compareBatches(previous ? malformed : good, previous ? good : malformed)).rejects.toMatchObject({
+        batch: previous ? 'previous' : 'next', code: traversal ? 'unsafe-path' : 'invalid-zip',
+      });
+    }), 500);
+  }, 180_000);
 });
 
 describe('M26 seeded roster validation', () => {

@@ -1,5 +1,7 @@
+import { DEFAULT_WATERMARK } from './print-setting-defaults';
 import { textInputDiagnostic } from './text-input';
 
+export { DEFAULT_WATERMARK, DEFAULT_WATERMARK_OPACITY, DEFAULT_WATERMARK_ANGLE } from './print-setting-defaults';
 export type WatermarkSettings = { kind: 'none' } | (
   { opacity: number; angle: -45 | 0 | 45 } & (
     | { kind: 'draft' | 'confidential' | 'draft-ar' | 'confidential-ar' }
@@ -7,9 +9,6 @@ export type WatermarkSettings = { kind: 'none' } | (
   )
 );
 
-export const DEFAULT_WATERMARK: WatermarkSettings = { kind: 'none' };
-export const DEFAULT_WATERMARK_OPACITY = 0.14;
-export const DEFAULT_WATERMARK_ANGLE = 45;
 export const MAX_WATERMARK_CHARACTERS = 32;
 
 export function validateWatermarkSettings(data: unknown): WatermarkSettings | undefined {

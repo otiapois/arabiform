@@ -4,7 +4,8 @@ import type { FieldMetadata } from '../core/pdf/template';
 import { ChoiceList } from './Choices';
 import { diagnosticProblem } from './Diagnostics';
 import { Filename } from './Filename';
-import { errorCode, loadFonts, saveDownload } from './resources';
+import { loadFonts } from './bundled-assets';
+import { errorCode, saveDownload } from './resources';
 import type { RosterSource } from './roster-source';
 import './packet-workbench.css';
 

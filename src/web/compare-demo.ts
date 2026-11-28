@@ -1,7 +1,7 @@
 import oldTemplate from '../../fixtures/m23/2026-offer.pdf?url&inline';
 import newTemplate from '../../fixtures/m23/2027-offer.pdf?url&inline';
 import preset from '../../fixtures/m23/offer-preset-v11.json?raw';
-import { decodeBase64 } from './resources';
+import { decodeBase64 } from './bundled-assets';
 
 export function loadCompareDemo() {
   return {

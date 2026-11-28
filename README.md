@@ -1,6 +1,6 @@
 # ArabiForm
 
-ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), and combines multiple forms into a printable PDF for each person. It also extracts saved field values and compares delivered PDFs or QR text with supported custody manifests. The browser workbench and the local CLI process files on your device. [اقرأ بالعربية](#العربية)
+ArabiForm creates reusable AcroForm templates, fills interactive PDFs from CSV or Excel (`.xlsx`), and combines multiple forms into a printable PDF for each person. It also compares batch exports for selective reprinting, extracts saved field values, and checks delivered PDFs or QR text against supported custody manifests. The browser workbench and the local CLI process files on your device. [اقرأ بالعربية](#العربية)
 
 ## Create a starter template
 
@@ -50,6 +50,14 @@ Earlier batch manifests still support byte checks when they include output hashe
 3. Download the **Migration Report** as CSV or JSON to keep the changes, migration diagnostics, and both original PDF fingerprints. When the preset's references pass validation, use **Download Migrated Preset (.json)** to save a copy. Choose **Open New Template & Migrated Preset in Fill PDFs** to check the revised form with the current roster, if one is loaded.
 
 Comparison and migration run locally. A migrated preset preserves its settings version and carries over the supported field mappings, overrides, and rules. Review structural warnings and run the usual roster preflight in **Fill PDFs** before exporting. That step checks actual roster values, including choice membership, character limits, and text fit. [Comparison and migration contract](docs/subsystems/pdf-engine.md#template-version-comparison-and-preset-migration) · [CLI example](docs/subsystems/cli-automation.md#template-comparison-walkthrough--تجربة-مقارنة-القوالب)
+
+## Compare batches
+
+1. On `/` or `/ar/pdf-mail-merge`, open **Compare batches** in the secondary tools. Choose the previous and new ZIPs of individual PDFs, then select **Compare ZIPs**. The synthetic Monday vs Tuesday demo shows one unchanged certificate and one with a corrected Arabic name and checkbox value.
+2. Review the **Unchanged**, **Modified**, **Added**, and **Removed** counts and filter by status. ArabiForm matches PDFs by normalized relative path and compares SHA-256 hashes of their exact bytes. A renamed or moved file appears as a removal and an addition. For a changed file, review the old and new saved AcroForm values for supported fields. A byte change with no comparable value difference can come from flattening, artwork, appearance streams, or metadata.
+3. Download `delta-reprint-pdfs.zip` for modified and added PDFs, with their subfolders and the exact new PDF bytes. Download `batch-diff-audit.csv` and `batch-diff-audit.json` for statuses, saved value differences, and SHA-256 hashes of both source ZIPs and the delta ZIP. The audit is unsigned and can contain personal data from the PDFs. Download `delta-reprint-summary.pdf` for a one-page bilingual reprint summary. Savings compare PDF page counts against printing the whole new batch at one page per sheet. When the new batch has no pages, the percentage is unavailable.
+
+Use ZIPs that contain only valid PDFs in safe relative paths and optional directory entries. For ArabiForm exports, choose the individual PDF ZIP. Archives with embedded manifests or other non-PDF files, unsafe paths or members that exceed the limits are blocked. Editable PDFs support field-level review. Flattened PDFs can still be classified by exact bytes. [Archive limits and comparison rules](docs/subsystems/pdf-engine.md#batch-pdf-comparison-and-delta-reprints) · [Offline CLI command](docs/subsystems/cli-automation.md#batch-comparison-walkthrough--تجربة-مقارنة-الدفعات)
 
 ## Fill PDFs
 
@@ -198,6 +206,8 @@ Use `fill --imposition 4-up --print-certificate` for the merged A4 grid and its 
 
 Use `fill --dispatch-eml` with a recipient column, subject and body templates to add the draft ZIP and both ledgers. Use `--redact-field` with `preflight` or `fill` to check and apply review masks for the current run. [CLI examples for drafts and masks](docs/subsystems/cli-automation.md#email-drafts-and-review-masks--مسودات-البريد-وحجب-القيم)
 
+Use `--mode diff-batch --previous <old.zip> --next <new.zip> --out-dir <dir>` to compare two PDF archives and write the four delta reprint artifacts. Exit `0` means that the comparison completed, including when changes were found. Exit `2` means that an archive or its PDFs were rejected. [Synthetic batch comparison command](docs/subsystems/cli-automation.md#batch-comparison-walkthrough--تجربة-مقارنة-الدفعات)
+
 ## Run and verify locally
 
 CI uses Node.js 24, Python 3.13, and `PyMuPDF==1.26.7`. From the repository root, install dependencies and run the CI checks.
@@ -218,7 +228,7 @@ The committed synthetic PDFs, CSV, and workbook support offline testing after in
 
 For a local run, use `npm run dev`. Use `npm run preview` after a build to serve the production headers at `http://127.0.0.1:4173`. Run `npm run test:e2e` with Microsoft Edge installed. The Edge suite is separate from the CI checks above and uses the installed browser.
 
-The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M26 acceptance requires at least 52,500 deterministic cases with zero discards or crashes, including IBAN digit mutations and adjacent swaps, Gregorian leap years, leading-zero IDs, and saved preset compatibility. The 4× PyMuPDF checks compare rendered fixture output. Inspect a test export with your own templates, PDF viewer and printer before printing a batch. [M26 acceptance criteria](docs/tasks/M26-roster-schema-validator-iban-date-guards.md)
+The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M27 acceptance requires at least 55,000 deterministic cases with zero discards or crashes, including comparisons of identical batches, Arabic name and checkbox corrections, exact delta member bytes, and rejection of unsafe archives. The 4× PyMuPDF checks compare rendered fixture output. Inspect a test export with your own templates, PDF viewer and printer before printing a batch. [M27 acceptance criteria](docs/tasks/M27-batch-pdf-diff-rerun-auditor.md)
 
 For Windows development, keep the checkout, worktrees, dependencies, and Python environment on `D:`. Direct npm and pip caches to `D:\cache\arabiform\npm` and `D:\cache\arabiform\pip` with their `--cache` and `--cache-dir` flags. Point the local session’s `TEMP` and `TMP` to an existing `D:` directory. If you need a Playwright browser cache, set `PLAYWRIGHT_BROWSERS_PATH=D:\cache\ms-playwright`.
 
@@ -232,13 +242,13 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 - `/preserve-leading-zeros-pdf`
 - `/privacy-and-proof`
 
-Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Each route's entry JavaScript must be under 274,000 raw bytes and under 85,800 gzip bytes. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
+Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Each route's entry JavaScript must be under 268,000 raw bytes and under 83,500 gzip bytes. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
 
-See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v2.6.0 release brief](docs/tasks/M26-roster-schema-validator-iban-date-guards.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v2.7.0 release brief](docs/tasks/M27-batch-pdf-diff-rerun-auditor.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## العربية
 
-تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتجمع عدة نماذج في ملف PDF قابل للطباعة لكل شخص. ويمكنك استخراج قيم الحقول المحفوظة ومقارنة ملفات PDF المستلمة أو نص رمز QR ببيانات الحيازة المدعومة. تُعالَج الملفات على جهازك سواء استخدمت واجهة المتصفح أو الطرفية.
+تنشئ أداة ArabiForm قوالب AcroForm قابلة لإعادة الاستخدام، وتملأ النماذج التفاعلية من جدول CSV أو Excel (`.xlsx`)، وتجمع عدة نماذج في ملف PDF قابل للطباعة لكل شخص. ويمكنك مقارنة دفعات التصدير لطباعة الملفات المتغيّرة، واستخراج قيم الحقول المحفوظة، والتحقّق من ملفات PDF المستلمة أو نص رمز QR بالرجوع إلى بيانات الحيازة المدعومة. تُعالَج الملفات على جهازك سواء استخدمت واجهة المتصفح أو الطرفية.
 
 ### إنشاء قالب جاهز للتعبئة
 
@@ -288,6 +298,14 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 3. نزّل «تقرير الترحيل» بصيغة CSV أو JSON لحفظ التغييرات ونتائج فحص الترحيل وبصمتَي القالبين الأصليين. بعد التحقّق من مراجع الإعدادات، اختر «نزّل الإعداد المسبق المُرحّل» لحفظ نسخة منه. اختر «افتح القالب الجديد والإعداد المُرحّل في وضع تعبئة ملفات PDF» لفحص القالب الجديد مع جدول البيانات الحالي إذا سبق تحميله.
 
 تجري المقارنة والترحيل على جهازك. تحتفظ الإعدادات المُرحّلة برقم إصدارها وبالروابط والتخصيصات والقواعد المدعومة. راجع التنبيهات إلى تغيّرات القالب، ثم افحص الدفعة بالطريقة المعتادة في واجهة التعبئة قبل التصدير. يتحقّق هذا الفحص من قيم الجدول الفعلية، بما فيها الخيارات المتاحة وحدود المحارف واتساع الحقول للنص. [قواعد المقارنة والترحيل](docs/subsystems/pdf-engine.md#template-version-comparison-and-preset-migration) · [مثال من الطرفية](docs/subsystems/cli-automation.md#template-comparison-walkthrough--تجربة-مقارنة-القوالب)
+
+### مقارنة الدفعات
+
+1. افتح «مقارنة الدفعات» من الأدوات الإضافية في `/ar/pdf-mail-merge` أو `/`. اختر أرشيفَي ZIP لملفات PDF الفردية في الدفعتين السابقة والجديدة، ثم اختر «قارن الملفين». يعرض مثال الاثنين والثلاثاء الاصطناعي شهادة بقيت كما هي وأخرى تغيّر فيها اسم عربي وقيمة خانة اختيار.
+2. راجع أعداد الملفات التي بقيت كما هي، والملفات المعدّلة والمضافة والمحذوفة، وصفِّ النتائج حسب الحالة. تطابق الأداة الملفات حسب مسارها النسبي بعد توحيد ترميز الاسم، ثم تقارن بصمة SHA-256 لبايتات كل ملف. يظهر الملف الذي تغيّر اسمه أو موقعه كملف محذوف وآخر مضاف. في الملفات المعدّلة، راجع القيم المحفوظة في حقول AcroForm المدعومة قبل التعديل وبعده. قد تتغيّر البايتات دون ظهور فرق في هذه القيم، مثلما يحدث عند تسطيح النموذج أو تعديل محتوى الصفحة أو مظهرها أو بياناتها الوصفية.
+3. نزّل `delta-reprint-pdfs.zip` للحصول على الملفات المعدّلة والمضافة بمجلداتها وبايتاتها المطابقة للدفعة الجديدة. يسجّل `batch-diff-audit.csv` و`batch-diff-audit.json` الحالات وفروق القيم وبصمات SHA-256 للأرشيفات الثلاثة. التقارير غير موقّعة وقد تحتوي على بيانات شخصية واردة في ملفات PDF. يضمّ `delta-reprint-summary.pdf` ملخّصًا ثنائي اللغة من صفحة واحدة. تُحتسب نسبة التوفير مقارنة بطباعة كل صفحات الدفعة الجديدة بمعدّل صفحة لكل ورقة، وتغيب النسبة إذا خلت الدفعة الجديدة من الصفحات.
+
+استخدم أرشيفات ZIP تحتوي على ملفات PDF سليمة بمسارات نسبية آمنة، ويمكن أن تضمّ إدخالات للمجلدات. عند استخدام مخرجات ArabiForm اختر أرشيف ملفات PDF الفردية. تُرفض الأرشيفات التي تضمّ بيانات حيازة أو ملفات أخرى غير PDF، أو مسارات غير آمنة، أو ملفات تتجاوز الحدود. تتيح النماذج القابلة للتعديل مراجعة قيم الحقول. وتظل مقارنة بايتات الملفات المسطّحة متاحة. [حدود الأرشيف والمقارنة](docs/subsystems/pdf-engine.md#batch-pdf-comparison-and-delta-reprints) · [أمر الطرفية المحلي](docs/subsystems/cli-automation.md#batch-comparison-walkthrough--تجربة-مقارنة-الدفعات)
 
 ### تعبئة ملفات PDF
 
@@ -436,8 +454,10 @@ npm run arabiform-cli -- --mode studio --template certificate-bilingual --out-di
 
 استخدم `fill --dispatch-eml` مع عمود المستلم وقالبَي الموضوع والرسالة لإضافة أرشيف المسودات وسجلَّي التوزيع. استخدم `--redact-field` مع `preflight` أو `fill` لفحص قيم نسخ المراجعة وحجبها في التشغيل الحالي. [أمثلة إنشاء المسودات وحجب القيم من الطرفية](docs/subsystems/cli-automation.md#email-drafts-and-review-masks--مسودات-البريد-وحجب-القيم)
 
+استخدم `--mode diff-batch --previous <old.zip> --next <new.zip> --out-dir <dir>` لمقارنة الأرشيفَين وكتابة ملفات المقارنة وإعادة الطباعة الأربعة. يدلّ رمز الخروج `0` على اكتمال المقارنة سواء ظهرت فروق أم لا، ويدلّ الرمز `2` على رفض أحد الأرشيفَين أو أحد ملفاته. [أمر المقارنة بعينة اصطناعية](docs/subsystems/cli-automation.md#batch-comparison-walkthrough--تجربة-مقارنة-الدفعات)
+
 ### التحقق محليًا
 
-بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة والأختام وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M26 اجتياز 52,500 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، بما فيها تغيير رقم في IBAN أو تبديل محرفين متجاورين، وفحص السنوات الكبيسة والأصفار البادئة وتوافق الإعدادات المحفوظة. يقارن PyMuPDF مخرجات العينات بتكبير 4 أضعاف. افحص ملفًا تجريبيًا بقوالبك وبرنامج عرض PDF والطابعة قبل طباعة الدفعة. [شروط قبول M26](docs/tasks/M26-roster-schema-validator-iban-date-guards.md)
+بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة والأختام وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M27 اجتياز 55,000 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، بما فيها مقارنة دفعات متطابقة وتصحيح أسماء عربية وخانات اختيار وتطابق بايتات الملفات المخصّصة لإعادة الطباعة ورفض الأرشيفات غير الآمنة. يقارن PyMuPDF مخرجات العينات بتكبير 4 أضعاف. افحص ملفًا تجريبيًا بقوالبك وبرنامج عرض PDF والطابعة قبل طباعة الدفعة. [شروط قبول M27](docs/tasks/M27-batch-pdf-diff-rerun-auditor.md)
 
-استخدم أوامر التحقق أعلاه مع Node.js 24 وPython 3.13. لمعاينة النسخة المبنية مع ترويسات الأمان، شغّل `npm run preview` بعد البناء. يتطلب `npm run test:e2e` تثبيت Microsoft Edge. على Windows، احتفظ بملفات العمل والملفات المؤقتة وذاكرات التخزين المؤقت على القرص `D:`. تُحفَظ صفحات الموقع الثابتة الخمس في `dist/`، وتُضبَط قيمة `SITE_URL` على عنوان الموقع الفعلي عند تجهيز نسخة للنشر. يجب أن يقلّ حجم JavaScript الذي تحمّله كل صفحة عند فتحها عن 274,000 بايت قبل الضغط وعن 85,800 بايت بعد ضغط gzip. [أوامر بناء الإصدار والتحقق من عنوان الموقع](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
+استخدم أوامر التحقق أعلاه مع Node.js 24 وPython 3.13. لمعاينة النسخة المبنية مع ترويسات الأمان، شغّل `npm run preview` بعد البناء. يتطلب `npm run test:e2e` تثبيت Microsoft Edge. على Windows، احتفظ بملفات العمل والملفات المؤقتة وذاكرات التخزين المؤقت على القرص `D:`. تُحفَظ صفحات الموقع الثابتة الخمس في `dist/`، وتُضبَط قيمة `SITE_URL` على عنوان الموقع الفعلي عند تجهيز نسخة للنشر. يجب أن يقلّ حجم JavaScript الذي تحمّله كل صفحة عند فتحها عن 268,000 بايت قبل الضغط وعن 83,500 بايت بعد ضغط gzip. [أوامر بناء الإصدار والتحقق من عنوان الموقع](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)

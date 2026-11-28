@@ -191,12 +191,27 @@ The sample exits `2` because the revised template has structural changes that ca
 npm run arabiform-cli -- --mode preflight --template ./fixtures/m23/2027-offer.pdf --roster ./fixtures/m23/offer-roster.csv --preset ./arabiform-demo/migration/migrated-preset.json --out-dir ./arabiform-demo/revised-check
 ```
 
+## Batch comparison walkthrough / تجربة مقارنة الدفعات
+
+Use the bundled synthetic batch exports and a fresh output directory. The corrected batch changes the saved Arabic name and checkbox in `certificates/record-002.pdf`. The delta ZIP contains only that PDF, with its bytes unchanged from the new batch. The sample prints one page if you reprint the delta or two pages if you reprint the full new batch.
+
+استخدم أرشيفَي الدفعات الاصطناعيَّين ومجلد إخراج جديدًا. تغيّر الدفعة المصحّحة الاسم العربي المحفوظ وقيمة خانة اختيار في `certificates/record-002.pdf`. يضمّ أرشيف إعادة الطباعة ذلك الملف وحده، ببايتاته المطابقة للدفعة الجديدة. يتطلّب المثال طباعة صفحة واحدة لإعادة طباعة التعديلات، أو صفحتين لطباعة الدفعة الجديدة كاملةً.
+
+```sh
+npm run arabiform-cli -- --mode diff-batch --previous ./fixtures/m27/previous-batch.zip --next ./fixtures/m27/next-batch.zip --out-dir ./arabiform-demo/batch-diff
+```
+
+Open `batch-diff-audit.json` for saved values and archive SHA-256 hashes. Use `batch-diff-audit.csv` for spreadsheet review and `delta-reprint-summary.pdf` for counts and paper savings. Print from `delta-reprint-pdfs.zip`. A byte change without a comparable form value difference still makes a file eligible for reprint. Treat the unsigned audits as records of the inputs you supplied. The audits can contain personal data. [Input limits and comparison rules](pdf-engine.md#batch-pdf-comparison-and-delta-reprints)
+
+افتح `batch-diff-audit.json` لمراجعة القيم المحفوظة وبصمات SHA-256 للأرشيفات. استخدم `batch-diff-audit.csv` للمراجعة في جدول و`delta-reprint-summary.pdf` للاطّلاع على الأعداد والتوفير في الورق. اطبع من `delta-reprint-pdfs.zip`. يدخل الملف في إعادة الطباعة إذا اختلفت بايتاته، حتى عند غياب فرق في قيم الحقول القابلة للمقارنة. تسجّل التقارير غير الموقّعة نتائج المدخلات التي قدّمتها وقد تحتوي على بيانات شخصية. [حدود المدخلات وقواعد المقارنة](pdf-engine.md#batch-pdf-comparison-and-delta-reprints)
+
 ## Modes and output / الأوضاع والمخرجات
 
 | `--mode` | English | العربية |
 | --- | --- | --- |
 | `studio` | Requires a starter ID in `--template` and `--out-dir`. Writes `<id>.pdf` and `<id>-synthetic-sample.csv`. The PDF is an editable AcroForm. The matching UTF-8 BOM CSV contains synthetic rows. | يتطلّب معرّف القالب في `--template` ومسار الإخراج في `--out-dir`. ينشئ قالب AcroForm قابلًا للتعبئة باسم `<id>.pdf` وجدولًا اصطناعيًا مطابقًا باسم `<id>-synthetic-sample.csv` بترميز UTF-8 وعلامة BOM. |
 | `diff-template` | Requires `--old`, `--new`, and `--out-dir`. A completed comparison writes `template-migration-report.csv` and `template-migration-report.json`. Adds `migrated-preset.json` when a supplied preset passes migration validation. | يتطلّب `--old` و`--new` و`--out-dir`. عند اكتمال المقارنة يكتب `template-migration-report.csv` و`template-migration-report.json`، ويضيف `migrated-preset.json` إذا اجتازت إعدادات الربط المقدّمة فحص الترحيل. |
+| `diff-batch` | Requires `--previous`, `--next`, and `--out-dir`. A completed comparison writes `delta-reprint-pdfs.zip`, `batch-diff-audit.csv`, `batch-diff-audit.json`, and `delta-reprint-summary.pdf`. | يتطلّب `--previous` و`--next` و`--out-dir`. عند اكتمال المقارنة يكتب `delta-reprint-pdfs.zip` و`batch-diff-audit.csv` و`batch-diff-audit.json` و`delta-reprint-summary.pdf`. |
 | `preflight` | Requires `--template`, `--roster`, and `--out-dir`. Checks mapping and values, including glyph fit, and writes `arabiform-preflight.csv` and `arabiform-preflight.json`. The files describe each row or the reason intake was blocked. | يتطلّب `--template` و`--roster` و`--out-dir`. يفحص الربط والقيم ومدى اتساع الحقول للحروف، ثم يكتب `arabiform-preflight.csv` و`arabiform-preflight.json` بتفاصيل كل صف أو سبب رفض المدخلات. |
 | `fill` | Requires `--template`, `--roster`, and `--out-dir`. Runs preflight and, for an exportable batch, writes `arabiform-editable.zip`, `arabiform-flattened.zip`, `arabiform-merged.pdf`, and `custody-manifest.json`. With `--print-certificate`, also writes `print-shop-certificate.pdf`. Grouping changes the paths in both ZIPs and keeps the printable PDF combined. | يتطلّب `--template` و`--roster` و`--out-dir`. يجري الفحص المسبق ويكتب `arabiform-editable.zip` و`arabiform-flattened.zip` و`arabiform-merged.pdf` و`custody-manifest.json` للدفعة القابلة للتصدير. مع `--print-certificate` يكتب أيضًا `print-shop-certificate.pdf`. يغيّر التجميع المسارات داخل أرشيفَي ZIP مع إبقاء كل السجلات الجاهزة في ملف الطباعة المدمج. |
 | `packet` | Requires two to four `--template` arguments, `--roster`, and `--out-dir`. Writes `arabiform-packets.zip` and `packet-custody-manifest.json` when at least one person is ready. | يتطلّب تكرار `--template` من مرتين إلى أربع مرات، مع `--roster` و`--out-dir`. يكتب `arabiform-packets.zip` و`packet-custody-manifest.json` عند وجود شخص جاهز واحد على الأقل. |
@@ -216,9 +231,10 @@ npm run arabiform-cli -- --mode preflight --template ./fixtures/m23/2027-offer.p
 | --- | --- | --- |
 | `--help` | Print usage and exit `0`. Use it on its own. | يعرض طريقة الاستخدام ويخرج بالرمز `0`. استخدمه بمفرده. |
 | `--mode <name>` | Select a mode from the table above. | يحدّد أحد الأوضاع المذكورة في الجدول أعلاه. |
-| `--out-dir <dir>` | Local output directory for `studio`, `diff-template`, `preflight`, `fill`, `packet` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`diff-template` و`preflight` و`fill` و`packet` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
+| `--out-dir <dir>` | Local output directory for `studio`, `diff-template`, `diff-batch`, `preflight`, `fill`, `packet` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`diff-template` و`diff-batch` و`preflight` و`fill` و`packet` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
 | `--template <pdf>` / `--template <id>` | Source template for `preflight` or `fill`, or a built-in template ID for `studio`. For `packet`, repeat `--template <pdf>` two to four times in document order. | مسار القالب المصدر في `preflight` أو `fill`، أو معرّف قالب مضمّن في `studio`. في `packet`، كرّر `--template <pdf>` من مرتين إلى أربع مرات بحسب ترتيب المستندات. |
 | `--old <pdf>` / `--new <pdf>` | The original and revised AcroForm PDFs for `diff-template`. | مسارا قالبَي AcroForm القديم والجديد في `diff-template`. |
+| `--previous <zip>` / `--next <zip>` | The previous and new PDF batch ZIPs for `diff-batch`. | مسارا أرشيفَي ZIP السابق والجديد لملفات PDF في `diff-batch`. |
 | `--roster <csv-or-xlsx>` | Source roster for `preflight`, `fill`, or `packet`. All templates in `packet` use the same roster. | جدول البيانات المصدر في `preflight` أو `fill` أو `packet` بصيغة CSV أو Excel. تستخدم جميع قوالب `packet` الجدول نفسه. |
 | `--preset <json>` | A workbench mapping preset (versions 1–13) to reuse in `preflight` or `fill`, or migrate in `diff-template`. | ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 13) لاستخدامه في `preflight` أو `fill`، أو ترحيله في `diff-template`. |
 | `--rename-map <json>` | Optional old-to-new field name map for `diff-template`. Requires `--preset`. | ملف JSON اختياري يربط أسماء الحقول القديمة بالجديدة في `diff-template`. يتطلّب `--preset`. |
@@ -294,6 +310,10 @@ The CLI writes result JSON to stdout. When `fill` is blocked, including when zer
 `diff-template` exits `0` for a completed comparison without breaking changes or migration blockers. It exits `2` when either PDF fails intake, the comparison finds breaking changes such as a smaller widget, or preset migration is blocked. A completed comparison still writes both reports. It can also write a migrated preset with exit `2` if its references are valid and structural warnings remain. A blocked PDF intake produces no report files. Use `preflight` separately to check the roster.
 
 يخرج `diff-template` بالرمز `0` عندما تكتمل المقارنة دون تغيّرات تخلّ بالتوافق أو عوائق أمام الترحيل. ويخرج بالرمز `2` إذا رُفض أحد الملفَّين، أو أظهرت المقارنة تغيّرًا يخلّ بالتوافق مثل صغر مساحة أحد الحقول، أو تعذّر ترحيل الإعدادات. عند اكتمال المقارنة تُكتب نسختا التقرير، وقد يُكتب ملف إعدادات مُرحّل رغم رمز الخروج `2` إذا كانت مراجع الإعدادات صالحة وبقيت تنبيهات تتعلّق ببنية القالب. إذا رُفض ملف PDF عند فتحه فلن تُكتب التقارير. استخدم `preflight` في خطوة منفصلة لفحص جدول البيانات.
+
+`diff-batch` exits `0` for a completed comparison, even with modified, added or removed files. It exits `2` when it rejects either archive or a member and writes no comparison outputs. Argument and file I/O errors exit `1`.
+
+يخرج `diff-batch` بالرمز `0` عند اكتمال المقارنة، حتى عند وجود ملفات معدّلة أو مضافة أو محذوفة. ويخرج بالرمز `2` دون كتابة ملفات المقارنة إذا رُفض أحد الأرشيفَين أو أحد محتوياتهما. تستخدم أخطاء الوسائط أو التعامل مع الملفات الرمز `1`.
 
 ## Custody checks / التحقّق من بيان الحيازة
 

@@ -25,6 +25,10 @@ const assets = {
     template: 'fixtures/m2/landscape-badge.pdf',
     roster: 'fixtures/m2/badge-roster.csv',
   },
+  'batch-diff-demo': {
+    previous: 'fixtures/m27/previous-batch.zip',
+    next: 'fixtures/m27/next-batch.zip',
+  },
 };
 
 function bundledAssets(): Plugin {

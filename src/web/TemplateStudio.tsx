@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { StudioCustomization, StudioTemplateId, generateStudioTemplate } from '../core/studio/templates';
-import { errorCode, loadFonts, saveDownload } from './resources';
+import { loadFonts } from './bundled-assets';
+import { errorCode, saveDownload } from './resources';
 import './template-studio.css';
 
 const en = {

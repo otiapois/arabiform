@@ -1,6 +1,6 @@
 import { PDFDocument, PDFHexString, PDFName, PDFString } from 'pdf-lib';
 import { preflightRow } from '../core/pdf';
-import { loadFonts } from './resources';
+import { loadFonts } from './bundled-assets';
 
 const demoRows = [
   { Name: 'سَلْمَى بِنْتُ يَاسِين', ID: '00123', Consent: 'yes', Clinic: 'RIY', Contact: 'CALL' },

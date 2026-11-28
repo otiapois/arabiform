@@ -337,6 +337,43 @@ def check_cover_ink(page, footer):
     return evidence
 
 
+def check_batch_diff_summary(spec, directory):
+    fitz.TOOLS.mupdf_warnings(reset=True)
+    with fitz.open(directory / spec["pdf"]) as doc:
+        assert len(doc) == 1, "M27 summary must be one page"
+        page = doc[0]
+        assert len(page.get_fonts()) == 2 and not list(page.widgets()), "expected shaped fonts and printable static page"
+        lines = [bytes.fromhex(value.decode()).decode("utf-16") for value, _ in COVER_SPAN.findall(page.read_contents())]
+        assert "Delta Reprint Summary" in lines and "مُلَخَّصُ إِعَادَةِ الطِّبَاعَةِ" in lines
+        for key, arabic in (("unchanged", "دون تغيير"), ("modified", "مُعدَّلة"), ("added", "مُضافة"), ("removed", "محذوفة")):
+            assert f"{key.title()}: {spec['counts'][key]}" in lines
+            assert f"{arabic}: {spec['counts'][key]}" in lines
+        reprint = spec["reprint"]
+        for key, english, arabic in (("fullPages", "New batch sheets", "أوراق الدفعة الجديدة"),
+                                     ("deltaPages", "Reprint sheets", "أوراق إعادة الطباعة"),
+                                     ("savedPages", "Sheets saved", "الأوراق المُوفَّرة")):
+            assert f"{english}: {reprint[key]}" in lines and f"{arabic}: {reprint[key]}" in lines
+        assert f"Reprint savings: {reprint['savingsPercent']}%" in lines and "One PDF page per sheet." in lines
+        assert f"التوفير في الطباعة: {reprint['savingsPercent']}٪" in lines and "كل صفحة من الملف تُطبع على ورقة واحدة." in lines
+        evidence = check_cover_ink(page, None)
+        width, _, samples = render(page)
+        red = samples[::CHANNELS]
+        left, right = math.ceil(page.rect.width * 2 - 46), math.floor(page.rect.width * 2 + 46)
+        white = b"\xff" * (right - left)
+        bilingual_bands = []
+        for top, height in [(778, 42), *((694 - index * 49, 38) for index in range(7)), (320, 48), (255, 42)]:
+            english = arabic = 0
+            for y in range(math.floor((page.rect.height - top) * 4), math.ceil((page.rect.height - top + height) * 4)):
+                row = red[y * width:(y + 1) * width]
+                assert row[left:right] == white, "M27 text crossed the central gutter"
+                english += row[:left].translate(DARK_PIXELS).count(b"\x01")
+                arabic += row[right:].translate(DARK_PIXELS).count(b"\x01")
+            assert min(english, arabic) > 100, "missing ink in an M27 bilingual line"
+            bilingual_bands.append({"en": english, "ar": arabic})
+        assert not fitz.TOOLS.mupdf_warnings(reset=True), "M27 summary caused a renderer warning"
+        return {**evidence, "clippedPixels": 0, "bilingualBands": bilingual_bands, "counts": spec["counts"], "reprint": reprint}
+
+
 def check_bilingual_panel_ink(page):
     width, _, samples = render(page)
     red = samples[::CHANNELS]
@@ -927,6 +964,7 @@ def main():
     studio_proofs = [check_studio(spec, path.parent) for spec in manifest.get("studioProofs", [])]
     m20 = check_m20_proof(manifest["m20Proof"], path.parent) if "m20Proof" in manifest else None
     packet = check_packet(manifest["packetProof"], path.parent) if "packetProof" in manifest else None
+    m27 = check_batch_diff_summary(manifest["m27Summary"], path.parent) if manifest.get("m27Summary") else None
     inks = [item["minWidgetEdgeInsetAt4x"] for result in results for item in result["widgets"] if item["minWidgetEdgeInsetAt4x"] is not None]
     summary = {
         "engine": f"PyMuPDF {fitz.__version__}", "scale": 4, "cases": results, "mergedPagesPixelIdentical": merged,
@@ -936,6 +974,7 @@ def main():
         "m24Proofs": m24_proofs,
         **({"m20Proof": m20} if m20 else {}),
         **({"packetProof": packet} if packet else {}),
+        **({"m27Summary": m27} if m27 else {}),
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
         "leadingZeros": manifest.get("leadingZeros", {}), "m2Templates": manifest.get("m2Templates", []),
         "publicTemplates": manifest.get("publicTemplates", []),
@@ -990,6 +1029,11 @@ def main():
         assert len(migrated) == 2 and widgets == 8, "expected two migrated 2027 offer records with four mapped fields each"
         print(f"M23: {len(migrated)} 2027 offers filled via the migrated v11 preset, {widgets} widgets with exact values and "
               "active appearances, 0 clipped pixels and 0 outside changes at 4x.")
+
+
+    if m27:
+        print(f"M27: one summary page, {len(m27['bilingualBands'])} bilingual lines with 4x ink and 0 clipping, "
+              f"{m27['minPageEdgeInsetAt4x']} px minimum edge inset, and {m27['reprint']['savingsPercent']}% sheet savings.")
 
 
 if __name__ == "__main__":

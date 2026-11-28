@@ -2,8 +2,8 @@ import pdf from '../../fixtures/m26/gcc-payroll.pdf?inline';
 import csv from '../../fixtures/m26/gcc-payroll.csv?raw';
 import settings from '../../fixtures/m26/gcc-payroll-preset-v13.json?raw';
 import { inspectFillTemplate } from './fill-template-source';
-import { parseMappingPreset } from './presets';
-import { decodeBase64 } from './resources';
+import { parseMappingPreset, restorePresetSettings } from './presets';
+import { decodeBase64 } from './bundled-assets';
 import { loadRosterSource } from './roster-source';
 
 export async function loadPayrollDemo(openedAt: Date, locale: 'en' | 'ar') {
@@ -15,7 +15,7 @@ export async function loadPayrollDemo(openedAt: Date, locale: 'en' | 'ar') {
   return {
     template,
     roster,
-    preset: parseMappingPreset(settings),
+    restoredSettings: restorePresetSettings(parseMappingPreset(settings)),
     notice: locale === 'ar'
       ? 'بيانات رواتب اصطناعية. راجع رقم الحساب الدولي في الصف الثاني والتاريخ في الصف الثالث.'
       : 'Synthetic payroll data. Review the IBAN in row 2 and the date in row 3.',

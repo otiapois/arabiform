@@ -24,6 +24,8 @@ import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../src/
 import { generateStudioTemplate, STUDIO_TEMPLATE_IDS } from '../src/core/studio/templates';
 import { preflightPacket, type PacketTemplate } from '../src/core/packet/assembler';
 import { dispatchCli } from '../src/core/cli/dispatch';
+import { compareBatches } from '../src/core/diff/batch-diff';
+import { buildBatchDiffSummary, DELTA_SUMMARY_FILENAME } from '../src/core/diff/summary';
 import { validateMappingPreset } from '../src/core/draft/mapping-preset';
 import { MIGRATED_PRESET_FILENAME } from '../src/core/template/diff-migrator';
 import type { ConditionalFieldRule, RuleApplication } from '../src/core/rules/conditional-fields';
@@ -1222,6 +1224,12 @@ for (const [index, values] of repairedPayroll.rows.entries()) {
   cases.push({ before: payrollBefore, after: filename, values, label: `M26 GCC payroll row ${index + 1}${index ? ' (corrected)' : ''}` });
 }
 
+const m27 = await compareBatches(await readFile(asset('fixtures/m27/previous-batch.zip')), await readFile(asset('fixtures/m27/next-batch.zip')));
+assert.deepEqual(m27.counts, { unchanged: 1, modified: 1, added: 0, removed: 0 });
+assert.equal(m27.reprint.savingsPercent, 50);
+await writeFile(resolve(root, DELTA_SUMMARY_FILENAME), await buildBatchDiffSummary(m27, settings.fonts));
+const m27Summary = { pdf: DELTA_SUMMARY_FILENAME, counts: m27.counts, reprint: m27.reprint };
+
 const templateRoot = process.env.ARABIFORM_PUBLIC_TEMPLATES;
 if (templateRoot) {
   const publicCases: { name: string; values: Record<string, string> }[] = [
@@ -1261,5 +1269,5 @@ if (templateRoot) {
   assert(overflow.diagnostics.some((item) => item.field === 'Employee Middle Initial (if any)'));
 }
 
-await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, packetProof, m24Proofs, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
+await writeFile(resolve(root, 'manifest.json'), JSON.stringify({ cases, merged: { pdf: mergedName, rows: staged.map(({ filename }) => filename) }, mixedMerged, m4Merged, coveredMerged, choiceZip, watermarkProofs, qrProofs, impositionProofs, studioProofs, m20Proof, packetProof, m24Proofs, m27Summary, leadingZeros: { csv: ids, xlsx: ids }, m2Templates: m2TemplateResults, publicTemplates: templateResults }, null, 2));
 console.log(`pdf-lib: ${cases.length} fills verified, 4 protections rejected, CSV/XLSX IDs and ZIP verified (${root}).`);
