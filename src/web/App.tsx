@@ -8,6 +8,7 @@ import { sampleWorkflows, useWorkbench } from './useWorkbench';
 import { WatermarkControls } from './WatermarkControls';
 
 const MappingRows = lazy(() => import('./MappingRows'));
+const ConditionalRules = lazy(() => import('./ConditionalRules'));
 const PresetFeedback = lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback })));
 const CapacityDisclosure = lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure })));
 const WorkbenchPreview = lazy(() => import('./WorkbenchPreview'));
@@ -108,6 +109,7 @@ export function App({ language, heading, summary, details }: AppProps) {
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
   const [cliOpen, setCliOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const modeLabels = {
     fill: arabic ? <>تعبئة ملفات <bdi dir="ltr">PDF</bdi></> : 'Fill PDFs',
     extract: arabic ? <>استخراج بيانات <bdi dir="ltr">PDF</bdi> إلى <bdi dir="ltr">CSV / .xlsx</bdi></> : 'Extract PDFs → CSV / .xlsx',
@@ -288,6 +290,12 @@ export function App({ language, heading, summary, details }: AppProps) {
                     {desk.templateFields.length > 0
                       ? <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}><MappingRows desk={desk} language={language} /></Suspense>
                       : <p className="quiet">{labels.mappingWait}</p>}
+                    <details className="conditional-rules" onToggle={(event) => setRulesOpen(event.currentTarget.open)}>
+                      <summary data-testid="conditional-rules-toggle">{arabic ? 'قواعد التعبئة الشرطية' : 'Conditional rules'}</summary>
+                      {rulesOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
+                        <ConditionalRules desk={desk} arabic={arabic} />
+                      </Suspense>}
+                    </details>
                   </div>
                 </section>
                 <section className="panel settings-panel" aria-labelledby="settings-heading">
@@ -371,7 +379,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                           <input type="file" data-testid="preset-upload" aria-label={labels.presetImport} accept=".json,application/json" disabled={desk.exporting}
                             onChange={(event) => chooseLocalFile(event, desk.importPreset)} />
                         </label>
-                        <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.settingsSaveBlocked || desk.virtualTemplateBlocked}
+                        <button type="button" className="button secondary" data-testid="preset-download" disabled={!desk.template || !desk.sheet || desk.settingsSaveBlocked || desk.virtualTemplateBlocked || desk.conditionalSaveBlocked}
                           onClick={() => void desk.exportPreset()}>{labels.presetExport}</button>
                       </div>
                       {(desk.presetError || desk.presetWarnings) && (

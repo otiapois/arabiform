@@ -7,6 +7,7 @@ import type { CoverLanguage, QrStampSettings } from '../core/pdf/qr-settings';
 import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import { hasVirtualFilenameToken } from '../core/roster/filenames';
 import type { VirtualColumnMapping } from '../core/roster/virtual-columns';
+import { conditionalRuleColumns, type ConditionalFieldRule } from '../core/rules/conditional-fields';
 
 export type { FontMode, MappingPreset, MappingPresetV4, MappingPresetV5 } from '../core/draft/mapping-preset';
 
@@ -23,11 +24,13 @@ export function makeDraftSettings(
   qrStamp: QrStampSettings = { placement: 'none' }, coverLanguage: CoverLanguage = 'auto', imposition: Imposition = '1-up',
   groupByColumn: string | null = null,
   fieldTypography: FieldTypographyMap = {}, approvalSeal: ApprovalSealSettings | null = null,
+  conditionalRules: ConditionalFieldRule[] = [],
 ): Exclude<MappingPreset, { version: 1 | 2 | 3 }> {
   const settings = { mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides };
-  if (approvalSeal || Object.keys(fieldTypography).length) {
-    return { version: 10, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings, qrStamp, coverLanguage, imposition,
+  if (conditionalRules.length || approvalSeal || Object.keys(fieldTypography).length) {
+    const advanced = { ...settings, watermark: watermark ?? { kind: 'none' as const }, virtualMappings, qrStamp, coverLanguage, imposition,
       groupByColumn, fieldTypography, approvalSeal };
+    return conditionalRules.length ? { version: 11, ...advanced, conditionalRules } : { version: 10, ...advanced };
   }
   if (groupByColumn !== null) {
     return { version: 9, ...settings, watermark: watermark ?? { kind: 'none' }, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn };
@@ -49,11 +52,13 @@ export function makeMappingPreset(
   qrStamp: QrStampSettings = { placement: 'none' }, coverLanguage: CoverLanguage = 'auto', imposition: Imposition = '1-up',
   groupByColumn: string | null = null,
   fieldTypography: FieldTypographyMap = {}, approvalSeal: ApprovalSealSettings | null = null,
+  conditionalRules: ConditionalFieldRule[] = [],
 ): MappingPreset {
   if ((watermark && watermark.kind !== 'none') || Object.keys(alignOverrides).length
     || Object.keys(virtualMappings).length || hasVirtualFilenameToken(filenamePattern) || qrStamp.placement !== 'none'
-    || coverLanguage !== 'auto' || imposition === '2-up' || groupByColumn !== null || approvalSeal || Object.keys(fieldTypography).length) {
-    return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, approvalSeal);
+    || coverLanguage !== 'auto' || imposition === '2-up' || groupByColumn !== null || approvalSeal || Object.keys(fieldTypography).length || conditionalRules.length) {
+    return makeDraftSettings(mapping, filenamePattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides,
+      watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, approvalSeal, conditionalRules);
   }
   const settings = { mapping, filenamePattern, minFontSize, font };
   if (includeCoverSheet) return { version: 3, ...settings, flattenZip, includeCoverSheet };
@@ -69,14 +74,16 @@ export function presetMismatches(
   virtualMappings: Record<string, VirtualColumnMapping> = {},
   textFields = fields,
   fieldTypography: FieldTypographyMap = {},
+  conditionalRules: readonly ConditionalFieldRule[] = [],
 ) {
   const missingFields = [...new Set([
-    ...(fields ? Object.keys(mapping).filter((field) => !fields.includes(field)) : []),
+    ...(fields ? [...Object.keys(mapping), ...conditionalRules.map(({ field }) => field)].filter((field) => !fields.includes(field)) : []),
     ...(textFields ? [...Object.keys(virtualMappings), ...Object.keys(fieldTypography)].filter((field) => !textFields.includes(field)) : []),
   ])];
   const tokens = Array.from(filenamePattern.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g), (match) => match[1]!);
   const missingColumns = columns
-    ? [...new Set([...Object.values(mapping).filter(Boolean), ...tokens])].filter((column) => !columns.includes(column))
+    ? [...new Set([...Object.values(mapping), ...tokens, ...conditionalRules.flatMap(conditionalRuleColumns)].filter(Boolean))]
+      .filter((column) => !columns.includes(column))
     : [];
   return { missingFields, missingColumns };
 }

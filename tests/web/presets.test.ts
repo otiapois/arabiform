@@ -136,4 +136,23 @@ describe('local mapping preset boundary', () => {
       expect(parseMappingPreset(JSON.stringify(v8))).toEqual(v8);
     }
   });
+
+  it('writes ordered conditional rules in v11 preset and draft settings without promoting empty rules', () => {
+    const args = [preset.mapping, preset.filenamePattern, preset.minFontSize, 'arabic', false, false, {}, undefined, {},
+      { placement: 'none' }, 'auto', '1-up', null, {}, null] as const;
+    const rules = [
+      { field: 'Name', column: 'Role', operator: 'equals' as const, operand: 'VIP',
+        action: { type: 'set-text' as const, value: 'ضيف / {{Badge}}' } },
+      { field: 'Consent', column: 'Role', operator: 'is-blank' as const, action: { type: 'set-checkbox' as const, checked: false } },
+    ];
+    const settings = makeMappingPreset(...args, rules);
+    expect(settings).toMatchObject({ version: 11, conditionalRules: rules });
+    expect(parseMappingPreset(JSON.stringify(settings))).toEqual(settings);
+    expect(makeDraftSettings(...args, rules)).toEqual(settings);
+    expect(makeMappingPreset(...args, [])).toEqual(preset);
+    expect(makeDraftSettings(...args, [])).toEqual(makeDraftSettings(...args));
+    expect(presetMismatches({}, 'batch.pdf', ['Name'], ['Role'], {}, ['Name'], {}, rules)).toEqual({
+      missingFields: ['Consent'], missingColumns: ['Badge'],
+    });
+  });
 });

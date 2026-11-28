@@ -4,6 +4,7 @@ import type { FieldMetadata } from '../core/pdf';
 import type { BatchDraft } from '../core/draft/batch-draft';
 import * as virtual from '../core/roster/virtual-columns';
 import { planGroupedOutput } from '../core/export/grouping';
+import { conditionalRuleColumns, type ConditionalFieldRule } from '../core/rules/conditional-fields';
 import { errorCode } from './resources';
 
 type ActiveSheet = { sheetName?: string; sheet?: RosterSheet; sheetError?: string };
@@ -33,8 +34,8 @@ export const rosterViews = {
       return [name, column && !Object.hasOwn(bindings, name) && headers.includes(column) ? column : ''];
     }));
   },
-  effectiveRows(rows: RosterSheet['rows'], mapping: Record<string, string>, edits: BatchDraft['edits']) {
-    const mappedColumns = new Set(Object.values(mapping));
+  effectiveRows(rows: RosterSheet['rows'], mapping: Record<string, string>, edits: BatchDraft['edits'], rules: readonly ConditionalFieldRule[]) {
+    const mappedColumns = new Set([...Object.values(mapping), ...rules.flatMap(conditionalRuleColumns)]);
     return rows.map((row, index) => {
       const warnings = row.warnings.filter(({ code, column }) => code !== 'excel-formula-warning' || mappedColumns.has(column));
       const edit = edits[index];

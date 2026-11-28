@@ -143,7 +143,7 @@ export default function Queue({ desk, language, characterKeys }: QueueProps) {
     return fields;
   }, [desk.mapping, desk.fields]);
   const invalidChoiceColumns = new Set(result?.diagnostics
-    .filter(({ code }) => code === 'invalid-choice')
+    .filter(({ code, ruleIndex }) => code === 'invalid-choice' && ruleIndex === undefined)
     .map(({ field }) => desk.mapping[field]));
   const safeSize = result?.status === 'flagged' ? safeRowMinSize(result.diagnostics, desk.minFontSize) : undefined;
   const batchSize = useMemo(() => desk.results && suggestBatchFontSize(desk.results, desk.minFontSize),

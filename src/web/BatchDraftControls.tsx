@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { BatchDraftSource } from '../core/draft/batch-draft';
+import { prepareConditionalFields } from '../core/rules/conditional-fields';
 import * as presetCodec from './presets';
 import { errorCode, saveDownload } from './resources';
 import type { useWorkbench } from './useWorkbench';
@@ -43,9 +44,10 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
   const [notice, setNotice] = useState<Notice>();
   const pending = notice === 'saving' || notice === 'loading';
   const alert = notice === 'invalid' || notice === 'sources' || notice === 'font' || notice === 'saveError' || notice === 'changed';
+  const saveBlocked = desk.fontBlocked || desk.settingsSaveBlocked || desk.virtualTemplateBlocked || desk.groupingBlocked || desk.conditionalSaveBlocked;
 
   async function run(file?: File) {
-    if (pending || desk.exporting || (!file && (desk.fontBlocked || desk.settingsSaveBlocked || desk.virtualTemplateBlocked || desk.groupingBlocked))) return;
+    if (pending || desk.exporting || (!file && saveBlocked)) return;
     const current = desk.beginDraft(Boolean(file));
     const { template, roster, sheet, customFont } = desk;
     setNotice(file ? 'loading' : 'saving');
@@ -73,6 +75,15 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
           || ('fieldTypography' in draft.settings && Object.keys(draft.settings.fieldTypography).some((field) => !textFields.has(field)))) {
           throw new Error('invalid-batch-draft');
         }
+        if (draft.settings.version === 11 && draft.settings.conditionalRules.length) {
+          const { mapping, virtualMappings, conditionalRules } = draft.settings;
+          const mapped = Object.fromEntries(source.fields.filter((field) =>
+            (Object.hasOwn(mapping, field) && mapping[field]) || Object.hasOwn(virtualMappings, field))
+            .map((field) => [field, '']));
+          const columns = Object.fromEntries(source.columns.map((column) => [column, '']));
+          const evaluate = prepareConditionalFields(conditionalRules, source.columns, desk.fields);
+          if (evaluate(mapped, columns).diagnostics.length) throw new Error('invalid-batch-draft');
+        }
         desk.restoreDraft(draft, presetCodec);
         setNotice('restored');
       } else {
@@ -96,7 +107,7 @@ export default function BatchDraftControls({ desk, arabic }: { desk: ReturnType<
       <p className="quiet">{labels.help}</p>
       <div className="actions compact">
         <button type="button" className="button secondary" data-testid="draft-download" aria-label={`${labels.save} (.json)`}
-          disabled={pending || desk.exporting || desk.fontBlocked || desk.settingsSaveBlocked || desk.virtualTemplateBlocked || desk.groupingBlocked} onClick={() => void run()}>{labels.save}{'\u00A0'}<bdi dir="ltr">(.json)</bdi></button>
+          disabled={pending || desk.exporting || saveBlocked} onClick={() => void run()}>{labels.save}{'\u00A0'}<bdi dir="ltr">(.json)</bdi></button>
         <label className="button secondary preset-picker">
           {labels.load}{'\u00A0'}<bdi dir="ltr">(.json)</bdi>
           <input type="file" data-testid="draft-upload" aria-label={`${labels.load} (.json)`} accept=".json,application/json"
