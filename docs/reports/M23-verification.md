@@ -30,3 +30,7 @@ Microsoft Edge 124.0.2478.80 串行通过 174/174 个场景，桌面 1440 × 900
 - 29 份合成夹具逐字节复现。默认来源、严格来源 `https://arabiform-qa.test`、恢复默认来源后的三次构建及发布核验均通过。五个静态路由最大入口为 270,454 字节，gzip 84,167 字节，低于 274,000 / 85,800 字节上限。严格检查对默认 `.example` 返回 1。检查范围含 sitemap、隐私响应头、第三方许可声明和 CI。[夹具核对](../../test-results/m23-evidence/qa-main/fixtures.log) · [严格来源](../../test-results/m23-evidence/qa-main/verify-strict.log) · [占位域名拒绝](../../test-results/m23-evidence/qa-main/verify-strict-negative.log) · [恢复默认](../../test-results/m23-evidence/qa-main/verify-restored.log)
 
 [英文桌面](screenshots/m23/desktop-m23-template-diff-en.png) · [阿语桌面](screenshots/m23/desktop-m23-template-diff-ar.png) · [390 px 阿语手机](screenshots/m23/mobile-m23-template-diff.png)
+
+## 主线收尾
+
+已关闭两处本机验收预览端口，移除 D 盘的四个临时工作树及其专用临时目录。Git 注销文档工作树后留下一层空目录，核对该路径为空且已注销后移除。仅剩干净的 `main` 工作树。夹具属性文件的 Git 对象仍为 `16687c743d52cd6832cb834023e0b8160b38bf1e`。[工作树清理记录](../../test-results/m23-evidence/lead-worktree-cleanup.json)
