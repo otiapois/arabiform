@@ -17,7 +17,6 @@ const views = {
   CustomFontFeedback: lazy(() => import('./CustomFontFeedback')),
   SourceError: lazy(() => import('./SourceError')),
   ReviewAndDispatchOptions: lazy(() => import('./ReviewAndDispatchOptions')),
-  LocalCliCommand: lazy(() => import('./LocalCliCommand')),
   PresetFeedback: lazy(() => import('./MappingRows').then(({ PresetFeedback }) => ({ default: PresetFeedback }))),
   CapacityDisclosure: lazy(() => import('./CapacityDisclosure').then(({ CapacityDisclosure }) => ({ default: CapacityDisclosure }))),
   WorksheetPicker: lazy(() => import('./SourcePrintControls').then(({ WorksheetPicker }) => ({ default: WorksheetPicker }))),

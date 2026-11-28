@@ -15,7 +15,7 @@ import { hasUnsupportedPrintAnnotation, key, number, openTemplate, widgetFlags, 
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 import type { FontBytes } from './shaping';
 import { fourUpOptionsFor, isImposition, type FourUpOptions, type Imposition } from './imposition-settings';
-import { validateQrPrintRequest, type QrPrintRequest } from './qr-settings';
+import type { QrPrintRequest } from './qr-settings';
 import type { prepareQrStamp } from './qr-stamp';
 import { validateWatermarkSettings, type WatermarkSettings } from './watermark-settings';
 
@@ -117,6 +117,7 @@ async function getPrintStamp(watermark: PrintWatermarkOptions | undefined): Prom
 
 async function getQrStamp(request: QrPrintRequest | undefined, rowCount: number): Promise<QrStamp | undefined> {
   if (request === undefined) return undefined;
+  const { validateQrPrintRequest } = await import('./qr-settings');
   const safeRequest = validateQrPrintRequest(request, rowCount);
   const { prepareQrStamp } = await import('./qr-stamp');
   return prepareQrStamp(safeRequest);
