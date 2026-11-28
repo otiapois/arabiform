@@ -2,10 +2,11 @@ import type { CustodyEntry, CustodySources, GroupedCustodyEntry } from '../audit
 import type { CustodyQrRecord } from '../custody/records';
 import type { GroupingPlan } from '../export/grouping';
 import type { PrintEstimateRequest, PrintJobEstimate } from '../export/print-estimator';
-import type { Imposition, PreflightOptions, RowPreflightResult } from '../pdf';
+import type { FourUpOptions, Imposition, PreflightOptions, RowPreflightResult } from '../pdf';
 import type { ApprovalSealProblem, ApprovalSealSettings } from '../pdf/approval-seal-settings';
 import type { BatchQrPrintRequest, CoverLanguage } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
+import type { PrintCertificateNames } from '../pdf/print-certificate';
 import type { RowSelection } from './row-selection';
 import type { BoundaryRowSpotlight } from '../preflight/spotlight';
 import type { ConditionalFieldRule } from '../rules/conditional-fields';
@@ -38,8 +39,9 @@ export type BatchCommand =
   | ({ phase: 'preview'; rowIndex: number } & PreviewPrintOptions)
   | ({ phase: 'estimate' } & PrintEstimateRequest)
   | ({ phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection; grouping?: GroupingPlan } & PreviewPrintOptions)
-  | ({ phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition } & PreviewPrintOptions)
-  | ({ phase: 'split'; grouping: GroupingPlan; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition } & PreviewPrintOptions);
+  | ({ phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition; fourUp?: FourUpOptions } & PreviewPrintOptions)
+  | ({ phase: 'split'; grouping: GroupingPlan; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition; fourUp?: FourUpOptions } & PreviewPrintOptions)
+  | { phase: 'certificate'; merged: Pick<BatchMergedResult, 'bytes' | 'mergedPdfSha256'>; names: PrintCertificateNames };
 
 export type BatchRequest = BatchCommand & { id: number };
 export interface BatchPreflightResult { rows: BatchRowResult[]; custody: CustodySources; spotlight: BoundaryRowSpotlight }

@@ -8,6 +8,11 @@ const strokeColor = { 1: Op.StrokingColorGray, 3: Op.StrokingColorRgb, 4: Op.Str
 
 export interface AppearanceFont { name: string; ref: PDFFont['ref']; cids?: Map<number, number> }
 
+export function widgetTextMatrix(rotation: number, width: number, height: number) {
+  return (rotation === 90 ? [0, 1, -1, 0, width, 0] : rotation === 180 ? [-1, 0, 0, -1, width, height]
+    : rotation === 270 ? [0, -1, 1, 0, 0, height] : [1, 0, 0, 1, 0, 0]) as [number, number, number, number, number, number];
+}
+
 export function appendPositionedText(
   operators: PDFOperator[], text: string, lines: readonly PlacedLine[], size: number, fontFor: (key: FontKey) => AppearanceFont,
 ) {
@@ -65,8 +70,7 @@ export function installAppearance(doc: PDFDocument, target: WidgetTarget, placem
     operators.push(operator(Op.StrokePath));
   }
 
-  const matrix = rotation === 90 ? [0, 1, -1, 0, width, 0] : rotation === 180 ? [-1, 0, 0, -1, width, height]
-    : rotation === 270 ? [0, -1, 1, 0, 0, height] : [1, 0, 0, 1, 0, 0];
+  const matrix = widgetTextMatrix(rotation, width, height);
   operators.push(operator(Op.ConcatTransformationMatrix, matrix.map(number)), textColor(target.appearance));
   operators.push(operator(Op.BeginMarkedContent, [key('Tx')]));
   const resources: Record<string, PDFFont['ref']> = {};

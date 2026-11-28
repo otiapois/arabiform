@@ -13,6 +13,7 @@ import { prependMergeCover, type MergeCoverOptions } from './merge-cover';
 import { hasUnsupportedPrintAnnotation, key, number, openTemplate, widgetFlags, type TemplateMetadata } from './template';
 import type { FieldDiagnostic, RowPreflightResult } from './index';
 import type { FontBytes } from './shaping';
+import { fourUpOptionsFor, isImposition, type FourUpOptions, type Imposition } from './imposition-settings';
 import { validateQrPrintRequest, type QrPrintRequest } from './qr-settings';
 import type { prepareQrStamp } from './qr-stamp';
 import { validateWatermarkSettings, type WatermarkSettings } from './watermark-settings';
@@ -21,7 +22,7 @@ export interface PdfExportRow { filename: string; pdfBytes: Uint8Array }
 export interface GeneratedPdfExportRow { filename: string; getPdfBytes: () => Promise<Uint8Array> }
 export interface PrintWatermarkOptions { settings: WatermarkSettings; fonts: FontBytes }
 export interface PrintApprovalSealOptions { settings: ApprovalSealSettings; fonts: FontBytes }
-export type Imposition = '1-up' | '2-up';
+export type { Imposition } from './imposition-settings';
 type ExportRow = PdfExportRow | GeneratedPdfExportRow;
 type PrintStamp = (doc: PDFDocument) => Promise<void>;
 type QrStamp = ReturnType<typeof prepareQrStamp>;
@@ -147,7 +148,7 @@ export async function createFlattenedZip(
   const qr = await getQrStamp(qrStamp, rows.length);
   const seal = await getApprovalSeal(approvalSeal);
   for (const [index, row] of rows.entries()) {
-    zip.add(await buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index)), '1-up', seal));
+    zip.add((await buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index)), '1-up', seal)).bytes);
   }
   return zip.finish();
 }
@@ -167,7 +168,7 @@ export async function createGeneratedZip(
   const entries: CustodyEntry[] = [];
   for (const [index, row] of rows.entries()) {
     const bytes = await (flatten
-      ? buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index)), '1-up', seal)
+      ? buildMergedPdf([row], undefined, undefined, stamp, qr && ((pages) => qr(pages, index)), '1-up', seal).then(({ bytes }) => bytes)
       : row.getPdfBytes());
     const zipPath = zipPaths && paths[index]!;
     entries.push({ filename: row.filename, sha256: await sha256(bytes), bytes: bytes.byteLength, ...(zipPath !== undefined && { zipPath }) });
@@ -276,11 +277,19 @@ export async function appendFlattenedForm(target: PDFDocument, bytes: Uint8Array
 
 export async function createMergedPdf(
   rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
-  imposition: Imposition = '1-up', approvalSeal?: PrintApprovalSealOptions,
+  imposition: Imposition = '1-up', approvalSeal?: PrintApprovalSealOptions, fourUp?: FourUpOptions,
 ): Promise<Uint8Array> {
+  return (await createMergedPrint(rows, onProgress, cover, watermark, qrStamp, imposition, approvalSeal, fourUp)).bytes;
+}
+
+export async function createMergedPrint(
+  rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest,
+  imposition: Imposition = '1-up', approvalSeal?: PrintApprovalSealOptions, fourUp?: FourUpOptions,
+) {
   if (!rows.length) throw new Error('empty-export');
-  if (imposition !== '1-up' && imposition !== '2-up') throw new Error('invalid-imposition');
-  return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark), await getQrStamp(qrStamp, rows.length), imposition, await getApprovalSeal(approvalSeal));
+  if (!isImposition(imposition)) throw new Error('invalid-imposition');
+  const options = fourUpOptionsFor(imposition, fourUp);
+  return buildMergedPdf(rows, onProgress, cover, await getPrintStamp(watermark), await getQrStamp(qrStamp, rows.length), imposition, await getApprovalSeal(approvalSeal), options);
 }
 
 type SplitPrintGroup = OutputGroup & { rows: readonly GeneratedPdfExportRow[]; cover?: MergeCoverOptions };
@@ -288,10 +297,11 @@ type SplitPrintGroup = OutputGroup & { rows: readonly GeneratedPdfExportRow[]; c
 export async function createSplitMergedZip(
   groups: readonly SplitPrintGroup[], sources: CustodySources, scope: ExportScope, groupByColumn: string, onProgress?: ExportProgress,
   watermark?: PrintWatermarkOptions, qrStamp?: QrPrintRequest, imposition: Imposition = '1-up', qrRecords?: readonly CustodyQrRecord[],
-  approvalSeal?: PrintApprovalSealOptions,
+  approvalSeal?: PrintApprovalSealOptions, fourUp?: FourUpOptions,
 ) {
   if (!groups.length) throw new Error('empty-export');
-  if (imposition !== '1-up' && imposition !== '2-up') throw new Error('invalid-imposition');
+  if (!isImposition(imposition)) throw new Error('invalid-imposition');
+  const options = fourUpOptionsFor(imposition, fourUp);
   const paths = groups.map(({ folder }) => `${folder}-merged.pdf`);
   const zip = openZip([...paths, SPLIT_CUSTODY_PATH], undefined, true, 'split');
   const total = scope.selectedRowNumbers.length;
@@ -307,8 +317,8 @@ export async function createSplitMergedZip(
   let completed = 0;
   for (const [index, { groupValue, folder, rowNumbers, rows, cover }] of groups.entries()) {
     const filename = paths[index]!;
-    const bytes = await buildMergedPdf(rows, (count) => onProgress?.(completed + count, total), cover, stamp,
-      qr && ((pages, ordinal) => qr(pages, qrIndices.get(rowNumbers[ordinal]!)!)), imposition, seal);
+    const { bytes } = await buildMergedPdf(rows, (count) => onProgress?.(completed + count, total), cover, stamp,
+      qr && ((pages, ordinal) => qr(pages, qrIndices.get(rowNumbers[ordinal]!)!)), imposition, seal, options);
     entries.push({ groupValue, folder, zipPath: filename, rowNumbers, filename, sha256: await sha256(bytes), bytes: bytes.byteLength });
     zip.add(bytes);
     completed += rows.length;
@@ -320,10 +330,9 @@ export async function createSplitMergedZip(
 
 async function buildMergedPdf(
   rows: readonly ExportRow[], onProgress?: ExportProgress, cover?: MergeCoverOptions, stamp?: PrintStamp, qr?: QrStamp,
-  imposition: Imposition = '1-up', seal?: ApprovalSeal,
-): Promise<Uint8Array> {
+  imposition: Imposition = '1-up', seal?: ApprovalSeal, fourUp?: FourUpOptions,
+) {
   let merged = await PDFDocument.create({ updateMetadata: false });
-  const twoUp = imposition === '2-up';
   const recordGeometry: TemplateMetadata['pages'] = [];
   const coverEntries: { filename: string; pageCount: number }[] = [];
   const stampQr: (() => void)[] = [];
@@ -332,11 +341,11 @@ async function buildMergedPdf(
   for (const [index, row] of rows.entries()) {
     const { doc: source, pages: geometry } = await openTemplate('pdfBytes' in row ? row.pdfBytes : await row.getPdfBytes());
     const sourcePages = source.getPages();
-    if (twoUp && sourcePages.length !== 1) throw new Error('imposition-requires-single-page');
+    if (imposition !== '1-up' && sourcePages.length !== 1) throw new Error('imposition-requires-single-page');
     const layoutQr = qr?.(sourcePages, index);
     if (seal) sealMatrices.push(...seal.layout(sourcePages, layoutQr?.footprints));
     flattenWidgets(source);
-    if (twoUp) {
+    if (imposition !== '1-up') {
       if (hasUnsupportedPrintAnnotation(sourcePages[0]!)) throw new Error('imposition-unsupported-print-annotation');
       recordGeometry.push(geometry[0]!);
     }
@@ -348,12 +357,15 @@ async function buildMergedPdf(
   await stamp?.(merged);
   await seal?.paint(merged, sealMatrices);
   stampQr.forEach((paint) => paint());
-  if (twoUp) {
+  let recordScales: number[] | undefined;
+  if (imposition !== '1-up') {
     const { imposeRecordPages } = await import('./imposition');
-    merged = await imposeRecordPages(merged, recordGeometry);
+    const imposed = await imposeRecordPages(merged, recordGeometry, imposition, fourUp);
+    merged = imposed.doc;
+    recordScales = imposed.recordScales;
   }
-  if (cover) await prependMergeCover(merged, coverEntries, cover, imposition);
-  return merged.save({ updateFieldAppearances: false });
+  const coverPages = cover ? await prependMergeCover(merged, coverEntries, cover, imposition, fourUp) : 0;
+  return { bytes: await merged.save({ updateFieldAppearances: false }), pageCount: merged.getPageCount(), coverPages, recordScales };
 }
 
 export function createAudit(rows: readonly AuditRow[], scope?: ExportScope): { json: string; csv: string } {

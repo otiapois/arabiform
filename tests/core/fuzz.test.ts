@@ -30,7 +30,9 @@ import { applyNumeralPolicy } from '../../src/core/shaping/numerals';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { createGeneratedZip } from '../../src/core/pdf/exports';
-import { impositionLayout } from '../../src/core/pdf/imposition';
+import { fourUpLayout, impositionLayout, TRIM_MARK_WEIGHT, trimMarkLines } from '../../src/core/pdf/imposition';
+import { recordAtSlot, sheetForRecord, type FourUpOptions } from '../../src/core/pdf/imposition-settings';
+import { createPrintCertificate } from '../../src/core/pdf/print-certificate';
 import { inspectPrintMargins } from '../../src/core/pdf/margin-preflight';
 import { coverTableLayout, paginateCoverRows } from '../../src/core/pdf/merge-cover';
 import { encodeQr, resolveQrPayload } from '../../src/core/pdf/qr-encoder';
@@ -84,7 +86,98 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(45_000);
+  expect(acceptedCases).toBeGreaterThanOrEqual(47_500);
+});
+
+describe('M24 seeded print-shop properties', () => {
+  it('checks 1,000 optimal A4 grids with disjoint card and stroked trim rectangles', async () => {
+    type Box = [number, number, number, number];
+    const overlaps = ([x1, y1, x2, y2]: Box, [a1, b1, a2, b2]: Box) => x1 < a2 && x2 > a1 && y1 < b2 && y2 > b1;
+    await verify(fc.asyncProperty(fc.integer({ min: 10, max: 1800 }), fc.integer({ min: 10, max: 1800 }),
+      fc.constantFrom(0.5, 1, 1.25, 2, 10), async (w, h, unit) => {
+        const width = w * unit;
+        const height = h * unit;
+        const { layout, slots } = fourUpLayout(width, height);
+        const optimum = Math.max(...[[595.28, 841.89], [841.89, 595.28]].map(([x, y]) =>
+          Math.min((x! - 54) / (2 * width), (y! - 54) / (2 * height))));
+        const cardBoxes: Box[] = slots.map(({ x, y, width, height, scale }) => {
+          expect(scale).toBe(optimum);
+          expect(x).toBeGreaterThanOrEqual(18 - 1e-10);
+          expect(y).toBeGreaterThanOrEqual(18 - 1e-10);
+          expect(x + width).toBeLessThanOrEqual(layout.width - 18 + 1e-10);
+          expect(y + height).toBeLessThanOrEqual(layout.height - 18 + 1e-10);
+          return [x, y, x + width, y + height];
+        });
+        const half = TRIM_MARK_WEIGHT / 2;
+        const markBoxes: Box[] = slots.flatMap((slot) => trimMarkLines(slot).map(({ start, end }) =>
+          [Math.min(start.x, end.x) - half, Math.min(start.y, end.y) - half,
+            Math.max(start.x, end.x) + half, Math.max(start.y, end.y) + half] as Box));
+        const boxes = [...cardBoxes, ...markBoxes];
+        expect(markBoxes).toHaveLength(32);
+        for (const [index, box] of boxes.entries()) {
+          expect(boxes.slice(index + 1).some((other) => overlaps(box, other))).toBe(false);
+        }
+      }), 1_000);
+  }, 180_000);
+
+  it('checks 1,500 combined/split counts, cut stacks, blanks and inverse cover pages in ready scopes', async () => {
+    const fonts = { arabic: new Uint8Array(), latin: new Uint8Array() };
+    const settings: FourUpOptions = { fourUpOrder: 'cut-and-stack', centerCutGuides: true };
+    const record = fc.record({ status: fc.constantFrom('pass', 'flagged'), included: fc.boolean(), team: fc.integer({ min: 1, max: 5 }) });
+    await verify(fc.asyncProperty(fc.array(record, { maxLength: 82 }), fc.boolean(), async (rows, selected) => {
+      const rowSelection = selected ? rows.flatMap(({ included }, index) => included ? [index + 1] : []) : 'all-ready';
+      const ready = rows.flatMap(({ status, included }, index) => status === 'pass' && (included || !selected) ? [index + 1] : []);
+      const grouping = planGroupedOutput(rows.map(({ team }, index) => ({ Team: String(team), ID: String(index) })), 'Team');
+      const estimate = estimatePrintJob({ rows, rowSelection, templatePagesPerRecord: 1, grouping, imposition: '4-up', fourUp: settings,
+        preflight: { fonts }, exportedAt: '2026-11-28' });
+      const sheets = Math.ceil(ready.length / 4);
+      expect(estimate).toMatchObject({ activePhysicalSheets: sheets, oneUpPhysicalSheets: ready.length, coverPages: 0, totalRecords: ready.length });
+      const perTeam = new Map<number, number[]>();
+      for (const number of ready) {
+        const team = rows[number - 1]!.team;
+        perTeam.set(team, [...(perTeam.get(team) ?? []), number]);
+      }
+      expect(estimate.split!.activePhysicalSheets).toBe([...perTeam.values()].reduce((sum, records) => sum + Math.ceil(records.length / 4), 0));
+      for (const group of estimate.split!.groupBreakdowns) expect(group.rowNumbers).toEqual(perTeam.get(Number(group.groupValue)));
+      for (const count of [ready.length, ...[...perTeam.values()].map((records) => records.length)]) {
+        const sheetCount = Math.ceil(count / 4);
+        const cuts = [0, 1, 2, 3].flatMap((slot) => Array.from({ length: sheetCount }, (_, sheet) => {
+          const index = recordAtSlot(sheet, slot, sheetCount, '4-up', settings);
+          if (index < count) expect(sheetForRecord(index, count, '4-up', settings)).toBe(sheet);
+          return index;
+        }));
+        expect(cuts.filter((index) => index < count)).toEqual(Array.from({ length: count }, (_, index) => index));
+        expect(cuts.filter((index) => index >= count)).toHaveLength(sheetCount * 4 - count);
+        const pages = paginateCoverRows(Array.from({ length: count }, () => ({ height: 22, pageCount: 1 })), 72, 95, 18, '4-up', settings);
+        expect(pages.flat().map(({ startPage, endPage }) => [startPage, endPage])).toEqual(Array.from({ length: count }, (_, index) => {
+          const printPage = pages.length + index % sheetCount + 1;
+          return [printPage, printPage];
+        }));
+      }
+    }), 1_500);
+  }, 180_000);
+
+  it('checks 12 real certificate digests and rejects modified merged bytes', async () => {
+    const fonts = { arabic: await readFile('public/fonts/NotoNaskhArabic-Regular.ttf'), latin: await readFile('public/fonts/NotoSans-Regular.ttf') };
+    await verify(fc.asyncProperty(fc.nat({ max: 99_999 }), async (value) => {
+      const doc = await PDFDocument.create({ updateMetadata: false });
+      doc.addPage([595.28, 841.89]);
+      doc.setTitle(String(value));
+      const bytes = await doc.save();
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      const receipt = { sources: { templateSha256: 'a'.repeat(64), rosterSha256: 'b'.repeat(64) }, mergedPdfSha256: digest,
+        readyCount: 1, excludedCount: 2, exportScope: 'selected-subset', imposition: '4-up', pageCount: 1, coverPages: 0, mappedInkOutsidePrint: false } as const;
+      const names = { templateName: 'قالب.pdf', rosterName: 'Roster.csv', outputName: 'Output.pdf' };
+      const certificate = await PDFDocument.load(await createPrintCertificate(bytes, receipt, names, fonts));
+      expect(certificate.getPageCount()).toBe(1);
+      const pageContents = certificate.getPage(0).node.Contents() as PDFArray;
+      const text = decoder.decode(decodePDFRawStream(pageContents.lookup(0, PDFRawStream)).decode());
+      expect(text).toContain('/ActualText ' + PDFHexString.fromText('SHA-256 ' + digest).toString());
+      const modified = Uint8Array.from(bytes);
+      modified[0] = modified[0]! ^ 1;
+      await expect(createPrintCertificate(modified, receipt, names, fonts)).rejects.toThrow('print-certificate-output-mismatch');
+    }), 12);
+  }, 180_000);
 });
 
 describe('seeded template diff and preset migration', () => {

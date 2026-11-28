@@ -580,19 +580,19 @@ def check_m20_proof(spec, directory):
             "blockedWidget": spec["overlapWithWidget"], "blockedQr": spec["overlapWithQr"]}
 
 
-def record_boxes(width, height):
+def record_boxes(width, height, grid=2):
     # Recalculate placement from the reference page's displayed dimensions.
     candidates = []
-    for paper_width, paper_height, across in ((841.89, 595.28, True), (595.28, 841.89, False),
-                                              (595.28, 841.89, True), (841.89, 595.28, False)):
-        columns, rows = (2, 1) if across else (1, 2)
+    layouts = ((595.28, 841.89, 2, 2), (841.89, 595.28, 2, 2)) if grid == 4 else (
+        (841.89, 595.28, 2, 1), (595.28, 841.89, 1, 2), (595.28, 841.89, 2, 1), (841.89, 595.28, 1, 2))
+    for paper_width, paper_height, columns, rows in layouts:
         column_width = (paper_width - 36 - (columns - 1) * 18) / columns
         row_height = (paper_height - 36 - (rows - 1) * 18) / rows
         scale = min(column_width / width, row_height / height)
         x = 18 + (column_width - width * scale) / 2
         y = 18 + (row_height - height * scale) / 2
-        dx, dy = (column_width + 18, 0) if across else (0, row_height + 18)
-        candidates.append((scale, paper_width, paper_height, [(x, y), (x + dx, y + dy)]))
+        positions = [(x + col * (column_width + 18), y + row * (row_height + 18)) for row in range(rows) for col in range(columns)]
+        candidates.append((scale, paper_width, paper_height, positions))
     return max(candidates, key=lambda candidate: candidate[0])
 
 
@@ -655,7 +655,10 @@ def check_imposition(spec, directory):
     with fitz.open(directory / spec["pdf"]) as doc, fitz.open(directory / spec["referencePdf"]) as reference:
         cover_count = spec["coverPages"]
         records = spec["filenames"]
-        assert len(doc) == cover_count + math.ceil(len(records) / 2)
+        grid = spec.get("grid", 2)
+        sheet_count = math.ceil(len(records) / grid)
+        cut_and_stack = spec.get("cutAndStack", False)
+        assert len(doc) == cover_count + sheet_count
         assert len(reference) == cover_count + len(records)
         index_cells = []
         for page in list(doc)[:cover_count]:
@@ -669,41 +672,87 @@ def check_imposition(spec, directory):
             check_bilingual_panel_ink(page)
         if cover_count:
             assert index_cells == [cell for index, (number, name) in enumerate(zip(spec["rowNumbers"], records, strict=True))
-                                   for cell in (str(index + 1), str(number), name, str(cover_count + 1 + index // 2))]
+                                   for cell in (str(index + 1), str(number), name,
+                                                str(cover_count + 1 + (index % sheet_count if cut_and_stack else index // grid)))]
         sheets = []
         for sheet_index, page in enumerate(list(doc)[cover_count:]):
-            first = sheet_index * 2
-            sources = [reference[cover_count + index] for index in range(first, min(first + 2, len(records)))]
-            source_page = sources[0]
-            scale, paper_width, paper_height, positions = record_boxes(source_page.rect.width, source_page.rect.height)
+            indices = [slot * sheet_count + sheet_index if cut_and_stack else sheet_index * grid + slot for slot in range(grid)]
+            occupied = [(slot, index) for slot, index in enumerate(indices) if index < len(records)]
+            source_page = reference[cover_count + occupied[0][1]]
+            scale, paper_width, paper_height, positions = record_boxes(source_page.rect.width, source_page.rect.height, grid)
             assert abs(page.rect.width - paper_width) < 0.01 and abs(page.rect.height - paper_height) < 0.01
             assert not list(page.widgets()) and not page.get_images()
-            assert len([entry for entry in page.get_xobjects() if entry[2] == 0]) == len(sources)
+            assert len([entry for entry in page.get_xobjects() if entry[2] == 0]) == len(occupied)
             image = render(page)
             w, h, rgb = image
             allowed = []
             slot_proofs = []
-            for slot, (source, (x, y)) in enumerate(zip(sources, positions)):
+            for slot, index in occupied:
+                source = reference[cover_count + index]
+                x, y = positions[slot]
                 right, bottom = x + source.rect.width * scale, y + source.rect.height * scale
-                if allowed:
-                    _, _, last_right, last_bottom = allowed[0]
-                    assert last_right < x * 4 or last_bottom < y * 4, (spec["pdf"], "record boxes overlap")
-                allowed.append(pixel_box(x, y, right, bottom))
-                slot_proofs.append(check_imposed_record(image, source, scale, (x, y, right, bottom), spec, first + slot))
+                record = pixel_box(x, y, right, bottom)
+                assert all(not fitz.Rect(record).intersects(fitz.Rect(box)) for box in allowed), (spec["pdf"], "record/cut marks overlap")
+                allowed.append(record)
+                slot_proofs.append(check_imposed_record(image, source, scale, (x, y, right, bottom), spec, index))
                 for left, top, r, b in cut_mark_boxes(x, y, right, bottom):
                     assert sum(value < 200 for line in range(top, b)
                                for value in rgb[(line * w + left) * CHANNELS:(line * w + r) * CHANNELS:CHANNELS]) >= 12
-                    allowed.append((left, top, r, b))
+                    mark = (left, top, r, b)
+                    assert all(not fitz.Rect(mark).intersects(fitz.Rect(box)) for box in allowed), (spec["pdf"], "trim mark overlap")
+                    allowed.append(mark)
                 if spec.get("requireWatermark", True):
                     assert any(0.20 < span["opacity"] < 0.24 and
                                fitz.Rect(x, y, right, bottom).contains(fitz.Rect(span["bbox"]))
-                               for span in page.get_texttrace()), (spec["pdf"], first + slot, "vector watermark missing from slot")
+                               for span in page.get_texttrace()), (spec["pdf"], index, "vector watermark missing from slot")
+            guide_count = 2 if spec.get("centerCutGuides") else 0
+            if grid == 4:
+                paths = page.get_drawings()
+                assert sum(p["type"] == "s" and abs(p["width"] - 0.35) < 0.001 and len(p["items"]) == 1 and
+                           p["items"][0][0] == "l" for p in paths) == 8 * len(occupied), "vector trim line count differs"
+                assert sum(p["type"] == "s" and abs(p["width"] - 0.25) < 0.001 for p in paths) == guide_count
+                if guide_count:
+                    center_x, center_y = paper_width / 2, paper_height / 2
+                    guides = [pixel_box(center_x - 0.5, 8.5, center_x + 0.5, paper_height - 8.5),
+                              pixel_box(8.5, center_y - 0.5, paper_width - 8.5, center_y + 0.5)]
+                    for guide in guides:
+                        assert all(not fitz.Rect(guide).intersects(fitz.Rect(box)) for box in allowed), "guide overlaps artwork or crop marks"
+                    allowed.extend(guides)
             assert_same_outside((w, h, b"\xff" * (w * h * CHANNELS)), image, allowed, spec["pdf"])
             sheets.append({"sheet": cover_count + sheet_index + 1, "records": slot_proofs,
-                           "cutLines": 8 * len(sources), "blankSlots": 2 - len(sources), "pixelsOutsideRecordsAndCutLines": 0})
+                           "cutLines": 8 * len(occupied), "guideLines": guide_count, "blankSlots": grid - len(occupied),
+                           "pixelsOutsideRecordsAndCutLines": 0})
     warnings = fitz.TOOLS.mupdf_warnings(reset=True)
     assert not warnings, f"{spec['pdf']}: MuPDF emitted warnings: {warnings}"
-    return {"pdf": spec["pdf"], "coverPages": cover_count, "exactCoverIndexRows": len(records) if cover_count else 0, "sheets": sheets}
+    result = {"pdf": spec["pdf"], "coverPages": cover_count, "exactCoverIndexRows": len(records) if cover_count else 0, "sheets": sheets}
+    if grid == 4:
+        result["certificate"] = check_print_certificate(spec, directory, cover_count + sheet_count)
+    return result
+
+
+def check_print_certificate(spec, directory, sheets):
+    digest = hashlib.sha256((directory / spec["pdf"]).read_bytes()).hexdigest()
+    with fitz.open(directory / spec["certificate"]) as cert, fitz.open(directory / spec["referencePdf"]) as reference:
+        assert len(cert) == 1 and not cert[0].get_images() and not list(cert[0].widgets())
+        page = cert[0]
+        text = [bytes.fromhex(value.decode("ascii")).decode("utf-16") for value, _ in COVER_SPAN.findall(page.read_contents())]
+        assert [item for item in text if item.startswith("SHA-256 ")] == ["SHA-256 " + value for value in (
+            spec["templateSha256"], spec["rosterSha256"], digest)]
+        assert all(value in text for value in ("Print-Shop Preflight Certificate", "شهادة فحص المطبعة", "0 clipped fields verified",
+            "Mapped text ink-fit preflight", "Imposition: 4-up", "Ready: 7  /  Excluded: 0", f"Physical sheets: {sheets}  /  Cover pages: {spec['coverPages']}",
+            spec["templateName"], spec["rosterName"], spec["pdf"], "NotoNaskhArabic-Regular", "NotoSans-Regular")), text
+        source = reference[spec["coverPages"]]
+        scale, *_ = record_boxes(source.rect.width, source.rect.height, 4)
+        min_text = next(item for item in text if re.fullmatch(r"\d+(?:\.\d+)? pt", item))
+        assert abs(float(min_text.split()[0]) - spec["minimumUnscaledMappedFontPt"] * scale) < 0.0001
+        image = render(page)
+        w, h, _ = image
+        assert_same_outside((w, h, b"\xff" * (w * h * CHANNELS)), image,
+                            [pixel_box(35, 35, page.rect.width - 35, page.rect.height - 35)], spec["certificate"])
+        traces = page.get_texttrace()
+        for family in ("NotoNaskhArabic-Regular", "NotoSans-Regular"):
+            assert any(family in span["font"] and len(span["chars"]) > 0 for span in traces)
+    return {"pages": 1, "bilingual": True, "exactOutputSha256": digest, "minimumMappedFont": min_text, "pixelsOutsideMargins": 0}
 
 
 def check_studio(spec, directory):
@@ -830,6 +879,7 @@ def main():
     watermarks = [check_watermark(spec, path.parent) for spec in manifest.get("watermarkProofs", [])]
     qr_proofs = [check_qr_stamp(spec, path.parent) for spec in manifest.get("qrProofs", [])]
     imposition_proofs = [check_imposition(spec, path.parent) for spec in manifest.get("impositionProofs", [])]
+    m24_proofs = [check_imposition(spec, path.parent) for spec in manifest.get("m24Proofs", [])]
     studio_proofs = [check_studio(spec, path.parent) for spec in manifest.get("studioProofs", [])]
     m20 = check_m20_proof(manifest["m20Proof"], path.parent) if "m20Proof" in manifest else None
     packet = check_packet(manifest["packetProof"], path.parent) if "packetProof" in manifest else None
@@ -839,6 +889,7 @@ def main():
         "flattenedZipPagesPixelIdentical": zipped,
         "coveredMerged": covered, "watermarkProofs": watermarks, "qrProofs": qr_proofs, "impositionProofs": imposition_proofs,
         "studioProofs": studio_proofs,
+        "m24Proofs": m24_proofs,
         **({"m20Proof": m20} if m20 else {}),
         **({"packetProof": packet} if packet else {}),
         "minWidgetEdgeInsetAt4x": min(inks) if inks else None,
@@ -872,6 +923,10 @@ def main():
     if studio_proofs:
         print(f"Template studio: {len(studio_proofs)} bilingual one-page designs with four clear 72 pt QR corners, "
               "9 pt vertical print margins, and both Arabic and English fills.")
+    if m24_proofs:
+        sheets = [sheet for proof in m24_proofs for sheet in proof["sheets"]]
+        print(f"M24: {len(sheets)} imposed A4 sheets, {sum(len(sheet['records']) for sheet in sheets)} A6 records, "
+              f"{sum(sheet['cutLines'] for sheet in sheets)} disjoint vector trim lines, two one-page bilingual certificates with exact SHA-256, and 0 outside ink.")
     if m20:
         print(f"M20: {len(m20['pages'])} preview/ZIP/merged seal pages (including rotated UserUnit 2), Eastern ٠٠١٢٣ and Western 00123, "
               "custom typography, unchanged QR modules, 0 widget overlap, and both collisions blocked.")
