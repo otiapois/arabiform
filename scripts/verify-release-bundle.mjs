@@ -166,7 +166,7 @@ function verifyRelease() {
   checkLicensesAndCi()
   console.log('Verified five routes, sitemap, response headers, notices and CI for ' + site.origin + (strict ? ' (strict origin)' : ''))
   for (const { route, raw, gzip } of sizes) {
-    requireCheck(raw < 274_000 && gzip < 85_800, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
+    requireCheck(raw < 268_000 && gzip < 83_500, route + ' entry JS exceeds its budget: ' + raw + ' raw / ' + gzip + ' gzip bytes')
   }
   console.log('Largest entry JS: ' + Math.max(...sizes.map(size => size.raw)) + ' raw / ' +
     Math.max(...sizes.map(size => size.gzip)) + ' gzip bytes')
