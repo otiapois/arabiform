@@ -5,6 +5,7 @@ import type { FieldTypographyMap } from '../pdf/field-typography';
 import { isCoverLanguage, validateQrStampSettings, type CoverLanguage, type QrStampSettings } from '../pdf/qr-settings';
 import { validateWatermarkSettings, type WatermarkSettings } from '../pdf/watermark-settings';
 import { isVirtualColumnId, validateVirtualTemplate, type VirtualColumnMapping } from '../roster/virtual-columns';
+import { readConditionalRules, type ConditionalFieldRule } from '../rules/conditional-fields';
 
 export type FontMode = 'auto' | 'arabic' | 'latin';
 
@@ -31,12 +32,15 @@ export type MappingPresetV9 = Omit<MappingPresetV8, 'version'> & { version: 9; g
 export type MappingPresetV10 = Omit<MappingPresetV9, 'version'> & {
   version: 10; fieldTypography: FieldTypographyMap; approvalSeal: ApprovalSealSettings | null;
 };
+export type MappingPresetV11 = Omit<MappingPresetV10, 'version'> & {
+  version: 11; conditionalRules: ConditionalFieldRule[];
+};
 
 export type MappingPreset = (PresetSettings & (
   | { version: 1 }
   | { version: 2; flattenZip: boolean }
   | { version: 3; flattenZip: boolean; includeCoverSheet: boolean }
-)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10;
+)) | MappingPresetV4 | MappingPresetV5 | MappingPresetV6 | MappingPresetV7 | MappingPresetV8 | MappingPresetV9 | MappingPresetV10 | MappingPresetV11;
 
 const presetKeys = ['version', 'mapping', 'filenamePattern', 'minFontSize', 'font'];
 
@@ -91,8 +95,9 @@ function validateFieldTypography(value: unknown, mapping: PresetSettings['mappin
 }
 
 export function validateMappingPreset(data: unknown): MappingPreset | undefined {
-  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5 && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10)
-    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version === 10 ? 1 : 0)
+  if (!isRecord(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5
+    && data.version !== 6 && data.version !== 7 && data.version !== 8 && data.version !== 9 && data.version !== 10 && data.version !== 11)
+    || Object.keys(data).length !== presetKeys.length + data.version - 1 + (data.version >= 7 ? 1 : 0) + (data.version >= 10 ? 1 : 0)
     || !presetKeys.every((key) => Object.hasOwn(data, key))
     || typeof data.filenamePattern !== 'string'
     || typeof data.minFontSize !== 'number' || !Number.isFinite(data.minFontSize)
@@ -147,5 +152,9 @@ export function validateMappingPreset(data: unknown): MappingPreset | undefined 
   const fieldTypography = Object.hasOwn(data, 'fieldTypography') && validateFieldTypography(data.fieldTypography, settings.mapping, virtualMappings);
   const approvalSeal = Object.hasOwn(data, 'approvalSeal') ? validateApprovalSealSettings(data.approvalSeal) : undefined;
   if (!fieldTypography || approvalSeal === undefined) return undefined;
-  return { version: 10, ...groupedSettings, fieldTypography, approvalSeal };
+  const typographySettings = { ...groupedSettings, fieldTypography, approvalSeal };
+  if (data.version === 10) return { version: 10, ...typographySettings };
+  const conditionalRules = Object.hasOwn(data, 'conditionalRules') && readConditionalRules(data.conditionalRules);
+  if (!conditionalRules) return undefined;
+  return { version: 11, ...typographySettings, conditionalRules };
 }

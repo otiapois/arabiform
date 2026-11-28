@@ -8,12 +8,14 @@ import type { BatchQrPrintRequest, CoverLanguage } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { RowSelection } from './row-selection';
 import type { BoundaryRowSpotlight } from '../preflight/spotlight';
+import type { ConditionalFieldRule } from '../rules/conditional-fields';
 
 export interface BatchInput {
   template: Uint8Array | ArrayBuffer;
   roster: Uint8Array | ArrayBuffer;
   sheetName?: string;
   rows: readonly Record<string, string>[];
+  conditional?: { rules: readonly ConditionalFieldRule[]; columns: readonly string[]; rows: readonly Record<string, string>[] };
   options: PreflightOptions;
 }
 

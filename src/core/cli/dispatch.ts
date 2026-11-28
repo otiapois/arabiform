@@ -93,7 +93,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     } catch {
       // Fall through to the same usage error for invalid JSON and invalid preset structure.
     }
-    if (!preset) return { exitCode: 1, report: { status: 'usage-error', message: 'Invalid mapping preset. Export a mapping preset (v1–v10) from ArabiForm.' }, artifacts: [], diagnostic: true };
+    if (!preset) return { exitCode: 1, report: { status: 'usage-error', message: 'Invalid mapping preset. Export a mapping preset (v1–v11) from ArabiForm.' }, artifacts: [], diagnostic: true };
   }
 
   let template: Awaited<ReturnType<typeof inspectTemplate>>;
@@ -127,7 +127,8 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   const actualMappings = Object.entries(preset?.mapping ?? autoMap(automaticFields, headers)).filter(([, column]) => column);
   const virtualMappings = Object.entries(preset && 'virtualMappings' in preset ? preset.virtualMappings : {});
   const alignOverrides = preset && 'alignOverrides' in preset ? preset.alignOverrides : undefined;
-  const fieldTypography = preset?.version === 10 ? preset.fieldTypography : undefined;
+  const fieldTypography = preset && 'fieldTypography' in preset ? preset.fieldTypography : undefined;
+  const conditionalRules = preset?.version === 11 && preset.conditionalRules.length ? preset.conditionalRules : undefined;
   const mismatches = [
     ...actualMappings.filter(([field, column]) => !fields.has(field) || !headers.includes(column)).map(([field, column]) => JSON.stringify([field, column])),
     ...virtualMappings.filter(([field]) => fields.get(field)?.kind !== 'text').map(([field]) => JSON.stringify(field)),
@@ -151,6 +152,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
       ...actualMappings.map(([field, column]) => [field, values[column]!]),
       ...virtualMappings.map(([field, binding]) => [field, resolveVirtualMapping(binding, index + 1, localDate)]),
     ])),
+    ...(conditionalRules && { conditional: { rules: conditionalRules, columns: headers, rows: rows.map(({ values }) => values) } }),
     options: { fonts: sources.fonts, minFontSize: preset?.minFontSize, preferredFont: preset?.font, alignOverrides, fieldTypography },
   } }, idle) as BatchPreflightResult;
   const scope = resolveRowSelection(checked.rows);
@@ -164,7 +166,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   const report = {
     status: flagged ? 'flagged' : 'clean', ready, flagged, ...(xlsx && { sheet: sheet.name }),
     ...(missingFilenameColumns.length && { warnings: [{ code: 'missing-filename-columns', columns: missingFilenameColumns }] }),
-    ...(mode === 'preflight' || flagged > 0 ? { rows: reportedRows } : {}),
+    ...(mode === 'preflight' || flagged > 0 || conditionalRules ? { rows: reportedRows } : {}),
   };
   const exitCode = flagged ? 2 : 0;
   if (mode === 'preflight') {
@@ -182,7 +184,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     return blockedBatch(mode, 'imposition-requires-single-page', '2-up requires one template page per record. Choose --imposition 1-up.');
   }
   const watermark = command.watermark === undefined ? (preset && 'watermark' in preset ? preset.watermark : undefined) : cliWatermark(command.watermark);
-  const approvalSeal = preset?.version === 10 ? preset.approvalSeal ?? undefined : undefined;
+  const approvalSeal = preset && 'approvalSeal' in preset ? preset.approvalSeal ?? undefined : undefined;
   const qr = preset && 'qrStamp' in preset ? preset.qrStamp : undefined;
   const activeQr = qr?.placement === 'none' ? undefined : qr;
   let qrStamp: BatchQrPrintRequest | undefined;

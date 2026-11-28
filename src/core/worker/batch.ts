@@ -9,6 +9,7 @@ import { validateBatchQrPrintRequest, type BatchQrPrintRequest, type QrPrintRequ
 import { hasUnsupportedPrintAnnotation, openTemplate } from '../pdf/template';
 import { selectBoundaryRows } from '../preflight/spotlight';
 import { localVirtualDate } from '../roster/virtual-columns';
+import { prepareConditionalFields } from '../rules/conditional-fields';
 import type { BatchCommand, BatchInput, BatchPreflightResult, BatchProgress, BatchResult, BatchRowResult } from './protocol';
 import { resolveRowSelection } from './row-selection';
 
@@ -18,17 +19,22 @@ type ProgressListener = (progress: BatchProgress) => void;
 type RowInputs = Omit<BatchInput, 'roster' | 'sheetName'>;
 
 async function preflightBatch(input: RowInputs, progress: (completed: number, total: number) => void) {
-  const { rows, template, options } = input;
+  const { rows, template, options, conditional } = input;
   const results: BatchRowResult[] = [];
   progress(0, rows.length);
-  if (!rows.length) return { rows: results, spotlight: {} };
+  if (!rows.length) return { rows: results, spotlight: {}, renderRows: rows };
   const { check, fields } = await prepareTemplatePreflight(template, options);
+  if (conditional?.rules.length && conditional.rows.length !== rows.length) throw new Error('conditional-row-count-mismatch');
+  const evaluate = conditional?.rules.length ? prepareConditionalFields(conditional.rules, conditional.columns, fields) : undefined;
+  const evaluatedRows = evaluate ? conditional!.rows.map((row, index) => evaluate(rows[index]!, row)) : undefined;
+  const renderRows = evaluatedRows?.map(({ values }) => values) ?? rows;
   for (let start = 0; start < rows.length; start += BATCH_CHUNK_SIZE) {
-    for (const row of rows.slice(start, start + BATCH_CHUNK_SIZE)) results.push(await check(row));
+    const end = Math.min(start + BATCH_CHUNK_SIZE, rows.length);
+    for (let index = start; index < end; index++) results.push(await check(renderRows[index]!, evaluatedRows?.[index]));
     progress(results.length, rows.length);
     if (results.length < rows.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
-  return { rows: results, spotlight: selectBoundaryRows(rows, results, fields) };
+  return { rows: results, spotlight: selectBoundaryRows(renderRows, results, fields), renderRows };
 }
 
 async function inspectPrintSource(template: RowInputs['template']) {
@@ -69,10 +75,10 @@ export function createBatchProcessor() {
       if (preflightStarted) throw new Error('batch-already-started');
       preflightStarted = true;
       const { roster, sheetName, ...input } = command.input;
-      const preflight = await preflightBatch(input, progress);
+      const { renderRows, ...preflight } = await preflightBatch(input, progress);
       const custody = await hashCustodySources(input.template, roster, sheetName);
       const checked = { ...preflight, custody };
-      retained = { input, checked };
+      retained = { input: { template: input.template, options: input.options, rows: renderRows }, checked };
       return checked;
     }
     if (!retained) throw new Error('batch-not-ready');
