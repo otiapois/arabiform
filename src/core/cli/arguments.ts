@@ -2,11 +2,14 @@ import { isImposition, type Imposition } from '../pdf/imposition-settings';
 import { STUDIO_TEMPLATE_IDS, type StudioTemplateId } from '../studio/templates';
 import { DEFAULT_WATERMARK_ANGLE, DEFAULT_WATERMARK_OPACITY, validateWatermarkSettings } from '../pdf/watermark-settings';
 import type { CustodyVariant } from '../audit/custody';
+import type { DispatchSettings } from '../dispatch/eml-pack';
+import type { MaskPolicy } from '../shaping/redaction';
 
 type BatchFiles = { template: string; roster: string; outDir: string; preset?: string; sheet?: string; groupBy?: string; date?: string };
-export type BatchCommandLine =
-  | { mode: 'preflight'; files: BatchFiles }
-  | { mode: 'fill'; files: BatchFiles; strict: boolean; imposition?: Imposition; cover: boolean; watermark?: string; qr: boolean; printCertificate?: true };
+export type BatchCommandLine = { files: BatchFiles; maskPolicies?: Readonly<Record<string, MaskPolicy>> } & (
+  | { mode: 'preflight' }
+  | { mode: 'fill'; strict: boolean; imposition?: Imposition; cover: boolean; watermark?: string; qr: boolean;
+    printCertificate?: true; dispatch?: DispatchSettings });
 export type CliCommand =
   | { mode: 'help' }
   | BatchCommandLine
@@ -19,7 +22,9 @@ export type CliCommand =
 export const CLI_USAGE = [
   'npm run arabiform-cli -- --mode preflight|fill --template <pdf> --roster <csv|xlsx> --out-dir <dir>',
   '  [--preset <json>] [--sheet <name>] [--group-by <header>] [--date YYYY-MM-DD]',
+  '  [--redact-field <field>=<keep-last-4|full-mask>] (repeat for multiple mapped text fields)',
   '  fill only: [--strict] [--imposition 1-up|2-up|4-up] [--cover] [--watermark <text>] [--qr] [--print-certificate]',
+  '  fill only: [--dispatch-eml <recipient-header> [--dispatch-cc <header>] --dispatch-subject <template> --dispatch-body <template>]',
   '  --sheet-base64url and --group-by-base64url accept unpadded UTF-8 base64url instead of the literal name.',
   'npm run arabiform-cli -- --mode packet --template <pdf> --template <pdf> [--template <pdf> ...] --roster <csv|xlsx> --out-dir <dir>',
   '  [--mappings <json>] [--sheet <name>] [--group-by <header>] [--cover]',
@@ -51,10 +56,11 @@ export function isSafeLocalPath(path: string): boolean {
   return !/^[\\/]{2}|^\\/.test(path) && relative.split(/[\\/]/).every(isSafeLocalComponent);
 }
 
-const batchFlags = ['template', 'roster', 'out-dir', 'preset', 'sheet', 'sheet-base64url', 'group-by', 'group-by-base64url', 'date'];
+const batchFlags = ['template', 'roster', 'out-dir', 'preset', 'sheet', 'sheet-base64url', 'group-by', 'group-by-base64url', 'date', 'redact-field'];
 const flagsByMode = {
   preflight: batchFlags,
-  fill: [...batchFlags, 'strict', 'imposition', 'cover', 'watermark', 'qr', 'print-certificate'],
+  fill: [...batchFlags, 'strict', 'imposition', 'cover', 'watermark', 'qr', 'print-certificate',
+    'dispatch-eml', 'dispatch-cc', 'dispatch-subject', 'dispatch-body'],
   packet: ['template', 'roster', 'out-dir', 'mappings', 'sheet', 'sheet-base64url', 'group-by', 'group-by-base64url', 'cover'],
   extract: ['in-dir', 'out-dir'],
   verify: ['manifest', 'qr-payload', 'variant'],
@@ -91,6 +97,7 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
   const values = new Map<string, string>();
   const paths: string[] = [];
   const templates: string[] = [];
+  const masks = new Map<string, MaskPolicy>();
   let positional = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
@@ -99,13 +106,24 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     } else if (!positional && arg.startsWith('-')) {
       const flag = arg.slice(2);
       if (!arg.startsWith('--') || (!valueFlags.has(flag) && !boolFlags.has(flag))) throw new CliUsageError('Unknown option ' + arg + '.');
-      if (values.has(flag) && flag !== 'template') throw new CliUsageError('Duplicate option ' + arg + '.');
+      if (values.has(flag) && flag !== 'template' && flag !== 'redact-field') throw new CliUsageError('Duplicate option ' + arg + '.');
       if (boolFlags.has(flag)) {
         values.set(flag, '');
       } else {
         const value = args[++index];
-        if (!value || value.startsWith('--')) throw new CliUsageError('Missing value for ' + arg + '.');
+        const emptyTemplate = value === '' && (flag === 'dispatch-subject' || flag === 'dispatch-body');
+        if (value === undefined || !emptyTemplate && (!value || value.startsWith('--'))) throw new CliUsageError('Missing value for ' + arg + '.');
         if (flag === 'template') templates.push(value);
+        if (flag === 'redact-field') {
+          const separator = value.lastIndexOf('=');
+          const field = value.slice(0, separator);
+          const policy = value.slice(separator + 1);
+          if (separator <= 0 || !field.trim() || policy !== 'keep-last-4' && policy !== 'full-mask') {
+            throw new CliUsageError('Expected --redact-field <field>=<keep-last-4|full-mask>.');
+          }
+          if (masks.has(field)) throw new CliUsageError('Duplicate --redact-field target.');
+          masks.set(field, policy);
+        }
         values.set(flag, value);
       }
     } else {
@@ -190,11 +208,20 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     }
   }
   const files = { template: pathValue(template!, '--template', /\.pdf$/i), roster, outDir, preset: optionalPath('preset', /\.json$/i), sheet, groupBy, date };
-  if (mode === 'preflight') return { mode, files };
+  const redaction = masks.size ? { maskPolicies: Object.fromEntries(masks) } : {};
+  if (mode === 'preflight') return { mode, files, ...redaction };
   const imposition = values.get('imposition');
   if (imposition !== undefined && !isImposition(imposition)) throw new CliUsageError('Expected 1-up, 2-up, or 4-up for --imposition.');
   const watermark = values.get('watermark');
   if (watermark !== undefined && !cliWatermark(watermark)) throw new CliUsageError('Invalid --watermark text. Use 1 to 32 printable characters.');
+  const recipientColumn = values.get('dispatch-eml');
+  const ccColumn = values.get('dispatch-cc');
+  if (recipientColumn === undefined && ['dispatch-cc', 'dispatch-subject', 'dispatch-body'].some((flag) => values.has(flag))) {
+    throw new CliUsageError('Dispatch settings require --dispatch-eml <recipient-header>.');
+  }
+  const dispatch = recipientColumn === undefined ? undefined : {
+    recipientColumn, ccColumn, subjectTemplate: required('dispatch-subject'), bodyTemplate: required('dispatch-body'),
+  };
   return { mode, files, strict: values.has('strict'), imposition, cover: values.has('cover'), watermark, qr: values.has('qr'),
-    ...(values.has('print-certificate') && { printCertificate: true }) };
+    ...(values.has('print-certificate') && { printCertificate: true }), ...redaction, ...(dispatch && { dispatch }) };
 }

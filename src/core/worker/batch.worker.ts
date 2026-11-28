@@ -14,7 +14,9 @@ scope.addEventListener('message', async ({ data: request }) => {
   try {
     const result = await processBatch(request, (progress) => scope.postMessage({ id, kind: 'progress', progress }));
     const bytes = result instanceof Uint8Array ? result : result && 'bytes' in result ? result.bytes : undefined;
-    scope.postMessage({ id, kind: 'result', result }, bytes ? [bytes.buffer as ArrayBuffer] : []);
+    const transfer = bytes ? [bytes.buffer as ArrayBuffer] : [];
+    if (result && 'pdfZip' in result && result.pdfZip) transfer.push(result.pdfZip.bytes.buffer as ArrayBuffer);
+    scope.postMessage({ id, kind: 'result', result }, transfer);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'batch-worker-failed';
     const approvalSealProblem = error instanceof ApprovalSealError ? { code: error.code, pageNumber: error.pageNumber, fieldName: error.fieldName } : undefined;

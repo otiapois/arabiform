@@ -5,11 +5,11 @@ import { ApprovalSealError, type ApprovalSealSettings } from '../pdf/approval-se
 import type { BatchQrPrintRequest } from '../pdf/qr-settings';
 import type { WatermarkSettings } from '../pdf/watermark-settings';
 import type { PrintCertificateNames } from '../pdf/print-certificate';
-import type { BatchCommand, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRequest, BatchResponse,
-  BatchResult, BatchSplitResult, BatchZipResult, MergeCoverSheet, PreviewPrintOptions } from './protocol';
+import type { BatchCommand, BatchDispatchResult, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRequest, BatchResponse,
+  BatchResult, BatchSplitResult, BatchZipResult, DispatchRequest, MergeCoverSheet, PreviewPrintOptions } from './protocol';
 import type { RowSelection } from './row-selection';
 
-export type { BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRowResult, BatchSplitResult, BatchZipResult } from './protocol';
+export type { BatchDispatchResult, BatchInput, BatchMergedResult, BatchPreflightResult, BatchProgress, BatchRowResult, BatchSplitResult, BatchZipResult, DispatchRequest } from './protocol';
 type ProgressListener = (progress: BatchProgress) => void;
 
 export function createBatchWorker() {
@@ -63,6 +63,8 @@ export function createBatchWorker() {
     estimate: (request: PrintEstimateRequest) => send({ phase: 'estimate', ...request }) as Promise<PrintJobEstimate>,
     zip: (filenames: readonly string[], onProgress?: ProgressListener, flattenZip = false, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, grouping?: GroupingPlan, approvalSeal?: ApprovalSealSettings) =>
       send({ phase: 'zip', filenames, flattenZip, watermark, rowSelection, qrStamp, grouping, approvalSeal }, onProgress) as Promise<BatchZipResult>,
+    dispatch: (request: DispatchRequest, onProgress?: ProgressListener) =>
+      send({ ...request, phase: 'dispatch' }, onProgress) as Promise<BatchDispatchResult>,
     merged: (onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition, approvalSeal?: ApprovalSealSettings, fourUp?: FourUpOptions) =>
       send({ phase: 'merged', coverSheet, watermark, rowSelection, qrStamp, imposition, approvalSeal, ...(fourUp && { fourUp }) }, onProgress) as Promise<BatchMergedResult>,
     split: (grouping: GroupingPlan, onProgress?: ProgressListener, coverSheet?: MergeCoverSheet, watermark?: WatermarkSettings, rowSelection?: RowSelection, qrStamp?: BatchQrPrintRequest, imposition?: Imposition, approvalSeal?: ApprovalSealSettings, fourUp?: FourUpOptions) =>

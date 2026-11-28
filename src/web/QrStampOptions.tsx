@@ -16,7 +16,7 @@ const placements = {
 } satisfies Record<QrStampSettings['placement'], readonly [string, string]>;
 
 export default function QrStampOptions({ desk, arabic }: { desk: ReturnType<typeof useWorkbench>; arabic: boolean }) {
-  const { qrStamp, selected, qrSettingsBlocked, custody } = desk;
+  const { qrStamp, selected, qrSettingsBlocked, qrProtected, custody } = desk;
   const changeQrStamp = (value: QrStampSettings) => desk.changeQrStamp(value, Boolean(validateQrStampSettings(value)));
   const values = desk.rows[selected]?.values;
   const date = desk.roster?.localDate;
@@ -41,7 +41,7 @@ export default function QrStampOptions({ desk, arabic }: { desk: ReturnType<type
   }, [custody, custodyMode, qrSettingsBlocked, rowNumber, values]);
 
   const preview = useMemo(() => {
-    if (!values || !date || qrSettingsBlocked) return;
+    if (!values || !date || qrSettingsBlocked || qrProtected) return;
     try {
       const payload = pattern === undefined ? receiptPayload : resolveQrPayload(pattern, values, rowNumber, date);
       if (!payload) return;
@@ -53,7 +53,7 @@ export default function QrStampOptions({ desk, arabic }: { desk: ReturnType<type
     } catch (error) {
       return { error: errorCode(error, 'qr-stamp-invalid-payload') };
     }
-  }, [pattern, receiptPayload, values, date, rowNumber, qrSettingsBlocked]);
+  }, [pattern, receiptPayload, values, date, rowNumber, qrSettingsBlocked, qrProtected]);
   const issue = qrSettingsBlocked ? 'qr-stamp-invalid-settings'
     : currentReceipt && !receiptPayload ? 'qr-stamp-invalid-payload' : preview?.error;
   const caption = arabic ? `معاينة رمز QR للصف ${rowNumber}` : `QR preview for row ${rowNumber}`;
@@ -92,7 +92,7 @@ export default function QrStampOptions({ desk, arabic }: { desk: ReturnType<type
           {!custodyMode && <label className="full-control">
             {arabic ? 'نمط رمز QR' : 'QR pattern'}
             <textarea rows={1} dir="auto" className="pattern-input" data-testid="qr-stamp-pattern" value={options.pattern}
-              aria-invalid={Boolean(issue) || undefined} aria-describedby={issue ? 'qr-stamp-error' : 'qr-pattern-help'}
+              aria-invalid={Boolean(issue) || qrProtected || undefined} aria-describedby={issue || qrProtected ? 'qr-stamp-error' : 'qr-pattern-help'}
               onChange={(event) => changeQrStamp({ ...options, pattern: event.currentTarget.value })} />
             <small id="qr-pattern-help">
               {arabic ? 'أدرج اسم العمود مثل' : 'Use a column token such as'}{' '}<bdi dir="ltr"><code>{'{{ID}}'}</code></bdi>
@@ -107,7 +107,10 @@ export default function QrStampOptions({ desk, arabic }: { desk: ReturnType<type
             <input type="range" id="qr-stamp-size" data-testid="qr-stamp-size" min={36} max={72} step="any" value={options.sizePt}
               aria-label={arabic ? 'حجم رمز QR' : 'QR size'} onChange={(event) => changeQrStamp({ ...options, sizePt: event.currentTarget.valueAsNumber })} />
           </label>
-          {issue ? <p className="alert" id="qr-stamp-error" role="status">{printProblem(issue, arabic)}</p>
+          {qrProtected ? <p className="alert" id="qr-stamp-error" role="status">{arabic
+            ? 'أزل الأعمدة المحمية من نمط رمز الطباعة المخصّص أو اختر رمز الحيازة لطباعة نسخ المراجعة.'
+            : 'Remove protected columns from the custom print QR pattern or select the custody QR to print review copies.'}</p>
+            : issue ? <p className="alert" id="qr-stamp-error" role="status">{printProblem(issue, arabic)}</p>
             : preview ? (
               <figure className="qr-miniature">
                 <svg role="img" aria-label={caption} data-testid="qr-stamp-preview" viewBox={`0 0 ${preview.side} ${preview.side}`} shapeRendering="crispEdges">

@@ -35,6 +35,7 @@ const ExportFeedback = lazy(() => import('./FillOutputExtras').then(({ ExportFee
 const SplitDownload = lazy(() => import('./FillOutputExtras').then(({ SplitDownload }) => ({ default: SplitDownload })));
 const PrintCertificateDownload = lazy(() => import('./FillOutputExtras').then(({ PrintCertificateDownload }) => ({ default: PrintCertificateDownload })));
 const CompletedCustody = lazy(() => import('./FillOutputExtras').then(({ CompletedCustody }) => ({ default: CompletedCustody })));
+const ReviewAndDispatchOptions = lazy(() => import('./ReviewAndDispatchOptions'));
 const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
 const PacketWorkbench = lazy(() => import('./PacketWorkbench'));
 const CompareTemplates = lazy(() => import('./CompareTemplates'));
@@ -328,6 +329,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                       )}
                     </details>
                     {(desk.template || desk.approvalSeal) && <Suspense><ApprovalSealControl desk={desk} arabic={arabic} /></Suspense>}
+                    {(desk.template || desk.roster) && <Suspense><ReviewAndDispatchOptions desk={desk} language={language} /></Suspense>}
                     <div className="preset-controls">
                       <h3>{labels.preset}</h3>
                       <p className="quiet">{labels.presetHelp}</p>

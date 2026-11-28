@@ -12,6 +12,7 @@ import type { WatermarkSettings } from '../core/pdf/watermark-settings';
 import type { BoundaryRowSpotlight } from '../core/preflight/spotlight';
 import type { FilenamePlan, RosterRow } from '../core/roster';
 import type { resolveVirtualMapping, VirtualColumnMapping } from '../core/roster/virtual-columns';
+import type { MaskPolicy } from '../core/shaping/redaction';
 import type { BatchInput, BatchProgress, BatchRowResult, createBatchWorker } from '../core/worker/client';
 import type { MergeCoverSheet } from '../core/worker/protocol';
 import type { MergedPrintCache } from './batch-exports';
@@ -22,7 +23,7 @@ import { useRecordPreview, type RenderRecord } from './useRecordPreview';
 
 export type BatchWorker = ReturnType<typeof createBatchWorker>;
 export type ExportKind = 'zip' | 'merged' | 'split' | 'certificate' | 'csv' | 'json';
-export type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256' | 'groupByColumn' | 'groups' | 'qrRecords'>;
+export type CustodyOutputs = Pick<CustodyManifest, 'entries' | 'mergedPdfSha256' | 'groupByColumn' | 'groups' | 'qrRecords' | 'redactedFields'>;
 
 export type OutputSettings = {
   filenamePlans: readonly FilenamePlan[];
@@ -51,6 +52,7 @@ export type BatchSettings = {
   resolveVirtualMapping: typeof resolveVirtualMapping;
   alignOverrides: Record<string, AlignOverride>;
   fieldTypography: FieldTypographyMap;
+  maskPolicies?: Record<string, MaskPolicy>;
   minFontSize: number;
   font: FontMode;
   customFont?: Uint8Array;

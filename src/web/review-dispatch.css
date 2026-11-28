@@ -1,0 +1,46 @@
+.review-dispatch {
+  min-inline-size: 0;
+  border: 1px solid var(--control-line);
+  border-radius: .55rem;
+  padding: .55rem .65rem;
+}
+
+.review-dispatch > summary {
+  min-block-size: 1.35rem;
+  color: var(--forest);
+  cursor: pointer;
+  font-size: .86rem;
+  font-weight: 650;
+}
+
+.review-dispatch-content {
+  display: grid;
+  gap: .55rem;
+  min-inline-size: 0;
+  margin-block-start: .45rem;
+  overflow-wrap: anywhere;
+}
+
+.review-dispatch-content .quiet { margin: 0; }
+.review-dispatch-content .button { max-inline-size: 100%; }
+.review-policy { margin-block-end: .1rem; }
+
+.dispatch-preview {
+  display: grid;
+  gap: .3rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: .5rem .6rem;
+  border: 1px solid var(--control-line);
+  border-radius: .38rem;
+  background: var(--surface);
+  font-size: .82rem;
+}
+
+.dispatch-preview :is(dt, dd) { min-inline-size: 0; }
+.dispatch-preview dt { font-weight: 650; }
+.dispatch-preview dl { display: grid; gap: .3rem; margin: 0; min-inline-size: 0; }
+.dispatch-preview dd { margin: 0; white-space: pre-wrap; }
+.dispatch-preview p { margin: 0; }
+.dispatch-issues { margin: .25rem 0 0; padding-inline-start: 1.15rem; }
+.dispatch-issues li + li { margin-block-start: .25rem; }

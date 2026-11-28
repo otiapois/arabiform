@@ -12,6 +12,7 @@ import { isSafeLocalPath, parseCliArgs } from '../../src/core/cli/arguments';
 import { dispatchCli } from '../../src/core/cli/dispatch';
 import { createCustodyQrRecords } from '../../src/core/custody/records';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../../src/core/custody/verify';
+import { createDispatchPack, prepareDispatchRows, previewDispatch, unsafeDispatchFilenameRows } from '../../src/core/dispatch/eml-pack';
 import { extractBatch } from '../../src/core/extractor/extract';
 import { makeSpreadsheets } from '../../src/core/extractor/spreadsheets';
 import { parseBatchDraft, serializeBatchDraft, type BatchDraft } from '../../src/core/draft/batch-draft';
@@ -27,6 +28,7 @@ import { createAudit, createFlattenedZip, createZip, getWidgetOverlays, inspectC
 import { approvalSealLayout, prepareApprovalSeal } from '../../src/core/pdf/approval-seal';
 import type { ApprovalSealSettings } from '../../src/core/pdf/approval-seal-settings';
 import { applyNumeralPolicy } from '../../src/core/shaping/numerals';
+import { maskText } from '../../src/core/shaping/redaction';
 import { suggestBatchFontSize } from '../../src/core/pdf/batch-font-suggestion';
 import { CAPACITY_SAMPLE_LIMIT, inspectTemplateCapacities } from '../../src/core/pdf/capacity-inspector';
 import { createGeneratedZip } from '../../src/core/pdf/exports';
@@ -86,7 +88,98 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(47_500);
+  expect(acceptedCases).toBeGreaterThanOrEqual(50_000);
+});
+
+describe('M25 seeded email and redaction properties', () => {
+  const settings = { recipientColumn: 'Email', ccColumn: 'Copy', subjectTemplate: '{{Subject}}', bodyTemplate: '{{Message}}' };
+  const text = fc.array(fc.constantFrom('A', ' ', '؛', 'مُ', 'حَ', 'مَّ', 'د', '١٢', '🧪', '照', '👩‍👩‍👦', '가', 'e\u0301', '=?UTF-8?B?aA==?='), { maxLength: 60 })
+    .map((parts) => parts.join(''));
+
+  it('roundtrips 1,050 bilingual MIME drafts, sentinels and exact PDF ZIP bytes', async () => {
+    const source = await readFile(resolve('fixtures/m2/access-code.pdf'));
+    await verify(fc.asyncProperty(text, text, fc.uint8Array({ minLength: 1, maxLength: 200 }), fc.boolean(), fc.nat(),
+      async (subject, message, suffix, copy, seedValue) => {
+        const rowNumber = 1 + seedValue % 1000;
+        const filename = 'مراجعة-' + seedValue + '.pdf';
+        const recipient = 'review+' + seedValue + '@example.invalid';
+        const values = { Email: recipient, Copy: copy ? 'copy@example.invalid' : '', Subject: subject, Message: message + '\n{{Email}}' };
+        const prepared = prepareDispatchRows(settings, [{ rowNumber, filename, values }]);
+        const bytes = Buffer.concat([source, Buffer.from('\n%' + Buffer.from(suffix).toString('hex') + '\n')]);
+        const pdfSha256 = createHash('sha256').update(bytes).digest('hex');
+        const result = await createDispatchPack(prepared, { bytes: zipSync({ [filename]: bytes }),
+          entries: [{ filename, bytes: bytes.length, sha256: pdfSha256 }] }, { date: new Date('2026-11-28T00:00:00Z') });
+        expect(result.status).toBe('ready');
+        if (result.status !== 'ready') throw new Error('expected a ready pack');
+        const [entry] = result.ledgerEntries;
+        const members = unzipSync(result.bytes);
+        const eml = members[entry!.emlFilename]!;
+        expect(entry).toMatchObject({ rowNumber, pdfFilename: filename, recipient, pdfSha256,
+          emlSha256: createHash('sha256').update(eml).digest('hex') });
+        expect(decoder.decode(members['dispatch-ledger.csv'])).toBe(result.ledgerCsv);
+        expect(JSON.parse(result.ledgerJson).entries).toEqual(result.ledgerEntries);
+        const messageText = decoder.decode(eml);
+        expect(messageText.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/);
+        const boundary = messageText.match(/boundary="([^"]+)"/)![1]!;
+        const [headers, body, attachment, trailer] = messageText.split('--' + boundary);
+        expect(trailer).toBe('--\r\n');
+        expect(headers).toContain('To: ' + recipient + '\r\n');
+        expect(headers!.includes('Cc: ')).toBe(copy);
+        const encoded = headers!.match(/^Subject: (.*(?:\r\n .*)*)/m)![1]!;
+        const words = [...encoded.matchAll(/=\?UTF-8\?B\?([A-Za-z0-9+/=]+)\?=/g)];
+        expect(encoded.split('\r\n').every((line, index) => line.length + (index ? 0 : 9) <= 76)).toBe(true);
+        expect(words.every(([word]) => word.length <= 75)).toBe(true);
+        const subjectBytes = words.map(([, data]) => new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(data!, 'base64'))).join('');
+        expect(words.length ? subjectBytes : encoded).toBe(subject);
+        const payload = (part: string) => {
+          const lines = part.split('\r\n\r\n')[1]!.split('\r\n').filter(Boolean);
+          expect(lines.every((line) => line.length <= 76)).toBe(true);
+          return Buffer.from(lines.join(''), 'base64');
+        };
+        expect(payload(body!).toString()).toBe(message + '\r\n{{Email}}');
+        expect(payload(attachment!)).toEqual(bytes);
+      }), 1_050);
+  }, 180_000);
+
+  it('blocks 1,000 roster, template, grouped and sanitized filename injection cases atomically', async () => {
+    await verify(fc.asyncProperty(text, fc.nat(), fc.constantFrom('\r', '\n', '\r\n'), async (prefix, value, lineBreak) => {
+      const rowNumber = value % 10000 + 2;
+      const injection = prefix + lineBreak + 'Bcc: hidden@example.invalid';
+      const original = { Email: 'user@example.invalid', Copy: '', Subject: 'Ready', Message: 'Review', Name: 'Sample', Group: 'Group' };
+      const exact = { rowNumber, filename: 'contact.pdf', values: original };
+      expect(previewDispatch(settings, { ...original, Message: injection }, rowNumber).status).toBe('ready');
+      const attempts = [
+        [settings, { ...exact, values: { ...original, Email: original.Email + lineBreak } }, 'to'],
+        [settings, { ...exact, values: { ...original, Copy: original.Email + injection } }, 'cc'],
+        [settings, { ...exact, values: { ...original, Subject: injection } }, 'subject'],
+        [{ ...settings, subjectTemplate: lineBreak + '{{Subject}}' }, exact, 'subject'],
+        [settings, { ...exact, filename: injection + '.pdf' }, 'attachment'],
+        [settings, { ...exact, zipPath: injection + '/contact.pdf' }, 'attachment'],
+        [settings, { ...exact, unsafeFilename: unsafeDispatchFilenameRows([{ ...original, Name: injection }]).includes(1) }, 'attachment'],
+        [settings, { ...exact, unsafeFilename: unsafeDispatchFilenameRows([{ ...original, Group: injection }], 'contact.pdf', 'Group').includes(1) }, 'attachment'],
+      ] as const;
+      for (const [options, target, field] of attempts) {
+        const prepared = prepareDispatchRows(options, [{ ...exact, rowNumber: 1 }, target]);
+        expect(prepared.status).toBe('blocked');
+        if (prepared.status !== 'blocked') throw new Error('expected batch hold');
+        expect(prepared.issues).toContainEqual(expect.objectContaining({ rowNumber, field }));
+        expect(JSON.stringify(prepared)).not.toContain('hidden@example.invalid');
+      }
+    }), 1_000);
+  }, 180_000);
+
+  it('keeps no grapheme prefix in 600 Unicode review values and masks short values fully', async () => {
+    const unicode = fc.oneof(text, mixedText, fc.array(fc.integer({ min: 0, max: 0x10ffff }), { maxLength: 25 }).map((items) => String.fromCodePoint(...items)));
+    const segmenter = new Intl.Segmenter('ar', { granularity: 'grapheme' });
+    await verify(fc.asyncProperty(unicode, async (raw) => {
+      const offsets = [...segmenter.segment(raw)].map(({ index }) => index);
+      const masked = '*'.repeat(offsets.length);
+      const tailAt = offsets.length - 4;
+      expect(maskText(raw, 'full-mask')).toBe(masked);
+      expect(maskText(raw, 'keep-last-4')).toBe(tailAt <= 0 ? masked : '*'.repeat(tailAt) + raw.slice(offsets[tailAt]!));
+      expect(maskText(raw)).toBe(raw);
+    }), 600);
+  }, 180_000);
 });
 
 describe('M24 seeded print-shop properties', () => {

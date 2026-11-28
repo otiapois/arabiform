@@ -1,5 +1,6 @@
 import type { CustodyEntry, CustodySources, GroupedCustodyEntry } from '../audit/custody';
 import type { CustodyQrRecord } from '../custody/records';
+import type { DispatchPackResult, DispatchSettings } from '../dispatch/eml-pack';
 import type { GroupingPlan } from '../export/grouping';
 import type { PrintEstimateRequest, PrintJobEstimate } from '../export/print-estimator';
 import type { FourUpOptions, Imposition, PreflightOptions, RowPreflightResult } from '../pdf';
@@ -22,7 +23,7 @@ export interface BatchInput {
 
 export type BatchRowResult = Omit<RowPreflightResult, 'pdfBytes'>;
 export interface BatchProgress {
-  phase: 'preflight' | 'zip' | 'merged' | 'split';
+  phase: 'preflight' | 'zip' | 'merged' | 'split' | 'dispatch';
   completed: number;
   total: number;
 }
@@ -34,21 +35,34 @@ export type MergeCoverSheet = {
 };
 export type PreviewPrintOptions = { approvalSeal?: ApprovalSealSettings; qrStamp?: BatchQrPrintRequest };
 
+type IndividualZipRequest = { filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings;
+  rowSelection?: RowSelection; grouping?: GroupingPlan } & PreviewPrintOptions;
+
+export type DispatchRequest = IndividualZipRequest & {
+  settings: DispatchSettings;
+  rows: readonly Readonly<Record<string, string>>[];
+  unsafeFilenameRows?: readonly number[];
+  protectedColumns?: readonly string[];
+  includePdfZip?: true;
+};
+
 export type BatchCommand =
   | { phase: 'preflight'; input: BatchInput }
   | ({ phase: 'preview'; rowIndex: number } & PreviewPrintOptions)
   | ({ phase: 'estimate' } & PrintEstimateRequest)
-  | ({ phase: 'zip'; filenames: readonly string[]; flattenZip?: boolean; watermark?: WatermarkSettings; rowSelection?: RowSelection; grouping?: GroupingPlan } & PreviewPrintOptions)
+  | ({ phase: 'zip' } & IndividualZipRequest)
+  | ({ phase: 'dispatch' } & DispatchRequest)
   | ({ phase: 'merged'; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition; fourUp?: FourUpOptions } & PreviewPrintOptions)
   | ({ phase: 'split'; grouping: GroupingPlan; coverSheet?: MergeCoverSheet; watermark?: WatermarkSettings; rowSelection?: RowSelection; imposition?: Imposition; fourUp?: FourUpOptions } & PreviewPrintOptions)
   | { phase: 'certificate'; merged: Pick<BatchMergedResult, 'bytes' | 'mergedPdfSha256'>; names: PrintCertificateNames };
 
 export type BatchRequest = BatchCommand & { id: number };
 export interface BatchPreflightResult { rows: BatchRowResult[]; custody: CustodySources; spotlight: BoundaryRowSpotlight }
-export interface BatchZipResult { bytes: Uint8Array; entries: CustodyEntry[]; groupByColumn?: string; qrRecords?: CustodyQrRecord[] }
-export interface BatchMergedResult { bytes: Uint8Array; mergedPdfSha256: string; qrRecords?: CustodyQrRecord[] }
-export interface BatchSplitResult { bytes: Uint8Array; groupByColumn: string; groups: GroupedCustodyEntry[]; qrRecords?: readonly CustodyQrRecord[] }
-export type BatchResult = BatchPreflightResult | BatchZipResult | BatchMergedResult | BatchSplitResult | PrintJobEstimate | Uint8Array | undefined;
+export interface BatchZipResult { bytes: Uint8Array; entries: CustodyEntry[]; groupByColumn?: string; qrRecords?: CustodyQrRecord[]; redactedFields?: string[] }
+export interface BatchMergedResult { bytes: Uint8Array; mergedPdfSha256: string; qrRecords?: CustodyQrRecord[]; redactedFields?: string[] }
+export interface BatchSplitResult { bytes: Uint8Array; groupByColumn: string; groups: GroupedCustodyEntry[]; qrRecords?: readonly CustodyQrRecord[]; redactedFields?: string[] }
+export type BatchDispatchResult = DispatchPackResult & { pdfZip?: BatchZipResult };
+export type BatchResult = BatchPreflightResult | BatchZipResult | BatchMergedResult | BatchSplitResult | BatchDispatchResult | PrintJobEstimate | Uint8Array | undefined;
 export type BatchResponse = { id: number } & (
   | { kind: 'progress'; progress: BatchProgress }
   | { kind: 'result'; result: BatchResult }

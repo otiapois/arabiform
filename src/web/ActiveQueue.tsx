@@ -31,14 +31,14 @@ export default function ActiveQueue(props: Parameters<typeof Queue>[0]) {
   const { desk, language: { arabic } } = props;
   const { progress, warningRows } = desk;
   const labels = arabic ? ar : en;
-  const phaseLabel = progress && labels[progress.phase];
+  const phaseLabel = progress && progress.phase !== 'dispatch' ? labels[progress.phase] : undefined;
 
   return (
     <>
       {warningRows > 0 && <p className="alert warning">{fillLabel(labels.sourceWarningCount, { count: warningRows })}</p>}
       {desk.preflightError && <p role="alert" className="alert">{sourceProblem(desk.preflightError, arabic) ?? activeFillLabels(arabic).pdfError}</p>}
       <p className="sr-only" aria-live="polite" aria-atomic="true">{phaseLabel}</p>
-      {progress && (
+      {progress && phaseLabel && (
         <div className="batch-state">
           <div className="batch-meter">
             <div className="batch-meter-caption" data-testid="batch-progress-status">

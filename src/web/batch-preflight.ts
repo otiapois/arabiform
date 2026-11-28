@@ -15,6 +15,6 @@ export function makeBatchInput(batch: BatchSettings, fonts: BatchInput['options'
     template: batch.template, roster: batch.roster, sheetName: batch.sheetName, rows,
     ...(batch.conditional && { conditional: { ...batch.conditional, rows: batch.rows.map(({ values }) => values) } }),
     options: { fonts, minFontSize: batch.minFontSize, preferredFont: batch.font, customFont: batch.customFont, alignOverrides: batch.alignOverrides,
-      fieldTypography: batch.fieldTypography },
+      fieldTypography: batch.fieldTypography, ...(batch.maskPolicies && { maskPolicies: batch.maskPolicies }) },
   };
 }

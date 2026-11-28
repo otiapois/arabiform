@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import { createCustodyManifest, MERGED_CUSTODY_FILENAME, type CustodyVariant } from '../audit/custody';
+import { DISPATCH_CSV_FILENAME, DISPATCH_JSON_FILENAME, DISPATCH_ZIP_FILENAME, unsafeDispatchFilenameRows } from '../dispatch/eml-pack';
 import { parseCustodyManifest, verifyCustodyPdf, verifyCustodyQr } from '../custody/verify';
 import { isRecord, validateMappingPreset } from '../draft/mapping-preset';
 import { planGroupedOutput } from '../export/grouping';
@@ -14,12 +15,13 @@ import { PdfIntakeError } from '../pdf/template';
 import { autoMap, inspectRosterWorkbook, planFilenames, readRoster, type RosterSheet } from '../roster';
 import { filenameKey, physicalFilenameColumns } from '../roster/filenames';
 import { resolveVirtualMapping } from '../roster/virtual-columns';
+import { reviewFilenamePattern, reviewSourceColumns } from '../shaping/redaction';
 import { generateStudioTemplate } from '../studio/templates';
 import { buildTemplateMigrationReport, inspectTemplateDiff, migrateTemplatePreset,
   MIGRATED_PRESET_FILENAME, serializeTemplateMigrationReportCsv, TEMPLATE_MIGRATION_CSV_FILENAME,
   TEMPLATE_MIGRATION_JSON_FILENAME, TemplateDiffIntakeError } from '../template/diff-migrator';
 import { createBatchProcessor } from '../worker/batch';
-import type { BatchMergedResult, BatchPreflightResult, BatchZipResult } from '../worker/protocol';
+import type { BatchDispatchResult, BatchMergedResult, BatchPreflightResult, BatchZipResult } from '../worker/protocol';
 import { resolveRowSelection } from '../worker/row-selection';
 import { cliWatermark, type BatchCommandLine, type CliCommand } from './arguments';
 
@@ -178,13 +180,23 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   if (mismatches.length) return blockedBatch(mode, 'preset-source-mismatch', 'Update the preset mappings or choose matching files: ' + mismatches.join(', '));
   if (!actualMappings.length && !virtualMappings.length) return blockedBatch(mode, 'no-mapping', 'Supply a preset or use matching template field names and roster headers.');
 
+  const { maskPolicies } = command;
+  const mapped = new Set([...actualMappings, ...virtualMappings].map(([field]) => field));
+  if (Object.keys(maskPolicies ?? {}).some((field) => fields.get(field)?.kind !== 'text' || !mapped.has(field))) {
+    return blockedBatch(mode, 'invalid-redaction-field', 'Redaction requires an exact mapped editable text field.');
+  }
+  const protectedColumns = reviewSourceColumns(maskPolicies ?? {}, actualMappings, conditionalRules);
   const groupBy = files.groupBy ?? (preset && 'groupByColumn' in preset ? preset.groupByColumn : null);
   if (groupBy != null && !headers.includes(groupBy)) return blockedBatch(mode, 'invalid-grouping-column', 'Choose an exact roster header for grouping: ' + groupBy);
+  if (groupBy != null && protectedColumns.has(groupBy)) {
+    return blockedBatch(mode, 'redaction-protected-group', 'Choose a grouping column outside the redacted fields.');
+  }
   const missingFilenameColumns = preset
     ? [...new Set(physicalFilenameColumns(preset.filenamePattern))].filter((column) => !headers.includes(column)) : [];
   const localDate = files.date ?? sources.date;
-  const grouping = groupBy == null ? undefined : planGroupedOutput(rows, groupBy, preset?.filenamePattern, { localDate });
-  const filenamePlans = planFilenames(rows, preset?.filenamePattern, { localDate });
+  const filenamePattern = reviewFilenamePattern(preset?.filenamePattern, protectedColumns);
+  const grouping = groupBy == null ? undefined : planGroupedOutput(rows, groupBy, filenamePattern, { localDate });
+  const filenamePlans = planFilenames(rows, filenamePattern, { localDate });
   const run = createBatchProcessor();
   const checked = await run({ phase: 'preflight', input: {
     template: sources.template, roster: sources.roster, sheetName: files.sheet,
@@ -193,7 +205,7 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
       ...virtualMappings.map(([field, binding]) => [field, resolveVirtualMapping(binding, index + 1, localDate)]),
     ])),
     ...(conditionalRules && { conditional: { rules: conditionalRules, columns: headers, rows: rows.map(({ values }) => values) } }),
-    options: { fonts: sources.fonts, minFontSize: preset?.minFontSize, preferredFont: preset?.font, alignOverrides, fieldTypography },
+    options: { fonts: sources.fonts, minFontSize: preset?.minFontSize, preferredFont: preset?.font, alignOverrides, fieldTypography, maskPolicies },
   } }, idle) as BatchPreflightResult;
   const scope = resolveRowSelection(checked.rows);
   const ready = scope.selectedRowNumbers.length;
@@ -235,6 +247,9 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
   if (command.qr || activeQr?.custodyRecord) {
     qrStamp = { placement: activeQr?.placement ?? 'bottom-right', sizePt: activeQr?.sizePt ?? DEFAULT_QR_SIZE_PT, custodyRecord: true };
   } else if (activeQr) {
+    if (physicalFilenameColumns(activeQr.pattern).some((column) => protectedColumns.has(column))) {
+      return blockedBatch(mode, 'redaction-protected-qr', 'Choose a QR pattern outside the redacted fields or use --qr.');
+    }
     const payloads: (string | null)[] = Array(rows.length).fill(null);
     for (const number of scope.selectedRowNumbers) {
       try {
@@ -251,12 +266,25 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
     coverLanguage: preset && 'coverLanguage' in preset ? preset.coverLanguage : 'auto' as const,
   } : undefined;
   try {
-    const editable = await run({ phase: 'zip', filenames, grouping }, idle) as BatchZipResult;
+    let dispatch: BatchDispatchResult | undefined;
+    let editable: BatchZipResult;
+    if (command.dispatch) {
+      const cells = rows.map(({ values }) => values);
+      dispatch = await run({ phase: 'dispatch', filenames, grouping, rows: cells, settings: command.dispatch, includePdfZip: true,
+        unsafeFilenameRows: unsafeDispatchFilenameRows(cells, preset?.filenamePattern, groupBy),
+        protectedColumns: [...protectedColumns] }, idle) as BatchDispatchResult;
+      if (dispatch.status === 'blocked') {
+        return { exitCode: 2, report: { status: 'blocked', issues: dispatch.issues }, artifacts: [], diagnostic: true };
+      }
+      editable = dispatch.pdfZip!;
+    } else {
+      editable = await run({ phase: 'zip', filenames, grouping }, idle) as BatchZipResult;
+    }
     const flattened = await run({ phase: 'zip', filenames, grouping, flattenZip: true, watermark, qrStamp, approvalSeal }, idle) as BatchZipResult;
     const merged = await run({ phase: 'merged', coverSheet, imposition, watermark, qrStamp, approvalSeal, fourUp }, idle) as BatchMergedResult;
     const manifest = createCustodyManifest(checked.custody, {
       entries: editable.entries, flattenedEntries: flattened.entries, mergedPdfSha256: merged.mergedPdfSha256,
-      groupByColumn: grouping?.groupByColumn, qrRecords: merged.qrRecords,
+      groupByColumn: grouping?.groupByColumn, qrRecords: merged.qrRecords, redactedFields: editable.redactedFields,
     }, scope);
     const artifacts: CliArtifact[] = [
       { name: 'arabiform-editable.zip', data: editable.bytes },
@@ -264,6 +292,11 @@ async function runBatch(command: BatchCommandLine, sources: BatchSources): Promi
       { name: MERGED_CUSTODY_FILENAME, data: merged.bytes },
       { name: 'custody-manifest.json', data: manifest },
     ];
+    if (dispatch?.status === 'ready') artifacts.push(
+      { name: DISPATCH_ZIP_FILENAME, data: dispatch.bytes },
+      { name: DISPATCH_CSV_FILENAME, data: dispatch.ledgerCsv },
+      { name: DISPATCH_JSON_FILENAME, data: dispatch.ledgerJson },
+    );
     if (command.printCertificate) {
       const { PRINT_CERTIFICATE_FILENAME } = await import('../pdf/print-certificate');
       const { templateName, rosterName } = sources;
@@ -312,7 +345,7 @@ export async function dispatchCli(job: CliJob): Promise<CliResult> {
     return { exitCode: verdict.status === 'VERIFIED_QR_RECORD' ? 0 : 2, report: { ...verdict }, artifacts: [] };
   }
   if (source.variant && !receipt.outputs.some(({ variant }) => variant)) {
-    return { exitCode: 1, report: { status: 'usage-error', message: '--variant requires a v2 CLI custody manifest.' }, artifacts: [], diagnostic: true };
+    return { exitCode: 1, report: { status: 'usage-error', message: '--variant requires a custody manifest that records the PDF variant.' }, artifacts: [], diagnostic: true };
   }
   const folders = new Set(receipt.outputs.flatMap(({ variant, path }) => variant && path?.includes('/') ? [filenameKey(path.split('/')[0]!)] : []));
   const verdicts = await Promise.all(source.inputs.map(({ bytes, filename, parentFolder }) => verifyCustodyPdf(receipt, {

@@ -136,6 +136,21 @@ On `/arabic-pdf-form-filler` and `/ar/pdf-mail-merge`, compare a clipped baselin
 
 See the workbench with synthetic data on [desktop](docs/reports/screenshots/m3/desktop-m3-mixed-widgets.png) and [mobile](docs/reports/screenshots/m3/mobile-m3-mixed.png), the [custom-font controls](docs/reports/screenshots/m3/desktop-m3-custom-font.png), and the [synthetic demo walkthrough](docs/launch/demo-walkthrough.md).
 
+### Offline email drafts
+
+1. In **Fill PDFs**, load the roster, finish preflight, and check whether the scope is **All ready** or **Selected only**. Under **Output settings**, open **Email drafts (.eml)** and choose a **Recipient email column** from the active sheet.
+2. Enter **Subject** and **Message**, for example `Certificate / شهادة — {{Name}}`. A token such as `{{Name}}` inserts the current value under that exact column header once. Text coming from a cell is used literally, even if it contains another token. Message text can span multiple lines. Each ready row in scope needs one plain ASCII address such as `layla@example.test`. Missing or malformed recipients, display names, address lists, unknown or malformed tokens, and carriage returns or line feeds in recipients, subjects or attachment filenames block the entire draft pack. Fix the named row or setting and retry.
+3. Download **Offline Email Drafts (.zip)**. Each ready row in scope has one `.eml` with one **To** address and the PDF bytes for that row’s current individual ZIP variant, editable or flattened. The ZIP includes the dispatch ledger as CSV and JSON and a custody manifest for the attached PDFs. Use **Dispatch Ledger (.csv)** for a separate copy. The ledger records the original roster row number, recipient, attached filename and SHA-256 of the PDF and draft.
+4. Unzip on a trusted device. Match the draft’s recipient and attachment to the ledger, then open or import the draft in your email client. Client handling of `.eml` varies. Check that your client shows an editable draft with the expected attachment before sending. ArabiForm builds files locally without SMTP, mail-provider authorization or automatic sending.
+
+Treat the ZIP and both ledgers as sensitive. They contain recipient addresses, and the drafts also contain message text and the attached PDF. [Dispatch format](docs/subsystems/pdf-engine.md#offline-email-dispatch-pack) · [CLI example with optional Cc](docs/subsystems/cli-automation.md#email-drafts-and-review-masks--مسودات-البريد-وحجب-القيم)
+
+### Redacted review copies
+
+Open **Redacted review** in **Output settings**. Under **Mask for review**, choose **Keep last 4** or **Full mask** for each mapped text field that needs protection. Check the live PDF preview, then export the review copies. **Keep last 4** turns `0012345678` into `******5678`; values of four or fewer graphemes are masked in full. A grapheme is a perceived character, such as an Arabic letter with its combining marks. **Full mask** replaces each grapheme with one ASCII `*`, and empty values stay empty. The mask applies before numeral formatting, shaping, and fit checks. Choose **None** when preparing originals. Review masks are session settings, outside saved mapping presets and batch drafts.
+
+The custody manifest records `redactedReview: true` and the names of fields actually masked in the exported scope. The mask covers the selected PDF fields. Source files, row editing and independently mapped or existing template content can still contain the original data. Keep review filenames free of sensitive values. If the filename pattern uses a protected column, ArabiForm assigns names such as `row-0002.pdf`. Choose other columns for grouping, custom QR text and email recipients or tokens if they reuse a protected column. Review static artwork, other fields, filenames, stamps, messages and any companion files before sharing. [Review mask contract](docs/subsystems/pdf-engine.md#redacted-review-copies)
+
 ### Print-shop certificate
 
 After preflight, use **Download Print-Shop Certificate (.pdf)** to save `print-shop-certificate.pdf`, a separate, one-page English and Arabic receipt for the current combined merged print PDF. Keep the ready selection and output settings in place while saving the certificate and `arabiform-merged.pdf` through **Download Merged Printable PDF**. Either download order uses the same merged bytes. The receipt lists filenames and full SHA-256 hashes for the original template, roster and merged output, the included and excluded row counts, the layout, sheet and cover counts, the embedded font inventory, and the smallest rendered size of mapped text after scaling, where measured.
@@ -166,6 +181,8 @@ In Fill PDFs, export a mapping preset and open **Local CLI command** to copy a s
 
 Use `fill --imposition 4-up --print-certificate` for the merged A4 grid and its separate print-shop certificate. [Synthetic visitor badge example](docs/subsystems/cli-automation.md#4-up-print-shop-walkthrough--تجربة-الطباعة-بأربعة-سجلات-لكل-ورقة)
 
+Use `fill --dispatch-eml` with a recipient column, subject and body templates to add the draft ZIP and both ledgers. Use `--redact-field` with `preflight` or `fill` to check and apply review masks for the current run. [CLI examples for drafts and masks](docs/subsystems/cli-automation.md#email-drafts-and-review-masks--مسودات-البريد-وحجب-القيم)
+
 ## Run and verify locally
 
 CI uses Node.js 24, Python 3.13, and `PyMuPDF==1.26.7`. From the repository root, install dependencies and run the CI checks.
@@ -186,7 +203,7 @@ The committed synthetic PDFs, CSV, and workbook support offline testing after in
 
 For a local run, use `npm run dev`. Use `npm run preview` after a build to serve the production headers at `http://127.0.0.1:4173`. Run `npm run test:e2e` with Microsoft Edge installed. The Edge suite is separate from the CI checks above and uses the installed browser.
 
-The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M24 acceptance requires at least 47,500 deterministic cases with zero discards or crashes. Its print checks include A4 grid geometry, cut-and-stack order, sheet counts, and certificate digest parity. The 4× PyMuPDF checks compare rendered fixture output. Inspect a test export with your own templates, PDF viewer and printer before printing a batch. [M24 acceptance criteria](docs/tasks/M24-printshop-4up-cropmarks-certificate.md)
+The seeded fuzz tests cover roster parsing, worksheet selection, field design, form filling and extraction, mixed-direction text, filenames, fonts, print layout, stamps, custody hashes, and CLI input and failure paths. M25 acceptance requires at least 50,000 deterministic cases with zero discards or crashes, including dispatch header guards, attachment byte comparisons, Arabic subject decoding, and review mask behavior. The 4× PyMuPDF checks compare rendered fixture output. Inspect a test export with your own templates, PDF viewer and printer before printing a batch. [M25 acceptance criteria](docs/tasks/M25-bilingual-dispatch-pack-pii-redaction.md)
 
 For Windows development, keep the checkout, worktrees, dependencies, and Python environment on `D:`. Direct npm and pip caches to `D:\cache\arabiform\npm` and `D:\cache\arabiform\pip` with their `--cache` and `--cache-dir` flags. Point the local session’s `TEMP` and `TMP` to an existing `D:` directory. If you need a Playwright browser cache, set `PLAYWRIGHT_BROWSERS_PATH=D:\cache\ms-playwright`.
 
@@ -202,7 +219,7 @@ For Windows development, keep the checkout, worktrees, dependencies, and Python 
 
 Set `SITE_URL` to the intended public origin before building. Run `npm run verify:release -- --strict-origin` with the same `SITE_URL`, or pass that origin after `--strict-origin`. The gate rejects a mismatched origin and any `https://arabiform.example` fallback in the release metadata. Each route's entry JavaScript must be under 274,000 raw bytes and under 85,800 gzip bytes. Serve the files from the origin root with the response headers in `_headers`. The privacy and worker directives are `connect-src 'none'; worker-src 'self'; form-action 'none'`. [PowerShell and POSIX release commands](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)
 
-See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v2.4.0 release brief](docs/tasks/M24-printshop-4up-cropmarks-certificate.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md), [bilingual changelog](CHANGELOG.md), [project instructions](AGENTS.md), [subsystems](docs/subsystems/README.md), [code standards](docs/code-standards.md), [lessons](LESSONS.md), [v2.5.0 release brief](docs/tasks/M25-bilingual-dispatch-pack-pii-redaction.md), and [earlier milestone briefs](docs/tasks/). [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## العربية
 
@@ -342,6 +359,21 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 
 راجع [واجهة العمل بالعربية مع عينة اصطناعية](docs/reports/screenshots/m3/desktop-m3-ar-rtl-filenames.png) و[سيناريو العرض بالعربية والإنجليزية](docs/launch/demo-walkthrough.md).
 
+#### مسودات البريد دون اتصال
+
+1. في واجهة تعبئة PDF، حمّل الجدول وأكمل الفحص المسبق. حدّد ما إذا كنت تريد كل الصفوف الجاهزة أو الصفوف المحدّدة فقط. من «إعدادات الإخراج»، افتح «مسودات البريد الإلكتروني (.eml)» واختر «عمود بريد المستلم» من الورقة الحالية.
+2. اكتب «الموضوع» و«الرسالة». يمكنك مثلًا كتابة `Certificate / شهادة — {{Name}}`. يُستبدل `{{Name}}` بقيمة الخلية تحت عنوان العمود المطابق حرفيًا وفي خطوة واحدة. تبقى قيمة الخلية نصًا حرفيًا حتى لو احتوت على رمز آخر. يمكن أن تتألّف الرسالة من عدة أسطر. يحتاج كل صف جاهز في النطاق إلى عنوان بريد واحد بأحرف ASCII، مثل `layla@example.test`. يتوقّف إنشاء الحزمة إذا كان العنوان مفقودًا أو غير صالح أو تضمّن اسم عرض أو قائمة عناوين. وينطبق ذلك أيضًا على رموز الأعمدة غير الصالحة أو المجهولة وعلى فواصل الأسطر في عنوان المستلم أو الموضوع أو اسم المرفق. صحّح الصف أو الإعداد ثم أعد المحاولة.
+3. اختر «مسودات البريد للعمل دون اتصال (.zip)». يحتوي الأرشيف على ملف `.eml` لكل صف جاهز في النطاق، بعنوان مستلم واحد وملف PDF مطابق لنسخة الصف في أرشيف الملفات الفردية الحالي، سواء كانت قابلة للتعبئة أو مسطّحة. يتضمّن الأرشيف سجل التوزيع بصيغتَي CSV وJSON وبيان حيازة لملفات PDF المرفقة. نزّل نسخة مستقلة عبر «سجل التوزيع (.csv)». يسجّل الملف رقم الصف الأصلي وعنوان المستلم واسم المرفق وبصمتَي SHA-256 للمرفق والمسودة.
+4. فك ضغط الأرشيف على جهاز موثوق. طابق المستلم والمرفق مع سجل التوزيع، ثم افتح المسودة أو استوردها في برنامج البريد. تختلف طريقة التعامل مع `.eml` حسب البرنامج. تحقّق من إمكانية تحرير المسودة ومن المرفق قبل الإرسال. تُنشئ ArabiForm الملفات محليًا دون SMTP أو تفويض لخدمة البريد أو إرسال تلقائي.
+
+تعامل مع الأرشيف والسجل بصيغتَيه كملفات حسّاسة. فهي تضمّ عناوين المستلمين، وتضمّ المسودات أيضًا نص الرسالة وملفات PDF المرفقة. [مثال من الطرفية مع نسخة اختيارية](docs/subsystems/cli-automation.md#email-drafts-and-review-masks--مسودات-البريد-وحجب-القيم)
+
+#### نسخ المراجعة المحجوبة
+
+من «إعدادات الإخراج»، افتح «نسخ المراجعة المحجوبة». تحت «حجب القيمة للمراجعة»، اختر «أبقِ آخر 4 محارف» أو «احجب القيمة كاملة» لكل حقل نصي مرتبط تريد حمايته. افحص معاينة PDF ثم صدّر النسخ. يحوّل الخيار الأول `0012345678` إلى `******5678` ويحجب القيم المكوّنة من أربعة محارف مرئية فأقل بالكامل. يُعدّ الحرف العربي مع علامات تشكيله محرفًا واحدًا هنا. يستبدل الحجب الكامل كل محرف مرئي بنجمة ASCII واحدة `*`، وتبقى القيم الفارغة فارغة. يحدث الحجب قبل تنسيق الأرقام ورسم الحروف وفحص ملاءمتها للحقل. اختر «بلا حجب» عند إعداد النسخ الأصلية. تُطبّق خيارات الحجب في الجلسة الحالية فقط ولا تُحفظ مع إعدادات الربط أو مسودات الدفعة.
+
+يسجّل بيان الحيازة `redactedReview: true` وأسماء الحقول التي حُجبت بالفعل ضمن التصدير. يقتصر الحجب على حقول PDF المحدّدة. قد تبقى القيم الأصلية في ملفات المصدر ومحرّر الصفوف ومحتوى القالب أو الحقول الأخرى. إذا استخدم نمط التسمية عمودًا محميًا، تعيّن ArabiForm أسماء مثل `row-0002.pdf`. اختر أعمدة أخرى إذا استُخدم عمود محمي للتجميع أو نص QR المخصّص أو عناوين البريد أو رموز الأعمدة داخل الرسالة. راجع محتوى القالب والحقول الأخرى والأسماء والأختام والرسائل وأي ملفات مرافقة قبل المشاركة. [تفاصيل الحجب](docs/subsystems/pdf-engine.md#redacted-review-copies)
+
 #### شهادة ما قبل الطباعة
 
 بعد الفحص المسبق، اختر «نزّل شهادة ما قبل الطباعة (.pdf)» لحفظ `print-shop-certificate.pdf` في صفحة واحدة بالعربية والإنجليزية. تخصّ هذه الوثيقة ملف الطباعة المدمج `arabiform-merged.pdf`. يمكنك تنزيل أحد الملفَّين أولًا، ويظلّ محتوى ملف الطباعة مطابقًا لبصمته ما دام التحديد وإعدادات الإخراج كما هما. تعرض الوثيقة أسماء قالب PDF وجدول البيانات وملف الطباعة المدمج وبصمات SHA-256 الكاملة لها، وعدد الصفوف المدرجة والمستبعدة، والتخطيط وعدد الأوراق وصفحات الغلاف، والخطوط المضمّنة، وأصغر حجم للنص المرتبط بعد تغيير المقياس عند توفّر القياس.
@@ -372,8 +404,10 @@ npm run arabiform-cli -- --mode studio --template certificate-bilingual --out-di
 
 استخدم `fill --imposition 4-up --print-certificate` للحصول على ملف الطباعة المدمج بأربعة سجلات لكل ورقة A4 وملف مستقل لشهادة ما قبل الطباعة. [تجربة بعينة اصطناعية](docs/subsystems/cli-automation.md#4-up-print-shop-walkthrough--تجربة-الطباعة-بأربعة-سجلات-لكل-ورقة)
 
+استخدم `fill --dispatch-eml` مع عمود المستلم وقالبَي الموضوع والرسالة لإضافة أرشيف المسودات وسجلَّي التوزيع. استخدم `--redact-field` مع `preflight` أو `fill` لفحص قيم نسخ المراجعة وحجبها في التشغيل الحالي. [أمثلة إنشاء المسودات وحجب القيم من الطرفية](docs/subsystems/cli-automation.md#email-drafts-and-review-masks--مسودات-البريد-وحجب-القيم)
+
 ### التحقق محليًا
 
-بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة والأختام وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M24 اجتياز 47,500 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار. تشمل فحوص الطباعة أبعاد شبكة A4 وترتيب القص والتكديس وعدد الأوراق ومطابقة البصمة في الشهادة. يقارن PyMuPDF مخرجات العينات بتكبير 4 أضعاف. افحص ملفًا تجريبيًا بقوالبك وبرنامج عرض PDF والطابعة قبل طباعة الدفعة. [شروط قبول M24](docs/tasks/M24-printshop-4up-cropmarks-certificate.md)
+بعد تثبيت الحزم، يمكن تنفيذ الاختبارات بالملفات الاصطناعية المرفقة دون اتصال بالإنترنت. يشغّل `npm run test:fuzz` حالات مولّدة يمكن تكرارها، تشمل قراءة الجداول وتصميم الحقول وتعبئة النماذج والاستخراج منها، إلى جانب اتجاه النص والخطوط وتخطيط الطباعة والأختام وبصمات الملفات وحالات الإدخال والإخفاق في الطرفية. يتطلّب قبول M25 اجتياز 50,000 حالة على الأقل دون استبعاد أي حالة أو توقّف الاختبار، بما فيها فحص ترويسات البريد ومطابقة بايتات المرفقات وفك ترميز الموضوع العربي وحجب القيم. يقارن PyMuPDF مخرجات العينات بتكبير 4 أضعاف. افحص ملفًا تجريبيًا بقوالبك وبرنامج عرض PDF والطابعة قبل طباعة الدفعة. [شروط قبول M25](docs/tasks/M25-bilingual-dispatch-pack-pii-redaction.md)
 
 استخدم أوامر التحقق أعلاه مع Node.js 24 وPython 3.13. لمعاينة النسخة المبنية مع ترويسات الأمان، شغّل `npm run preview` بعد البناء. يتطلب `npm run test:e2e` تثبيت Microsoft Edge. على Windows، احتفظ بملفات العمل والملفات المؤقتة وذاكرات التخزين المؤقت على القرص `D:`. تُحفَظ صفحات الموقع الثابتة الخمس في `dist/`، وتُضبَط قيمة `SITE_URL` على عنوان الموقع الفعلي عند تجهيز نسخة للنشر. يجب أن يقلّ حجم JavaScript الذي تحمّله كل صفحة عند فتحها عن 274,000 بايت قبل الضغط وعن 85,800 بايت بعد ضغط gzip. [أوامر بناء الإصدار والتحقق من عنوان الموقع](docs/launch/cloudflare-pages-7day-launch.md#strict-origin-build)

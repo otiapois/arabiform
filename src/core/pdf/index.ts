@@ -1,5 +1,6 @@
-import { PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFString, PDFTextField } from 'pdf-lib';
+import { PDFArray, PDFBool, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFRadioGroup, PDFRef, PDFStream, PDFString, PDFTextField, type PDFObject } from 'pdf-lib';
 import { applyNumeralPolicy } from '../shaping/numerals';
+import { maskText, type MaskPolicy } from '../shaping/redaction';
 import type { ConditionalFieldEvaluation, RuleApplication } from '../rules/conditional-fields';
 import { explicitQuadding, type AlignOverride } from './alignment';
 import { installAppearance, widgetTextMatrix, type AppearanceFont } from './appearances';
@@ -10,7 +11,7 @@ import { embedCustomFont, loadCustomFont } from './custom-font';
 import { preparePrintWidgetCheck } from './exports';
 import type { FieldTypographyMap } from './field-typography';
 import { createShaper, DEFAULT_MIN_FONT_SIZE, fitText, MAX_FONT_SIZE, MIN_FONT_SIZE, textInputDiagnostic, type FontBytes, type FontKey, type Placement } from './shaping';
-import { key, number, openTemplate, PdfIntakeError, type TemplateMetadata, type WidgetTarget } from './template';
+import { fieldAttributes, key, number, openTemplate, PdfIntakeError, type TemplateMetadata, type WidgetTarget } from './template';
 
 export type { AlignOverride } from './alignment';
 export { createAudit, createFlattenedZip, createMergedPdf, createZip } from './exports';
@@ -48,6 +49,7 @@ export interface RowPreflightResult {
   inkClearancePt?: number;
   mappedInkOutsidePrint?: true;
   ruleApplied?: RuleApplication[];
+  redactedFields?: string[];
   pdfBytes?: Uint8Array;
 }
 
@@ -58,6 +60,7 @@ export interface PreflightOptions {
   customFont?: Uint8Array;
   alignOverrides?: Readonly<Record<string, AlignOverride>>;
   fieldTypography?: FieldTypographyMap;
+  maskPolicies?: Readonly<Record<string, MaskPolicy>>;
 }
 
 export async function inspectTemplate(bytes: Uint8Array | ArrayBuffer): Promise<TemplateMetadata> {
@@ -69,14 +72,14 @@ type OpenTemplate = Awaited<ReturnType<typeof openTemplate>>;
 type CheckedRow = Omit<RowPreflightResult, 'pdfBytes'>;
 type AppliedRules = Pick<ConditionalFieldEvaluation, 'ruleApplied' | 'diagnostics'>;
 
-function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {}, fieldTypography = {} }: PreflightOptions) {
+function layoutOptions({ fonts, minFontSize = DEFAULT_MIN_FONT_SIZE, preferredFont = 'auto', customFont, alignOverrides = {}, fieldTypography = {}, maskPolicies = {} }: PreflightOptions) {
   if (!Number.isFinite(minFontSize) || minFontSize < MIN_FONT_SIZE || minFontSize > MAX_FONT_SIZE) throw new Error('invalid-min-font-size');
-  return { fonts, minFontSize, preferredFont, custom: customFont && loadCustomFont(customFont), alignOverrides, fieldTypography };
+  return { fonts, minFontSize, preferredFont, custom: customFont && loadCustomFont(customFont), alignOverrides, fieldTypography, maskPolicies };
 }
 
 function planRow(
   { fields, pages }: OpenTemplate, valuesByField: Record<string, string>,
-  { fonts, minFontSize, preferredFont, custom, alignOverrides, fieldTypography }: ReturnType<typeof layoutOptions>,
+  { fonts, minFontSize, preferredFont, custom, alignOverrides, fieldTypography, maskPolicies }: ReturnType<typeof layoutOptions>,
   conditional?: AppliedRules,
 ) {
   let shaper: ReturnType<typeof createShaper> | undefined;
@@ -92,10 +95,12 @@ function planRow(
     canonicalValue: PDFString | PDFHexString;
     choiceIndex?: number;
     quadding?: number;
+    review: boolean;
     placed: { widget: WidgetTarget; placement: Placement }[];
   }[] = [];
   const buttonPlans: { canonical: PDFDict; widgets: WidgetTarget[]; state: PDFName; selectedIndex?: number }[] = [];
   const sizes: [string, number[]][] = [];
+  const redactedFields: string[] = [];
   const fontKeys = new Set<FontKey>();
   const customGlyphIds = new Set<number>();
   let smallestInkFontSizePt = Infinity;
@@ -157,6 +162,9 @@ function planRow(
     }
     let canonicalValue: PDFString | PDFHexString;
     let choiceIndex: number | undefined;
+    const policy = Object.hasOwn(maskPolicies, name) ? maskPolicies[name] : undefined;
+    const review = field instanceof PDFTextField && policy !== undefined && policy !== 'none';
+    const redacted = review && value.length > 0;
     if (field instanceof PDFDropdown) {
       if (field.isMultiselect() || !dropdownOptions?.length) {
         flag({ code: 'unsupported-field-mode' });
@@ -175,9 +183,13 @@ function planRow(
       if (canonical.has(key('I')) || widgets.some(({ widget }) => widget.dict.has(key('I')))
         || choices.some((choice, ordinal) => ordinal !== index && choice.value === selected.value)) choiceIndex = index;
     } else if (field instanceof PDFTextField) {
+      if (review) value = maskText(value, policy);
       value = applyNumeralPolicy(value, typography?.numeralPolicy);
       const excess = meta.maxLength === undefined ? 0 : Array.from(value).length - meta.maxLength;
-      const unsupportedMode = !meta.supportsTextCapacity;
+      // A shared parent value can belong to another field that must remain intact.
+      const parent = review ? canonical.lookupMaybe(key('Parent'), PDFDict) : undefined;
+      const inheritedValue = parent && ['V', 'DV', 'RV'].some((attribute) => fieldAttributes(parent, attribute) !== undefined);
+      const unsupportedMode = !meta.supportsTextCapacity || inheritedValue;
       if (excess > 0) flag({ code: 'exceeds-maxlen', maxLengthExcess: excess });
       if (unsupportedMode) flag({ code: 'unsupported-field-mode' });
       if (excess > 0 || unsupportedMode) continue;
@@ -251,13 +263,15 @@ function planRow(
         }
       }
     }
-    plans.push({ field, canonicalValue, choiceIndex, quadding, placed });
+    if (redacted) redactedFields.push(name);
+    plans.push({ field, canonicalValue, choiceIndex, quadding, placed, review });
   }
 
   const fontSizes = Object.fromEntries(sizes);
   const pageNumbers = [...new Set(diagnostics.flatMap((issue) => issue.pageNumbers))].sort((first, second) => first - second);
   const result: CheckedRow = { status: diagnostics.length ? 'flagged' : 'pass', diagnostics, pageNumbers, fontSizes,
     ...(conditional && { ruleApplied: conditional.ruleApplied }),
+    ...(!diagnostics.length && redactedFields.length > 0 && { redactedFields }),
     ...(mappedInkOutsidePrint && { mappedInkOutsidePrint: true }),
   };
   if (result.status === 'pass' && Number.isFinite(smallestInkFontSizePt) && Number.isFinite(inkClearancePt)) {
@@ -265,6 +279,25 @@ function planRow(
     result.inkClearancePt = inkClearancePt;
   }
   return { result, plans, buttonPlans, fontKeys, customGlyphIds };
+}
+
+function removeUnreferencedObjects(doc: PDFDocument) {
+  const { context } = doc;
+  const seen = new Set<PDFObject>();
+  const pending: (PDFObject | undefined)[] = Object.values(context.trailerInfo);
+  while (pending.length) {
+    const object = pending.pop();
+    if (!object || seen.has(object)) continue;
+    seen.add(object);
+    if (object instanceof PDFRef) pending.push(context.lookup(object));
+    else if (object instanceof PDFArray) for (const value of object.asArray()) pending.push(value);
+    else if (object instanceof PDFDict) for (const [, value] of object.entries()) pending.push(value);
+    else if (object instanceof PDFStream) pending.push(object.dict);
+  }
+  // pdf-lib serializes all registered objects, including replaced appearances.
+  for (const [ref] of context.enumerateIndirectObjects()) {
+    if (!seen.has(ref)) context.delete(ref);
+  }
 }
 
 export async function prepareRowPreflight(bytes: Uint8Array | ArrayBuffer, options: PreflightOptions) {
@@ -351,14 +384,23 @@ export async function preflightRow(
   }
   rawForm.set(key('NeedAppearances'), PDFBool.False);
   for (const { canonical, widgets, state, selectedIndex } of buttonPlans) applyButton(canonical, widgets, state, selectedIndex);
-  for (const { field, canonicalValue, choiceIndex, quadding, placed } of plans) {
+  for (const { field, canonicalValue, choiceIndex, quadding, placed, review } of plans) {
     const canonical = field.acroField.dict;
     canonical.set(key('V'), canonicalValue);
+    if (review) {
+      canonical.delete(key('DV'));
+      canonical.delete(key('RV'));
+    }
     if (quadding !== undefined) canonical.set(key('Q'), number(quadding));
     const choiceIndices = choiceIndex === undefined ? undefined : doc.context.obj([choiceIndex]);
     if (choiceIndices) canonical.set(key('I'), choiceIndices);
     for (const { widget, placement } of placed) {
       const dict = widget.widget.dict;
+      if (review) {
+        dict.delete(key('DV'));
+        dict.delete(key('RV'));
+        dict.delete(key('AP'));
+      }
       if (dict !== canonical && dict.has(key('V'))) dict.set(key('V'), canonicalValue);
       if (quadding !== undefined && dict !== canonical && dict.has(key('Q'))) dict.set(key('Q'), number(quadding));
       if (choiceIndices && dict !== canonical && dict.has(key('I'))) dict.set(key('I'), choiceIndices);
@@ -372,5 +414,6 @@ export async function preflightRow(
     const mainFont = mainGlyph && embedded[mainGlyph.font];
     if (first && mainFont) field.acroField.setDefaultAppearance(`/${mainFont.name} ${first.placement.size} Tf 0 g`);
   }
+  if (plans.some(({ review }) => review)) removeUnreferencedObjects(doc);
   return { ...result, pdfBytes: await doc.save({ updateFieldAppearances: false }) };
 }
