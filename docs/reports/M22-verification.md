@@ -38,3 +38,7 @@ Microsoft Edge 124.0.2478.80 使用一个工作进程串行运行。1440 × 900 
 受限 Windows 环境首次运行像素检查及 CLI 时，tsx 在读取系统用户信息时返回 `uv_os_get_passwd ENOMEM`。保留启动日志后，在获准的本机环境以相同冻结提交、D 盘输入和临时目录重跑。开发期间另复现 GBK 标准输出无法编码阿拉伯数字。修正报告流后，GBK 和 UTF-8 都能输出完整 M22 汇总。[受限像素启动](../../test-results/m22-evidence/qa-pixels.log) · [受限 CLI 启动](../../test-results/m22-evidence/qa-cli-normal.log) · [GBK 复跑](../../test-results/m22-evidence/worker-a/pixels-gbk-replay.log)
 
 夹具属性文件保留基线 Git 对象 `16687c743d52cd6832cb834023e0b8160b38bf1e`。锁文件依赖未变，条件引擎扫描未发现求值、DOM 或外部 I/O 调用。既有 RTL 扩展名标准已关联本次 Edge 字形坐标检查。[受保护文件与引擎核对](../../test-results/m22-evidence/lead-core-invariants.json) · [代码标准](../code-standards.md)
+
+## 主线收尾
+
+四个已合入的临时工作树、对应分支及 `.arabiform-wt` 已清理。Windows 一度占用已注销的文档空目录，核对目录为空后重试成功。本地只保留 `main` 工作树，主库 TypeScript 编译器与 D 盘验收证据完整。清理时再次确认两个专用预览端口拒绝新连接，并核对 `fixtures/.gitattributes` 的 Git 对象及工作区字节。冻结后的提交仅更新验收报告、经验和标准中的证据引用。[清理回执](../../test-results/m22-evidence/lead-worktree-cleanup.json)
