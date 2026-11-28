@@ -8,6 +8,7 @@ const en = {
   label: 'Group files by column',
   none: 'None (single folder)',
   missing: 'This column is missing from the active roster. Choose an available column or None to enable ZIP export and audits.',
+  protected: 'Choose another grouping column or turn off grouping to export review copies.',
   summary: '{rows} ready rows in {groups} groups. The Clean PDFs ZIP puts each group in its own folder.',
   details: 'Group folders and row counts',
   blank: 'Ready rows with a blank group value go into',
@@ -18,6 +19,7 @@ const ar: typeof en = {
   label: 'تجميع الملفات حسب العمود',
   none: 'بلا تجميع (مجلد واحد)',
   missing: 'هذا العمود غير موجود في الجدول الحالي. اختر عمودًا متاحًا أو «بلا تجميع» لتتمكن من تنزيل ملف ZIP وتقارير الفحص.',
+  protected: 'اختر عمود تجميع آخر أو أوقف التجميع لتصدير نسخ المراجعة.',
   summary: 'الصفوف الجاهزة: {rows}، المجموعات: {groups}. يضع ملف ZIP كل مجموعة في مجلد مستقل.',
   details: 'مجلدات المجموعات وعدد صفوفها',
   blank: 'للصفوف الجاهزة التي لا تحمل قيمة للمجموعة مجلد خاص.',
@@ -26,20 +28,22 @@ const ar: typeof en = {
 
 export function GroupingControl({ desk, arabic }: { desk: Desk; arabic: boolean }) {
   const copy = arabic ? ar : en;
+  const missing = desk.groupingBlocked && !desk.groupProtected;
+  const problem = desk.groupProtected ? 'grouping-column-protected' : missing ? 'grouping-column-missing' : undefined;
   return (
     <>
       <label className="full-control">
         {copy.label}
         <select data-testid="group-by-column" value={desk.groupByColumn ?? ''} disabled={desk.exporting}
           aria-invalid={desk.groupingBlocked || undefined}
-          aria-describedby={desk.groupingBlocked ? 'grouping-column-missing' : undefined}
+          aria-describedby={problem}
           onChange={(event) => desk.changeGrouping(event.currentTarget.value || null)}>
           <option value="">{copy.none}</option>
-          {desk.groupingBlocked && <option value={desk.groupByColumn!} dir="auto" disabled>{desk.groupByColumn}</option>}
+          {missing && <option value={desk.groupByColumn!} dir="auto" disabled>{desk.groupByColumn}</option>}
           {desk.sheet?.headers.map((header) => <option key={header} value={header} dir="auto">{header}</option>)}
         </select>
       </label>
-      {desk.groupingBlocked && <p role="alert" className="alert" id="grouping-column-missing" data-testid="grouping-column-missing">{copy.missing}</p>}
+      {problem && <p role="alert" className="alert" id={problem} data-testid={problem}>{desk.groupProtected ? copy.protected : copy.missing}</p>}
     </>
   );
 }

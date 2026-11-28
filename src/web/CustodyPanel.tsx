@@ -25,6 +25,7 @@ const en = {
   both: 'Manifest includes checksums for the exported ZIP members and merged PDF.',
   split: 'Manifest includes checksums for the exported per-group merged PDFs.',
   qr: 'Manifest includes the printed custody QR records.',
+  redacted: 'Manifest identifies these PDFs as redacted review copies.',
 };
 
 const ar: typeof en = {
@@ -39,6 +40,7 @@ const ar: typeof en = {
   both: 'يشمل البيان بصمات ملفات PDF داخل ملف ZIP وبصمة ملف PDF المدمج.',
   split: 'يشمل البيان بصمات ملفات PDF المدمجة لكل مجموعة.',
   qr: 'يشمل البيان سجلات رموز QR للحيازة التي طُبعت.',
+  redacted: 'يحدّد البيان ملفات PDF هذه على أنها نسخ محجوبة للمراجعة.',
 };
 
 export default function CustodyPanel({ sources, outputs, scope, disabled, label, arabic }: CustodyPanelProps) {
@@ -63,6 +65,7 @@ export default function CustodyPanel({ sources, outputs, scope, disabled, label,
         onClick={() => saveDownload(createCustodyManifest(sources, outputs, scope), 'arabiform-custody-manifest.json', 'application/json')}>{label}</button>
       <p className="quiet" role="status" data-testid="custody-coverage">{coverage}{coverage && outputs?.groups && ' '}{outputs?.groups && copy.split}</p>
       {!!outputs?.qrRecords?.length && <p className="quiet" role="status">{copy.qr}</p>}
+      {!!outputs?.redactedFields?.length && <p className="quiet" role="status" data-testid="custody-redacted">{copy.redacted}</p>}
       <dl className="custody-fingerprints">
         {([['template', sources.templateSha256], ['roster', sources.rosterSha256]] as const).map(([source, digest]) => (
           <div key={source}>
