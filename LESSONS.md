@@ -222,3 +222,9 @@ M20 新章三个打印输出均可下载。全套单元测试却发现，未启�
 在 Windows 的 GBK 输出环境运行四倍渲染时，M20 汇总中的阿拉伯数字触发了 `UnicodeEncodeError`，后面的 M21 和 M22 汇总没有输出。保留预检与 PDF 内原始 Unicode 值，让报告流只在不能编码的字符上使用反斜杠转义。用同一份清单分别以 GBK 和 UTF-8 复跑，两次都完整输出 M22 的两次填充、八个控件和零越界像素。[原错误](test-results/m22-evidence/worker-a/pixels-native.log) · [GBK 复跑](test-results/m22-evidence/worker-a/pixels-gbk-replay.log) · [冻结主线 UTF-8 复跑](test-results/m22-evidence/qa-pixels-native.log)
 
 **Seen: 1**（M22）。此前已纳入标准的 RTL 扩展名检查在本次覆盖了组包的 ZIP 和 JSON 按钮。基线和冻结版本上，两种视口中点、字母与括号的实绘横坐标都严格递增。[基线坐标](test-results/m22-evidence/lead-baseline-rtl-extensions.json) · [Edge 回归](tests/e2e/m21-packets.spec.ts)
+
+### 打印证书遇到字体无法显示的文件名（M24，2026-11-28）
+
+移动端 Edge 接受了 `访客名单.csv`，两款证书内置字体都无法绘制其中的汉字。证书在纸面说明名称无法显示，并完整打印来源文件的 SHA-256。重新打开下载的 PDF 后，从 Subject 的 JSON 中逐字读回原始文件名。命令行给旋转模板取中文名也得到相同结果。后续改动证书排版时，保留一个内置字体无法覆盖的真实文件名，同时检查页面、原始名称和文件指纹。[浏览器下载验真](tests/e2e/m24-printshop.spec.ts) · [PDF 读回](tests/e2e/m24-print-proof.py) · [中文模板命令行回执](test-results/m24-evidence/lead-cli-rotated/receipt.json)
+
+**Seen: 1**（M24，同一处证书排版限制计一次）。
