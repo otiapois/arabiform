@@ -1,6 +1,6 @@
 import { PDFArray, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFNumber, PDFPage, PDFRadioGroup, PDFString, PDFTextField, PDFWidgetAnnotation } from 'pdf-lib';
 import type { FieldChoice } from './choice-match';
-import { dropdownChoices, radioChoices } from './choices';
+import { buttonNormal, buttonOnState, dropdownChoices, radioChoices } from './choices';
 
 export const key = PDFName.of;
 export const number = PDFNumber.of;
@@ -35,6 +35,9 @@ export interface FieldMetadata {
   value: string;
   widgets: WidgetMetadata[];
   choices?: FieldChoice[];
+  choiceExportStates?: (string | null)[];
+  multiSelect?: boolean;
+  incompleteWidgets?: boolean;
 }
 
 export interface TemplateMetadata {
@@ -267,14 +270,17 @@ export async function openTemplate(bytes: Uint8Array | ArrayBuffer) {
         ?? (kind === 'radio' ? radioChoices(widgets, fieldAttributes(canonical, 'Opt')) : undefined);
       const supportsTextCapacity = field instanceof PDFTextField && !field.isReadOnly()
         && !field.isCombed() && !field.isPassword() && !field.isFileSelector() && !field.isRichFormatted();
+      const declared = new Set(widgets.map(({ widget }) => widget.dict));
+      const linked = [...(linkedWidgets.get(canonical) ?? [])];
+      const completeWidgetList = declared.size === widgets.length && linked.every((widget) => declared.has(widget));
       const meta: FieldMetadata = {
         name, kind, required: field.isRequired(), readOnly: field.isReadOnly(),
         multiline: field instanceof PDFTextField && field.isMultiline(), supportsTextCapacity, maxLength,
         defaultFontSize: fontSize(appearance), value, widgets: widgets.map((entry) => entry.meta), choices,
+        ...(kind === 'radio' && { choiceExportStates: widgets.map(({ widget }) => buttonOnState(buttonNormal(widget.dict))?.decodeText() ?? null) }),
+        ...(field instanceof PDFDropdown && field.isMultiselect() && { multiSelect: true }),
+        ...(!completeWidgetList && { incompleteWidgets: true }),
       };
-      const declared = new Set(widgets.map(({ widget }) => widget.dict));
-      const linked = [...(linkedWidgets.get(canonical) ?? [])];
-      const completeWidgetList = declared.size === widgets.length && linked.every((widget) => declared.has(widget));
       const pageNumbers = [...new Set([...declared, ...linked].flatMap((widget) => {
         const page = widgetPages.get(widget);
         return page === undefined ? [] : [page + 1];

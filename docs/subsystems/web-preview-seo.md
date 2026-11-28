@@ -74,6 +74,12 @@
 - **Check packets** runs cross-template preflight. Show each recipient's readiness, including the document, field and reason when a field fails. A failed document holds the entire recipient packet. Enable ZIP and manifest downloads for the completed ready packets.
 - Offer a bilingual cover and document index, a ZIP filename pattern, and optional grouping by a roster column. The PDFs are flattened print copies. Download one ZIP and its unsigned SHA-256 manifest from the current batch. [Packet assembly and manifest contract](pdf-engine.md#multi-template-packet-assembly)
 
+## Compare templates
+
+- Open **Compare templates** from the secondary tools on the existing English and Arabic workbench routes. Load the mode, its engine and the synthetic upgrade only when needed. Comparison accepts the two local PDF revisions and an optional mapping preset.
+- Summarize structural changes and show exact widget deltas where available. Keep comparison reports available when structural warnings or unresolved preset references require review. Offer explicit replacement fields for affected preset references and validate the resulting preset before enabling its download or the Fill PDFs handoff.
+- **Open New Template & Migrated Preset in Fill PDFs** carries the revised PDF and validated preset through ordinary template intake and keeps the current roster. Use normal roster preflight to determine row readiness for fill export. Replacing an input or changing a replacement must invalidate results that depend on the previous selection. [Comparison and migration contract](pdf-engine.md#template-version-comparison-and-preset-migration)
+
 ## Local Batch Drafts
 
 - **Save Draft (.json)** downloads a local v1 file with effective cell edits, applied hygiene summaries, and mapping and output settings. It embeds v11 settings for active conditional rules, otherwise v10 for an active text formatting override or approval seal, v9 for an active grouping column, v8 for 2-up, v7 for QR or a different cover language, v6 when virtual columns are in use, v5 with an active watermark, or v4. Each settings version loads under the same source matching rules. A draft may contain roster cell values. Source PDF, roster, and font bytes are supplied locally when restoring. The draft is persisted in the downloaded file only, with no cloud storage or `localStorage`.
@@ -81,7 +87,7 @@
 - Export row selection is a workbench control outside the saved settings.
 
 ## Static Pre-Rendered SEO Routes (Strictly <= 5 per `SEO完整策略.md`!)
-1. `/` — Main workbench for creating templates, designing fields, filling AcroForm PDFs from CSV or Excel, assembling per-person packets, extracting saved values, and checking batch receipts.
+1. `/` — Main workbench for creating or comparing templates, designing fields, filling AcroForm PDFs from CSV or Excel, assembling per-person packets, extracting saved values, and checking batch receipts.
 2. `/arabic-pdf-form-filler` — Focused English landing page (`fill pdf from csv arabic`, comparison against WinAnsi/clipping failures)
 3. `/ar/pdf-mail-merge` — Clean Arabic RTL landing page (`dir="rtl"`, concise verified Arabic UI/copy, clearly marked for native reader verification before launch)
 4. `/preserve-leading-zeros-pdf` — Focused page on preserving `00123` / `00007` IDs from CSV & Excel into PDFs

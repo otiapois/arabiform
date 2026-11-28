@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import FilePicker, { chooseLocalFile } from './FilePicker';
 import { fillLabel, type translator } from './labels';
 import { QueuePanel } from './QueuePanel';
 import { saveDownload } from './resources';
-import type { FlatSource } from './fill-template-source';
+import type { FlatSource, MigratedTemplate } from './fill-template-source';
 import { sampleWorkflows, useWorkbench } from './useWorkbench';
 import { WatermarkControls } from './WatermarkControls';
 
@@ -35,8 +36,9 @@ const SplitDownload = lazy(() => import('./FillOutputExtras').then(({ SplitDownl
 const CompletedCustody = lazy(() => import('./FillOutputExtras').then(({ CompletedCustody }) => ({ default: CompletedCustody })));
 const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
 const PacketWorkbench = lazy(() => import('./PacketWorkbench'));
+const CompareTemplates = lazy(() => import('./CompareTemplates'));
 
-const modes = ['fill', 'extract', 'design', 'create', 'verify', 'packet'] as const;
+const modes = ['fill', 'extract', 'design', 'create', 'verify', 'packet', 'compare'] as const;
 type Mode = typeof modes[number];
 
 type AppProps = {
@@ -45,54 +47,6 @@ type AppProps = {
   summary?: string;
   details?: { __html: string };
 };
-
-type FilePickerProps = {
-  id: string;
-  label: string;
-  pickerLabel: string;
-  accept: string;
-  filename?: string;
-  placeholder: ReactNode;
-  isLoading: boolean;
-  loadingLabel: string;
-  onChoose: (file: File) => void;
-  allowDrop?: boolean;
-};
-
-function chooseLocalFile(event: ChangeEvent<HTMLInputElement>, onChoose: (file: File) => void) {
-  const file = event.currentTarget.files?.[0];
-  event.currentTarget.value = '';
-  if (file) onChoose(file);
-}
-
-function FilePicker({ id, label, pickerLabel, accept, filename, placeholder, isLoading, loadingLabel, onChoose, allowDrop }: FilePickerProps) {
-  return (
-    <div className="file-picker">
-      <label className="field-label" htmlFor={id}>{label}</label>
-      <div className="file-box" onDragOver={allowDrop ? (event) => event.preventDefault() : undefined} onDrop={allowDrop ? (event) => {
-        event.preventDefault();
-        const file = event.dataTransfer.files[0];
-        if (file) onChoose(file);
-      } : undefined}>
-        <span className="file-icon" aria-hidden="true" />
-        {filename && !isLoading
-          ? <bdi dir="auto" className="loaded-filename">{filename}</bdi>
-          : <span className="quiet">{isLoading ? loadingLabel : placeholder}</span>}
-        <label className="file-action">
-          <span>{pickerLabel}</span>
-          <input
-            type="file"
-            id={id}
-            data-testid={id}
-            accept={accept}
-            aria-label={pickerLabel}
-            onChange={(event) => chooseLocalFile(event, onChoose)}
-          />
-        </label>
-      </div>
-    </div>
-  );
-}
 
 export function App({ language, heading, summary, details }: AppProps) {
   const { arabic, labels } = language;
@@ -105,6 +59,7 @@ export function App({ language, heading, summary, details }: AppProps) {
   const [extractOpened, setExtractOpened] = useState(false);
   const [studioOpened, setStudioOpened] = useState(false);
   const [packetOpened, setPacketOpened] = useState(false);
+  const [compareOpened, setCompareOpened] = useState(false);
   const [design, setDesign] = useState<{ revision: number; source?: FlatSource }>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
   const [characterKeys, setCharacterKeys] = useState(true);
@@ -117,6 +72,7 @@ export function App({ language, heading, summary, details }: AppProps) {
     create: arabic ? 'إنشاء قالب' : 'Create template',
     verify: arabic ? 'التحقق من بيان الحيازة' : 'Verify receipt',
     packet: labels.packetMode,
+    compare: arabic ? 'مقارنة القوالب' : 'Compare templates',
   };
 
   function openMode(next: Mode, source?: FlatSource) {
@@ -124,17 +80,18 @@ export function App({ language, heading, summary, details }: AppProps) {
     if (next === 'extract') setExtractOpened(true);
     if (next === 'create') setStudioOpened(true);
     if (next === 'packet') setPacketOpened(true);
+    if (next === 'compare') setCompareOpened(true);
     if (next === 'design') setDesign((current) => !current || source
       ? { revision: (current?.revision ?? 0) + 1, source }
       : current);
     setMode(next);
   }
 
-  function useTemplateInFill(file: File) {
-    if (activeMode.current !== 'design' && activeMode.current !== 'create') return;
+  function useTemplateInFill(file: File, migration?: MigratedTemplate) {
+    if (activeMode.current !== 'design' && activeMode.current !== 'create' && activeMode.current !== 'compare') return;
     flushSync(() => openMode('fill'));
     document.getElementById('files-heading')?.focus();
-    void desk.loadPdf(file);
+    void desk.loadPdf(file, migration);
   }
 
   useEffect(() => {
@@ -274,7 +231,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                     {desk.errors.roster && <Suspense><SourceError code={desk.errors.roster} arabic={arabic} /></Suspense>}
                     {desk.roster?.workbook && <Suspense><WorksheetPicker desk={desk} language={language} /></Suspense>}
                     <div className="source-note" aria-live="polite">
-                      {desk.sample && <strong className="tag tag-pass">{labels.synthetic}</strong>}
+                      {(desk.sample || desk.template?.synthetic) && <strong className="tag tag-pass">{labels.synthetic}</strong>}
                       <p>{desk.sample?.notice ?? labels.realNotice}</p>
                     </div>
                   </div>
@@ -493,6 +450,11 @@ export function App({ language, heading, summary, details }: AppProps) {
           {packetOpened && <div hidden={mode !== 'packet'}>
             <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
               <PacketWorkbench arabic={arabic} active={mode === 'packet'} />
+            </Suspense>
+          </div>}
+          {compareOpened && <div hidden={mode !== 'compare'}>
+            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}>
+              <CompareTemplates arabic={arabic} onUseInFill={useTemplateInFill} />
             </Suspense>
           </div>}
         </div>

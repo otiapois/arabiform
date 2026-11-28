@@ -47,6 +47,7 @@ import { filenameKey } from '../../src/core/roster/filenames';
 import { applyRosterHygiene, previewRosterHygiene } from '../../src/core/roster/hygiene';
 import { localVirtualDate, resolveVirtualColumn, resolveVirtualMapping, VIRTUAL_COLUMNS, virtualFilenameToken } from '../../src/core/roster/virtual-columns';
 import { generateStudioTemplate, STUDIO_ACCENT_PALETTES, STUDIO_HEADER_LANGUAGES, STUDIO_TEMPLATE_IDS } from '../../src/core/studio/templates';
+import { inspectTemplateDiff, migrateTemplatePreset } from '../../src/core/template/diff-migrator';
 
 import { proveQrMatrix } from './qr-proof';
 
@@ -83,7 +84,158 @@ async function verify<T extends unknown[]>(property: IAsyncProperty<T>, numRuns:
 afterAll(() => {
   console.info(`fast-check seed ${seed}: ${acceptedCases} total accepted cases, ${discardedCases} discarded, ${failedProperties} failed properties.`);
   expect(discardedCases).toBe(0);
-  expect(acceptedCases).toBeGreaterThanOrEqual(42_500);
+  expect(acceptedCases).toBeGreaterThanOrEqual(45_000);
+});
+
+describe('seeded template diff and preset migration', () => {
+  const rotation = fc.constantFrom(0, 90, 180, 270);
+  const userUnit = fc.constantFrom(0.5, 1, 1.25, 2, 3);
+  const metadata = fc.record({ angle: rotation, unit: userUnit, crop: fc.integer({ min: 0, max: 30 }) });
+  const length = fc.option(fc.integer({ min: 0, max: 40 }), { nil: undefined });
+  const width = fc.integer({ min: 44, max: 170 });
+  const height = fc.integer({ min: 17, max: 47 });
+  const choiceToken = fc.constantFrom('Operations', 'عمليّات', '00123', 'A,B', ' A ', 'عَلَم');
+
+  it('finds zero changes for 850 identical PDF byte pairs with rotated/cropped pages and varied field limits', async () => {
+    await verify(fc.asyncProperty(metadata, width, height, length, fc.integer({ min: 1, max: 999 }), async ({ angle, unit, crop }, w, h, maxLength, fraction) => {
+      const doc = await PDFDocument.create({ updateMetadata: false });
+      const page = doc.addPage([320, 300]);
+      page.setCropBox(crop, crop, 270 - crop, 240 - crop);
+      page.setRotation(degrees(angle));
+      page.node.set(key('UserUnit'), PDFNumber.of(unit));
+      const field = doc.getForm().createTextField('Ref.الرقم');
+      field.addToPage(page, { x: 44, y: 60, width: w, height: h, borderWidth: 0 });
+      field.addToPage(page, { x: 45, y: 130, width: w - 8, height: h, borderWidth: 0 });
+      field.setMaxLength(maxLength);
+      const rawWidgets = field.acroField.getWidgets();
+      const reanchor = (x: number) => rawWidgets.forEach(({ dict }, index) => {
+        const left = x + fraction / 1000;
+        // Construct both PDF endpoints independently to preserve the same exact decimal span.
+        const right = (x + w - index * 8) + fraction / 1000;
+        dict.set(key('Rect'), doc.context.obj([left, 60 + index * 70, right, 60 + index * 70 + h]));
+      });
+      reanchor(44);
+      const bytes = await doc.save({ updateFieldAppearances: false });
+      const result = await inspectTemplateDiff(bytes, bytes);
+      const expected = createHash('sha256').update(bytes).digest('hex');
+      expect(result).toMatchObject({
+        oldSha256: expected, newSha256: expected, breaking: false, addedFields: [], removedFields: [], typeChangedFields: [],
+        geometryChangedFields: [], maxLenChangedFields: [], choiceOptionsChangedFields: [], widgetCountChangedFields: [],
+        widgetAvailabilityChangedFields: [], availabilityChangedFields: [],
+      });
+      reanchor(62);
+      const moved = await inspectTemplateDiff(bytes, await doc.save({ updateFieldAppearances: false }));
+      expect(moved.oldSha256).not.toBe(moved.newSha256);
+      expect(moved).toMatchObject({ breaking: false, geometryChangedFields: [], widgetAvailabilityChangedFields: [] });
+    }), 850);
+  }, 180_000);
+
+  it('measures every widget and full choice tuple in 900 rotated/cropped/physical-size revisions', async () => {
+    await verify(fc.asyncProperty(metadata, metadata, width, height, length, length, choiceToken, choiceToken, fc.boolean(),
+      async (before, after, w, h, oldMaxLength, newMaxLength, oldLabel, newLabel, keepExport) => {
+        const doc = await PDFDocument.create({ updateMetadata: false });
+        const page = doc.addPage([330, 320]);
+        const form = doc.getForm();
+        const field = form.createTextField('Value');
+        const box = { x: 45, y: 55, width: w, height: h, borderWidth: 0 };
+        field.addToPage(page, box);
+        field.addToPage(page, { ...box, y: 130 });
+        const dropdown = form.createDropdown('Category');
+        dropdown.addOptions(['Initial']);
+        dropdown.addToPage(page, { ...box, y: 210 });
+        const tuple = (value: string, label: string) => doc.context.obj([
+          [PDFString.of(value), PDFHexString.fromText(label)],
+        ]);
+        page.setRotation(degrees(before.angle));
+        page.setCropBox(before.crop, 7, 300 - before.crop, 298);
+        page.node.set(key('UserUnit'), PDFNumber.of(before.unit));
+        field.setMaxLength(oldMaxLength);
+        dropdown.acroField.dict.set(key('Opt'), tuple('OLD', oldLabel));
+        const old = await doc.save({ updateFieldAppearances: false });
+        page.setRotation(degrees(after.angle));
+        page.setCropBox(after.crop, 11, 300 - after.crop, 290);
+        page.node.set(key('UserUnit'), PDFNumber.of(after.unit));
+        field.setMaxLength(newMaxLength);
+        const nextExport = keepExport ? 'OLD' : 'NEW';
+        dropdown.acroField.dict.set(key('Opt'), tuple(nextExport, newLabel));
+        field.acroField.getWidgets()[1]!.setRectangle({ ...box, x: 48, y: 130, width: w - 7, height: h + 3 });
+        const revised = await doc.save({ updateFieldAppearances: false });
+        const result = await inspectTemplateDiff(old, revised);
+        const oldWidthPt = w * before.unit;
+        const oldHeightPt = h * before.unit;
+        const expectedGeometry = [['Category', 1, w, h], ['Value', 1, w, h], ['Value', 2, w - 7, h + 3]]
+          .flatMap(([field, occurrence, nextW, nextH]) => {
+            const newWidthPt = Number(nextW) * after.unit;
+            const newHeightPt = Number(nextH) * after.unit;
+            return newWidthPt === oldWidthPt && newHeightPt === oldHeightPt ? [] : [{
+              field, pageNumber: 1, occurrence, oldWidthPt, newWidthPt, widthDeltaPt: newWidthPt - oldWidthPt,
+              oldHeightPt, newHeightPt, heightDeltaPt: newHeightPt - oldHeightPt,
+              shrunk: newWidthPt < oldWidthPt || newHeightPt < oldHeightPt,
+            }];
+          });
+        expect(result.geometryChangedFields).toEqual(expectedGeometry);
+        expect(result.widgetAvailabilityChangedFields).toEqual([]);
+        const reduced = newMaxLength !== undefined && (oldMaxLength === undefined || newMaxLength < oldMaxLength);
+        expect(result.maxLenChangedFields).toEqual(oldMaxLength === newMaxLength ? [] : [
+          { field: 'Value', oldMaxLength: oldMaxLength ?? null, newMaxLength: newMaxLength ?? null, reduced },
+        ]);
+        const changed = !keepExport || oldLabel !== newLabel;
+        const oldChoice = { value: 'OLD', label: oldLabel };
+        const newChoice = { value: nextExport, label: newLabel };
+        expect(result.choiceOptionsChangedFields).toEqual(changed ? [{
+          field: 'Category', oldOptions: [oldChoice], removed: [oldChoice], newOptions: [newChoice], added: [newChoice],
+        }] : []);
+        expect(result.breaking).toBe(changed || reduced || expectedGeometry.some(({ shrunk }) => shrunk));
+      }), 900);
+  }, 180_000);
+
+  it('checks 850 v1–v11 preset roundtrips, active/inactive collisions and bad explicit rename maps', async () => {
+    const [old, revised, stored] = await Promise.all([
+      readFile('fixtures/m23/2026-offer.pdf'), readFile('fixtures/m23/2027-offer.pdf'), readFile('fixtures/m23/offer-preset-v11.json', 'utf8'),
+    ]);
+    const allSettings = JSON.parse(stored) as Record<string, unknown>;
+    const diff = await inspectTemplateDiff(old, revised);
+    const shape = [
+      ['mapping', 'filenamePattern', 'minFontSize', 'font'], ['flattenZip'], ['includeCoverSheet'], ['alignOverrides'],
+      ['watermark'], ['virtualMappings'], ['qrStamp', 'coverLanguage'], ['imposition'], ['groupByColumn'],
+      ['fieldTypography', 'approvalSeal'], ['conditionalRules'],
+    ];
+    const scenarios = ['good', 'inactive-target', 'missing', 'wrong-type', 'collision', 'unknown-source', 'unused-source', 'invalid-map'] as const;
+    const property = fc.asyncProperty(fc.integer({ min: 1, max: 11 }), fc.constantFrom(...scenarios),
+      fc.string({ minLength: 1, maxLength: 24 }), fc.boolean(), async (version, scenario, headerText, flattenZip) => {
+        const header = 'Name ' + headerText + ' Column';
+        const saved = { ...Object.fromEntries(shape.slice(0, version).flat().map((setting) => [setting, allSettings[setting]])), version,
+          mapping: { FullName: header, EmployeeCode: 'Code', Department: 'Department', Sentinel: '',
+            ...(scenario === 'inactive-target' && { EmployeeFullName: '' }) },
+          ...(version >= 2 && { flattenZip }),
+        };
+        const explicit = { FullName: 'EmployeeFullName' };
+        const renames = {
+          good: explicit, 'inactive-target': explicit, missing: {}, 'wrong-type': { FullName: 'Department' }, collision: { FullName: 'EmployeeCode' },
+          'unknown-source': { ...explicit, Ghost: 'EmployeeFullName' }, 'unused-source': { ...explicit, Sentinel: 'EmployeeFullName' },
+          'invalid-map': [explicit],
+        };
+        const actual = migrateTemplatePreset(diff, saved, renames[scenario]);
+        if (scenario === 'good' || scenario === 'inactive-target') {
+          expect(actual.diagnostics).toEqual([]);
+          expect(actual.preset).toMatchObject({
+            ...saved, mapping: { EmployeeFullName: header, EmployeeCode: 'Code', Department: 'Department', Sentinel: '' },
+            ...(version >= 4 && { alignOverrides: { EmployeeFullName: 'rtl', EmployeeCode: 'ltr' } }),
+            ...(version >= 10 && { fieldTypography: { EmployeeFullName: { numeralPolicy: 'eastern-arabic', paddingPt: 4 },
+              EmployeeCode: { numeralPolicy: 'preserve' } } }),
+            ...(version === 11 && { conditionalRules: [{ field: 'EmployeeFullName' }, { field: 'Department' }] }),
+          });
+          expect(actual.preset?.mapping.FullName).toBeUndefined();
+          expect(validateMappingPreset(JSON.parse(JSON.stringify(actual.preset)))).toEqual(actual.preset);
+        } else {
+          const code = { missing: 'missing-target', 'wrong-type': 'incompatible-target', collision: 'target-collision',
+            'unknown-source': 'unknown-rename-source', 'unused-source': 'unused-rename-source', 'invalid-map': 'invalid-rename-map' }[scenario];
+          expect(actual.diagnostics.map((diagnostic) => diagnostic.code)).toContain(code);
+          expect(actual.preset).toBeUndefined();
+        }
+      });
+    await verify(property, 850, Array.from({ length: 11 }, (_, index) => [index + 1, 'good', 'مثال', true]));
+  }, 180_000);
 });
 
 describe('seeded conditional field rules', () => {

@@ -239,6 +239,7 @@ def check_case(case, directory):
         assert not warnings, f"{label}: MuPDF emitted font or appearance warnings: {warnings}"
     return {"label": label, "outsideMappedWidgetChangedPixels": 0, "clippedInkPixels": 0, "widgets": results,
             **({"ruleApplied": rule_applied} if rule_applied is not None else {}),
+            **({"migratedPreset": True} if case.get("migratedPreset") else {}),
             **({"designer": designer} if designer else {})}
 
 
@@ -877,10 +878,16 @@ def main():
     if packet:
         print(f"M21: {len(packet['documents'])} exact bilingual packet index entries, {packet['formPagesIdenticalAt4x']} individually matched form pages at 4x, "
               "Arabic with harakat and English preserved, 0 clipped/outside pixels, 0 widgets and exact SHA-256.")
-    conditional = [case for case in results if "ruleApplied" in case]
+    conditional = [case for case in results if "ruleApplied" in case and not case.get("migratedPreset")]
     if conditional:
         widgets = sum(len(case["widgets"]) for case in conditional)
         print(f"M22: {len(conditional)} conditional fills and {widgets} widgets with exact Arabic/checkbox values, "
+              "active appearances, 0 clipped pixels and 0 outside changes at 4x.")
+    migrated = [case for case in results if case.get("migratedPreset")]
+    if migrated:
+        widgets = sum(len(case["widgets"]) for case in migrated)
+        assert len(migrated) == 2 and widgets == 8, "expected two migrated 2027 offer records with four mapped fields each"
+        print(f"M23: {len(migrated)} 2027 offers filled via the migrated v11 preset, {widgets} widgets with exact values and "
               "active appearances, 0 clipped pixels and 0 outside changes at 4x.")
 
 

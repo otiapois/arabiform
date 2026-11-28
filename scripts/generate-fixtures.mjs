@@ -521,6 +521,61 @@ async function multiPageChoices() {
   return pdf.save({ updateFieldAppearances: false });
 }
 
+async function employmentOffer(year) {
+  const revised = year === 2027;
+  const pdf = await createPdf(`${year} employment offer`);
+  const page = pdf.addPage([510, 486]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const form = pdf.getForm();
+  page.drawRectangle({ x: 34, y: 378, width: 442, height: 77, color: forest });
+  page.drawText(`${year} Employment offer`, { x: 51, y: 414, size: 23, color: rgb(1, 1, 1), font: bold });
+  page.drawText('Synthetic Sample / People Operations', { x: 51, y: 394, size: 10, color: rgb(1, 1, 1), font });
+  const caption = (text, x, y) => page.drawText(text, { x, y, size: 10, color: forest, font: bold });
+  const addText = (name, label, x, y, width) => {
+    caption(label, x, y + 40);
+    const field = form.createTextField(name);
+    addWidget(field, page, [x, y, width, 32], font);
+    field.setFontSize(13);
+    return field;
+  };
+  addText(revised ? 'EmployeeFullName' : 'FullName', 'EMPLOYEE FULL NAME', 34, 300, 442);
+  addText('EmployeeCode', 'EMPLOYEE CODE', 34, 215, revised ? 132 : 154).setMaxLength(revised ? 28 : 40);
+  addText('ReviewReference', 'REVIEW REFERENCE', 257, 215, 219);
+  caption('DEPARTMENT', 34, 170);
+  const department = form.createDropdown('Department');
+  const options = [['ENG', 'Engineering'], ['OPS', 'Operations'], ...revised ? [] : [['ARCHIVE', 'Legacy archive']]];
+  department.setOptions(options.map(([, label]) => label));
+  department.addToPage(page, { x: 34.5, y: 130.5, width: 441, height: 31, font, borderWidth: 1, borderColor: rule, backgroundColor: fill });
+  addText('Sentinel', 'TEMPLATE REFERENCE', 34, 47, 175).setText('KEEP 00109');
+  form.updateFieldAppearances(font);
+  department.acroField.dict.set(PDFName.of('Opt'), pdf.context.obj(options.map(([value, label]) => [PDFString.of(value), PDFString.of(label)])));
+  return pdf.save({ updateFieldAppearances: false });
+}
+
+const offerPreset = {
+  version: 11,
+  mapping: { FullName: 'Name', EmployeeCode: 'Code', Department: 'Department', Sentinel: '' },
+  filenamePattern: '{{Code}}.pdf',
+  minFontSize: 8,
+  font: 'auto',
+  flattenZip: false,
+  includeCoverSheet: false,
+  alignOverrides: { FullName: 'rtl', EmployeeCode: 'ltr' },
+  watermark: { kind: 'none' },
+  virtualMappings: { ReviewReference: { column: 'PADDED_ROW_001', template: 'HR-{{PADDED_ROW_001}}' } },
+  qrStamp: { placement: 'none' },
+  coverLanguage: 'auto',
+  imposition: '1-up',
+  groupByColumn: null,
+  fieldTypography: { FullName: { numeralPolicy: 'eastern-arabic', paddingPt: 4 }, EmployeeCode: { numeralPolicy: 'preserve' } },
+  approvalSeal: null,
+  conditionalRules: [
+    { field: 'FullName', column: 'Tier', operator: 'equals', operand: 'Priority', action: { type: 'set-text', value: '{{Name}}' } },
+    { field: 'Department', column: 'Tier', operator: 'equals', operand: 'Priority', action: { type: 'set-choice', value: 'Engineering' } },
+  ],
+};
+
 if (args.length && (args.length !== 1 || args[0] !== '--check')) {
   throw new Error('Usage: node scripts/generate-fixtures.mjs [--check]');
 }
@@ -559,9 +614,18 @@ const fixtures = {
   'm4/multi-page-hr-choices.csv': csv(choiceRows),
   'm4/multi-page-hr-choices.xlsx': workbook(choiceRows),
   'm13/multi-sheet-roster.xlsx': multiSheetRoster(),
+  'm23/2026-offer.pdf': await employmentOffer(2026),
+  'm23/2027-offer.pdf': await employmentOffer(2027),
+  'm23/offer-preset-v11.json': JSON.stringify(offerPreset, null, 2) + '\n',
+  'm23/offer-rename-map.json': JSON.stringify({ FullName: 'EmployeeFullName' }, null, 2) + '\n',
+  'm23/offer-roster.csv': csv([
+    ['Name', 'Code', 'Department', 'Tier'],
+    ['مُحَمَّد سَالِم 12', '00123', 'OPS', 'Priority'],
+    ['سَلْمَى يَاسِين', '00007', 'OPS', 'Standard'],
+  ]),
 };
 
-if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13'].map((folder) => mkdir(join(output, folder), { recursive: true })));
+if (!check) await Promise.all(['golden', 'm2', 'm3', 'm4', 'm13', 'm23'].map((folder) => mkdir(join(output, folder), { recursive: true })));
 for (const [name, bytes] of Object.entries(fixtures)) {
   const file = join(output, name);
   if (check) {

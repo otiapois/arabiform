@@ -118,11 +118,30 @@ The ZIP contains one flattened PDF per ready recipient. The packet manifest is a
 
 يحتوي ZIP على ملف PDF مسطّح لكل شخص جاهز. يُحفظ بيان الحزم في ملف JSON مستقل. يقرأ `verify` بيانات دفعات القالب الواحد المذكورة أدناه. للتحقّق من حزمة، احسب بصمة SHA-256 للبايتات الأصلية للمصدر أو لملف PDF المستخرج من الأرشيف، وقارنها بالبصمة المقابلة في نسخة موثوقة من `packet-custody-manifest.json`. البيان غير موقّع. يتطلّب إثبات هوية الجهة المصدرة دليلًا منفصلًا. [حقول بيان الحزم](pdf-engine.md#multi-template-packet-assembly)
 
+## Template comparison walkthrough / تجربة مقارنة القوالب
+
+Use the bundled synthetic offer templates and version 11 preset. `offer-rename-map.json` maps `FullName` from the old template to `EmployeeFullName` in the new one. A rename map is a JSON object of exact old field names and their replacement names, such as `{"FullName":"EmployeeFullName"}`. Use a fresh output directory.
+
+استخدم قالبَي العرض الاصطناعيَّين وإعدادات الربط المرفقة بالإصدار 11. يربط `offer-rename-map.json` الحقل القديم `FullName` بالحقل الجديد `EmployeeFullName`. ملف إعادة التسمية كائن JSON يربط أسماء الحقول القديمة بأسماء بدائلها حرفيًا، مثل `{"FullName":"EmployeeFullName"}`. استخدم مجلد إخراج جديدًا.
+
+```sh
+npm run arabiform-cli -- --mode diff-template --old ./fixtures/m23/2026-offer.pdf --new ./fixtures/m23/2027-offer.pdf --preset ./fixtures/m23/offer-preset-v11.json --rename-map ./fixtures/m23/offer-rename-map.json --out-dir ./arabiform-demo/migration
+```
+
+The sample exits `2` because the revised template has structural changes that can affect filling. It writes `template-migration-report.csv`, `template-migration-report.json`, and `migrated-preset.json` because the supplied rename resolves the affected preset references. Review the reports, then preflight the roster using the revised PDF and migrated preset.
+
+تخرج المقارنة في هذا المثال بالرمز `2` لأن القالب الجديد يتضمّن تغيّرات بنيوية قد تؤثّر في التعبئة. تُكتب الملفات `template-migration-report.csv` و`template-migration-report.json` و`migrated-preset.json` لأن إعادة التسمية تحلّ مراجع الحقول المتأثّرة في الإعدادات. راجع التقريرَين، ثم افحص جدول البيانات بالقالب الجديد والإعدادات المُرحّلة.
+
+```sh
+npm run arabiform-cli -- --mode preflight --template ./fixtures/m23/2027-offer.pdf --roster ./fixtures/m23/offer-roster.csv --preset ./arabiform-demo/migration/migrated-preset.json --out-dir ./arabiform-demo/revised-check
+```
+
 ## Modes and output / الأوضاع والمخرجات
 
 | `--mode` | English | العربية |
 | --- | --- | --- |
 | `studio` | Requires a starter ID in `--template` and `--out-dir`. Writes `<id>.pdf` and `<id>-synthetic-sample.csv`. The PDF is an editable AcroForm. The matching UTF-8 BOM CSV contains synthetic rows. | يتطلّب معرّف القالب في `--template` ومسار الإخراج في `--out-dir`. ينشئ قالب AcroForm قابلًا للتعبئة باسم `<id>.pdf` وجدولًا اصطناعيًا مطابقًا باسم `<id>-synthetic-sample.csv` بترميز UTF-8 وعلامة BOM. |
+| `diff-template` | Requires `--old`, `--new`, and `--out-dir`. A completed comparison writes `template-migration-report.csv` and `template-migration-report.json`. Adds `migrated-preset.json` when a supplied preset passes migration validation. | يتطلّب `--old` و`--new` و`--out-dir`. عند اكتمال المقارنة يكتب `template-migration-report.csv` و`template-migration-report.json`، ويضيف `migrated-preset.json` إذا اجتازت إعدادات الربط المقدّمة فحص الترحيل. |
 | `preflight` | Requires `--template`, `--roster`, and `--out-dir`. Checks mapping and values, including glyph fit, and writes `arabiform-preflight.csv` and `arabiform-preflight.json`. The files describe each row or the reason intake was blocked. | يتطلّب `--template` و`--roster` و`--out-dir`. يفحص الربط والقيم ومدى اتساع الحقول للحروف، ثم يكتب `arabiform-preflight.csv` و`arabiform-preflight.json` بتفاصيل كل صف أو سبب رفض المدخلات. |
 | `fill` | Requires `--template`, `--roster`, and `--out-dir`. Runs preflight and, for an exportable batch, writes `arabiform-editable.zip`, `arabiform-flattened.zip`, `arabiform-merged.pdf`, and `custody-manifest.json`. It makes both ZIP variants on every successful export. Grouping changes the paths in both ZIPs and keeps the printable PDF combined. | يتطلّب `--template` و`--roster` و`--out-dir`. يجري الفحص المسبق ويكتب `arabiform-editable.zip` و`arabiform-flattened.zip` و`arabiform-merged.pdf` و`custody-manifest.json` للدفعة القابلة للتصدير. ينتج التصدير أرشيفَي ZIP، ويغيّر التجميع المسارات داخلهما مع إبقاء كل السجلات في ملف الطباعة المدمج. |
 | `packet` | Requires two to four `--template` arguments, `--roster`, and `--out-dir`. Writes `arabiform-packets.zip` and `packet-custody-manifest.json` when at least one person is ready. | يتطلّب تكرار `--template` من مرتين إلى أربع مرات، مع `--roster` و`--out-dir`. يكتب `arabiform-packets.zip` و`packet-custody-manifest.json` عند وجود شخص جاهز واحد على الأقل. |
@@ -142,10 +161,12 @@ The ZIP contains one flattened PDF per ready recipient. The packet manifest is a
 | --- | --- | --- |
 | `--help` | Print usage and exit `0`. Use it on its own. | يعرض طريقة الاستخدام ويخرج بالرمز `0`. استخدمه بمفرده. |
 | `--mode <name>` | Select a mode from the table above. | يحدّد أحد الأوضاع المذكورة في الجدول أعلاه. |
-| `--out-dir <dir>` | Local output directory for `studio`, `preflight`, `fill`, `packet` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`preflight` و`fill` و`packet` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
+| `--out-dir <dir>` | Local output directory for `studio`, `diff-template`, `preflight`, `fill`, `packet` and `extract`. The CLI creates missing directories and refuses to overwrite outputs. Directory paths through symbolic links or junctions are rejected. | مجلد إخراج محلي للأوضاع `studio` و`diff-template` و`preflight` و`fill` و`packet` و`extract`. تُنشئ الأداة المجلدات الناقصة وترفض الكتابة فوق المخرجات الموجودة. تُرفض مسارات المجلدات التي تمر عبر رابط رمزي أو نقطة وصل في Windows. |
 | `--template <pdf>` / `--template <id>` | Source template for `preflight` or `fill`, or a built-in template ID for `studio`. For `packet`, repeat `--template <pdf>` two to four times in document order. | مسار القالب المصدر في `preflight` أو `fill`، أو معرّف قالب مضمّن في `studio`. في `packet`، كرّر `--template <pdf>` من مرتين إلى أربع مرات بحسب ترتيب المستندات. |
+| `--old <pdf>` / `--new <pdf>` | The original and revised AcroForm PDFs for `diff-template`. | مسارا قالبَي AcroForm القديم والجديد في `diff-template`. |
 | `--roster <csv-or-xlsx>` | Source roster for `preflight`, `fill`, or `packet`. All templates in `packet` use the same roster. | جدول البيانات المصدر في `preflight` أو `fill` أو `packet` بصيغة CSV أو Excel. تستخدم جميع قوالب `packet` الجدول نفسه. |
-| `--preset <json>` | Reuse a workbench mapping preset (versions 1–11) in `preflight` or `fill`. | يعيد استخدام ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 11) في `preflight` أو `fill`. |
+| `--preset <json>` | A workbench mapping preset (versions 1–11) to reuse in `preflight` or `fill`, or migrate in `diff-template`. | ملف إعدادات الربط من واجهة العمل (الإصدارات 1 إلى 11) لاستخدامه في `preflight` أو `fill`، أو ترحيله في `diff-template`. |
+| `--rename-map <json>` | Optional old-to-new field name map for `diff-template`. Requires `--preset`. | ملف JSON اختياري يربط أسماء الحقول القديمة بالجديدة في `diff-template`. يتطلّب `--preset`. |
 | `--mappings <json>` | Optional ordered JSON array of field-to-header maps or `null` for `packet`. Supply one entry per template. | قائمة JSON اختيارية تحتوي على تعريف ربط الحقول بعناوين الأعمدة، أو على `null`، لكل قالب في `packet`. اتّبع ترتيب القوالب. |
 | `--sheet <name>` | Exact visible Excel worksheet name for `preflight`, `fill`, or `packet`. By default, load the first visible worksheet. | اسم ورقة العمل الظاهرة في `preflight` أو `fill` أو `packet` كما كُتب في ملف Excel. تُحمَّل أول ورقة ظاهرة افتراضيًا. |
 | `--sheet-base64url <name>` | Encoded equivalent of `--sheet` for shells that have trouble passing a worksheet name. Use canonical UTF-8 base64url with no padding. Supply just one of the two forms. | بديل مرمّز لـ `--sheet` عندما يصعب تمرير اسم الورقة عبر واجهة الأوامر. استخدم UTF-8 بترميز base64url القياسي دون حشو، واختر إحدى الصيغتين. |
@@ -201,6 +222,10 @@ Fill needs an editable AcroForm with supported fields. Intake blocks signed, enc
 The CLI writes result JSON to stdout. When `fill` is blocked, including when zero rows are ready, it writes diagnostic JSON to stderr. Run `preflight` separately to save the diagnostic files. `packet` writes a `clean` result to stdout with exit `0`, or a `flagged` result to stdout with exit `2` when some recipients are held and others export. If every recipient is held or the inputs block the batch, `packet` writes diagnostics to stderr, exits `2`, and writes no packet files. Invalid arguments, malformed JSON inputs, and file I/O errors also use stderr and exit `1`.
 
 تكتب الأداة نتائج JSON إلى المخرج القياسي. عند توقّف `fill`، بما في ذلك غياب أي صف جاهز، تكتب تفاصيل JSON إلى مخرج الأخطاء القياسي. شغّل `preflight` وحده لحفظ ملفات الفحص. يكتب `packet` نتيجة `clean` إلى المخرج القياسي ويخرج بالرمز `0`، أو يكتب `flagged` ويخرج بالرمز `2` عند تصدير بعض الحزم مع توقّف حزم أخرى. إذا توقّفت كل الحزم أو منعت المدخلات معالجة الدفعة، يكتب `packet` التفاصيل إلى مخرج الأخطاء ويخرج بالرمز `2` دون كتابة ملفات حزم. وتُكتب أخطاء الوسائط أو صيغة JSON أو التعامل مع الملفات إلى مخرج الأخطاء مع رمز الخروج `1`.
+
+`diff-template` exits `0` for a completed comparison without breaking changes or migration blockers. It exits `2` when either PDF fails intake, the comparison finds breaking changes such as a smaller widget, or preset migration is blocked. A completed comparison still writes both reports. It can also write a migrated preset with exit `2` if its references are valid and structural warnings remain. A blocked PDF intake produces no report files. Use `preflight` separately to check the roster.
+
+يخرج `diff-template` بالرمز `0` عندما تكتمل المقارنة دون تغيّرات تخلّ بالتوافق أو عوائق أمام الترحيل. ويخرج بالرمز `2` إذا رُفض أحد الملفَّين، أو أظهرت المقارنة تغيّرًا يخلّ بالتوافق مثل صغر مساحة أحد الحقول، أو تعذّر ترحيل الإعدادات. عند اكتمال المقارنة تُكتب نسختا التقرير، وقد يُكتب ملف إعدادات مُرحّل رغم رمز الخروج `2` إذا كانت مراجع الإعدادات صالحة وبقيت تنبيهات تتعلّق ببنية القالب. إذا رُفض ملف PDF عند فتحه فلن تُكتب التقارير. استخدم `preflight` في خطوة منفصلة لفحص جدول البيانات.
 
 ## Custody checks / التحقّق من بيان الحيازة
 

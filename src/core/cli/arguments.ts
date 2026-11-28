@@ -13,7 +13,8 @@ export type CliCommand =
   | { mode: 'packet'; templates: string[]; roster: string; outDir: string; mappings?: string; sheet?: string; groupBy?: string; cover: boolean }
   | { mode: 'extract'; outDir: string; source: { inDir: string } | { paths: string[] } }
   | { mode: 'verify'; manifest: string; source: { qrPayload: string } | { paths: string[]; variant?: CustodyVariant } }
-  | { mode: 'studio'; template: StudioTemplateId; outDir: string };
+  | { mode: 'studio'; template: StudioTemplateId; outDir: string }
+  | { mode: 'diff-template'; old: string; new: string; preset?: string; renameMap?: string; outDir: string };
 
 export const CLI_USAGE = [
   'npm run arabiform-cli -- --mode preflight|fill --template <pdf> --roster <csv|xlsx> --out-dir <dir>',
@@ -25,6 +26,8 @@ export const CLI_USAGE = [
   '  Packet mappings are an ordered JSON array of field-to-header objects or null for auto-mapping.',
   'npm run arabiform-cli -- --mode studio --template <id> --out-dir <dir>',
   '  studio IDs: ' + STUDIO_TEMPLATE_IDS.join(', '),
+  'npm run arabiform-cli -- --mode diff-template --old <pdf> --new <pdf> [--preset <json>] [--rename-map <json>] --out-dir <dir>',
+  '  Rename map is a JSON object from old field names to exact new field names. Requires --preset.',
   'npm run arabiform-cli -- --mode extract (--in-dir <dir> | <pdf>...) --out-dir <dir>',
   'npm run arabiform-cli -- --mode verify --manifest <json> ([--variant editable|flattened|merged] <pdf>... | --qr-payload <payload>)',
   'Exit codes: 0 clean, 2 flagged/blocked/unverified, 1 usage or local I/O error.',
@@ -56,6 +59,7 @@ const flagsByMode = {
   extract: ['in-dir', 'out-dir'],
   verify: ['manifest', 'qr-payload', 'variant'],
   studio: ['template', 'out-dir'],
+  'diff-template': ['old', 'new', 'preset', 'rename-map', 'out-dir'],
 };
 const valueFlags = new Set(['mode', ...Object.values(flagsByMode).flat()].filter((flag) => !['strict', 'cover', 'qr'].includes(flag)));
 const boolFlags = new Set(['strict', 'cover', 'qr']);
@@ -109,8 +113,9 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     }
   }
   const mode = values.get('mode');
-  if (mode !== 'preflight' && mode !== 'fill' && mode !== 'packet' && mode !== 'extract' && mode !== 'verify' && mode !== 'studio') {
-    throw new CliUsageError('Choose --mode preflight, fill, packet, extract, verify, or studio.');
+  if (mode !== 'preflight' && mode !== 'fill' && mode !== 'packet' && mode !== 'extract' && mode !== 'verify' && mode !== 'studio'
+    && mode !== 'diff-template') {
+    throw new CliUsageError('Choose --mode preflight, fill, packet, extract, verify, studio, or diff-template.');
   }
   if (mode !== 'packet' && templates.length > 1) throw new CliUsageError('Duplicate option --template.');
   for (const flag of values.keys()) {
@@ -147,6 +152,13 @@ export function parseCliArgs(args: readonly string[]): CliCommand {
     } };
   }
   const outDir = pathValue(required('out-dir'), '--out-dir');
+  if (mode === 'diff-template') {
+    const preset = optionalPath('preset', /\.json$/i);
+    const renameMap = optionalPath('rename-map', /\.json$/i);
+    if (renameMap && !preset) throw new CliUsageError('--rename-map requires --preset.');
+    return { mode, outDir, preset, renameMap,
+      old: pathValue(required('old'), '--old', /\.pdf$/i), new: pathValue(required('new'), '--new', /\.pdf$/i) };
+  }
   if (mode === 'extract') {
     const inDir = optionalPath('in-dir');
     if (inDir !== undefined ? paths.length : !paths.length) throw new CliUsageError('Provide either --in-dir or 1 to 200 PDF paths.');

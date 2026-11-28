@@ -1,0 +1,65 @@
+{
+  "version": 11,
+  "mapping": {
+    "FullName": "Name",
+    "EmployeeCode": "Code",
+    "Department": "Department",
+    "Sentinel": ""
+  },
+  "filenamePattern": "{{Code}}.pdf",
+  "minFontSize": 8,
+  "font": "auto",
+  "flattenZip": false,
+  "includeCoverSheet": false,
+  "alignOverrides": {
+    "FullName": "rtl",
+    "EmployeeCode": "ltr"
+  },
+  "watermark": {
+    "kind": "none"
+  },
+  "virtualMappings": {
+    "ReviewReference": {
+      "column": "PADDED_ROW_001",
+      "template": "HR-{{PADDED_ROW_001}}"
+    }
+  },
+  "qrStamp": {
+    "placement": "none"
+  },
+  "coverLanguage": "auto",
+  "imposition": "1-up",
+  "groupByColumn": null,
+  "fieldTypography": {
+    "FullName": {
+      "numeralPolicy": "eastern-arabic",
+      "paddingPt": 4
+    },
+    "EmployeeCode": {
+      "numeralPolicy": "preserve"
+    }
+  },
+  "approvalSeal": null,
+  "conditionalRules": [
+    {
+      "field": "FullName",
+      "column": "Tier",
+      "operator": "equals",
+      "operand": "Priority",
+      "action": {
+        "type": "set-text",
+        "value": "{{Name}}"
+      }
+    },
+    {
+      "field": "Department",
+      "column": "Tier",
+      "operator": "equals",
+      "operand": "Priority",
+      "action": {
+        "type": "set-choice",
+        "value": "Engineering"
+      }
+    }
+  ]
+}
