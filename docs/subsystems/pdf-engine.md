@@ -68,6 +68,7 @@
 
 - Generate `print-shop-certificate.pdf` locally as a separate, one-page English and Arabic receipt from the successful combined merged export in the current ready-row scope. Require at least one included ready row. Split merges and individual ZIP members keep their own existing receipts. The certificate page is outside the merged output's sheet and cover counts.
 - Bind the template and roster fingerprints to their original input bytes and the merged output fingerprint to the exact `arabiform-merged.pdf` bytes. Include the filenames, included and excluded counts, layout, actual page and cover counts, embedded font inventory and minimum rendered size of mapped text where measured. Report the size in physical points after page units and imposition scaling. Fail issuance if the receipt cannot be generated for that export.
+- Store the exact Unicode filenames and the merged PDF's embedded font inventory as JSON in the certificate's PDF Subject field (`templateName`, `rosterName`, `outputName`, and `embeddedFonts`). When the bundled fonts cannot draw a filename, the visible certificate displays a placeholder alongside its full digest.
 - The “0 clipped fields verified” line refers to mapped text ink-fit preflight for included ready records. The unsigned receipt records the exact print file and the scoped fit check. Original template artwork, excluded rows, trim, press output and issuer identity require separate checks.
 
 ## Flat PDF Field Authoring

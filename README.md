@@ -140,6 +140,8 @@ See the workbench with synthetic data on [desktop](docs/reports/screenshots/m3/d
 
 After preflight, use **Download Print-Shop Certificate (.pdf)** to save `print-shop-certificate.pdf`, a separate, one-page English and Arabic receipt for the current combined merged print PDF. Keep the ready selection and output settings in place while saving the certificate and `arabiform-merged.pdf` through **Download Merged Printable PDF**. Either download order uses the same merged bytes. The receipt lists filenames and full SHA-256 hashes for the original template, roster and merged output, the included and excluded row counts, the layout, sheet and cover counts, the embedded font inventory, and the smallest rendered size of mapped text after scaling, where measured.
 
+If the bundled fonts cannot draw a filename, the printed page shows a placeholder. The certificate's PDF properties preserve the exact names and embedded font list as JSON in the **Subject** field. Use the full SHA-256 digest on the page to identify the file by its bytes.
+
 “0 clipped fields verified” refers to the ink-fit checks for mapped text in the ready rows included in that PDF. Other rows can still be excluded. The unsigned receipt lets the print shop compare the received merged file's SHA-256 with its recorded digest. Original artwork, trimming, printer output, and issuer identity require separate checks. The receipt is available for successful combined exports with at least one ready row. It is separate from the split PDFs and the custody JSON.
 
 ### Conditional rules
@@ -343,6 +345,8 @@ See the [Cloudflare Pages checklist](docs/launch/cloudflare-pages-7day-launch.md
 #### شهادة ما قبل الطباعة
 
 بعد الفحص المسبق، اختر «نزّل شهادة ما قبل الطباعة (.pdf)» لحفظ `print-shop-certificate.pdf` في صفحة واحدة بالعربية والإنجليزية. تخصّ هذه الوثيقة ملف الطباعة المدمج `arabiform-merged.pdf`. يمكنك تنزيل أحد الملفَّين أولًا، ويظلّ محتوى ملف الطباعة مطابقًا لبصمته ما دام التحديد وإعدادات الإخراج كما هما. تعرض الوثيقة أسماء قالب PDF وجدول البيانات وملف الطباعة المدمج وبصمات SHA-256 الكاملة لها، وعدد الصفوف المدرجة والمستبعدة، والتخطيط وعدد الأوراق وصفحات الغلاف، والخطوط المضمّنة، وأصغر حجم للنص المرتبط بعد تغيير المقياس عند توفّر القياس.
+
+إذا تعذّر رسم اسم ملف بالخطوط المضمّنة، تظهر عبارة بديلة مكانه على الصفحة. تجد الأسماء الأصلية وقائمة الخطوط المضمّنة بصيغة JSON في حقل «الموضوع» ضمن خصائص الشهادة. استخدم بصمة SHA-256 الكاملة المطبوعة على الصفحة للتحقّق من محتوى الملف.
 
 تشير عبارة «0 clipped fields verified» إلى اجتياز النص المرتبط في الصفوف الجاهزة المدرجة فحص اتساع الحقول للحروف المرسومة. قد تكون هناك صفوف أخرى مستبعدة. تستطيع المطبعة مطابقة بصمة SHA-256 للملف المدمج المستلَم مع البصمة في هذه الوثيقة غير الموقّعة. يُفحَص تصميم القالب الأصلي والقص والناتج الفعلي للطابعة وهوية جهة الإصدار بوسائل مستقلة. تُنشأ الوثيقة محليًا عند نجاح تجهيز الملف المدمج ووجود صف جاهز واحد على الأقل. لها ملف مستقل عن ملفات المجموعات وبيان الحيازة.
 
