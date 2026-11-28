@@ -47,7 +47,9 @@ describe('M25 local email drafts and review PDFs', () => {
     const zipOptions = { filenames, grouping, flattenZip: true, rowSelection: [5, 4, 3, 1] };
     const expected = await batch({ phase: 'zip', ...zipOptions }, idle);
     const result = await batch({ phase: 'dispatch', ...zipOptions, settings, rows, protectedColumns: ['ID'] }, idle);
-    if (!expected || !('entries' in expected) || !result || !('ledgerEntries' in result)) throw new Error('Dispatch unexpectedly held');
+    if (!expected || !('bytes' in expected) || !('entries' in expected) || !result || !('ledgerEntries' in result)) {
+      throw new Error('Dispatch unexpectedly held');
+    }
     const pdfs = unzipSync(expected.bytes);
     const drafts = unzipSync(result.bytes);
     const members = result.ledgerEntries;
@@ -153,7 +155,7 @@ describe('M25 local email drafts and review PDFs', () => {
           '--dispatch-subject', 'إفادة {{Name}} ' + 'مُرَاجَعَة 🧪 '.repeat(12), '--dispatch-body', 'مرحبًا {{Name}}\nReview copy',
         ], { timeout: 60_000, encoding: 'utf8' }, (error, stdout, stderr) => {
           if (error && typeof error.code !== 'number') reject(error);
-          else resolveRun({ code: error?.code ?? 0, stdout, stderr });
+          else resolveRun({ code: typeof error?.code === 'number' ? error.code : 0, stdout, stderr });
         });
       });
       const success = await run(out);

@@ -244,7 +244,13 @@ def check_case(case, directory):
                          for prefix in redaction["concealedPrefixes"]]
             def objects(document):
                 for xref in range(1, document.xref_length()):
-                    content = document.xref_object(xref).encode()
+                    try:
+                        content = document.xref_object(xref).encode()
+                    except RuntimeError as error:
+                        if "cannot find object in xref" not in str(error):
+                            raise
+                        # Deleting orphan displays and defaults leaves free xref slots.
+                        continue
                     if document.xref_is_stream(xref):
                         content += document.xref_stream(xref)
                     yield xref, content
