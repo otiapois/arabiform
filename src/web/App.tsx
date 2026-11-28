@@ -10,10 +10,12 @@ import type { DesignSession, UtilityMode } from './UtilityModes';
 import { WatermarkControls } from './WatermarkControls';
 
 const DeferredFillView = lazy(() => import('./DeferredFillView'));
+const LocalCliCommand = lazy(() => import('./LocalCliCommand'));
+const PdfExtractor = lazy(() => import('./PdfExtractor'));
 const ShortcutsDialog = lazy(() => import('./ShortcutsDialog'));
 const UtilityModes = lazy(() => import('./UtilityModes'));
 
-type Mode = 'fill' | UtilityMode;
+type Mode = 'fill' | 'extract' | UtilityMode;
 const modes: readonly Mode[] = ['fill', 'extract', 'design', 'create', 'verify', 'packet', 'compare', 'compare-batches'];
 
 type AppProps = {
@@ -28,7 +30,9 @@ export function App({ language, heading, summary, details }: AppProps) {
   const desk = useWorkbench(arabic ? 'ar' : 'en');
   const [mode, setMode] = useState<Mode>('fill');
   const fillMode = mode === 'fill';
+  const utilityMode = mode === 'fill' || mode === 'extract' ? undefined : mode;
   const activeMode = useRef(mode);
+  const [extractOpened, setExtractOpened] = useState(false);
   const [opened, setOpened] = useState<Partial<Record<UtilityMode, true>>>();
   const [design, setDesign] = useState<DesignSession>();
   const [shortcutTrigger, setShortcutTrigger] = useState<HTMLElement>();
@@ -49,7 +53,8 @@ export function App({ language, heading, summary, details }: AppProps) {
 
   function openMode(next: Mode, source?: FlatSource) {
     activeMode.current = next;
-    if (next !== 'fill') setOpened((previous) => previous?.[next] ? previous : { ...previous, [next]: true });
+    if (next === 'extract') setExtractOpened(true);
+    else if (next !== 'fill') setOpened((previous) => previous?.[next] ? previous : { ...previous, [next]: true });
     if (next === 'design') setDesign((current) => !current || source
       ? { revision: (current?.revision ?? 0) + 1, source }
       : current);
@@ -321,7 +326,7 @@ export function App({ language, heading, summary, details }: AppProps) {
                       <details className="cli-command" data-testid="cli-command-helper" onToggle={(event) => setCliOpen(event.currentTarget.open)}>
                         <summary>{arabic ? 'أمر التشغيل المحلي' : 'Local CLI command'}</summary>
                         {cliOpen && <Suspense fallback={<p className="quiet" role="status">{labels.loading}</p>}>
-                          <DeferredFillView view="LocalCliCommand" desk={desk} arabic={arabic} />
+                          <LocalCliCommand desk={desk} arabic={arabic} />
                         </Suspense>}
                       </details>
                     </div>
@@ -409,8 +414,11 @@ export function App({ language, heading, summary, details }: AppProps) {
             </section>
           </div>
 
-          {opened && <Suspense fallback={!fillMode && <p role="status" className="quiet">{labels.loading}</p>}>
-            <UtilityModes mode={mode} opened={opened} design={design} arabic={arabic} loading={labels.loading} onUseInFill={useTemplateInFill} />
+          {extractOpened && <div hidden={mode !== 'extract'}>
+            <Suspense fallback={<p role="status" className="quiet">{labels.loading}</p>}><PdfExtractor arabic={arabic} /></Suspense>
+          </div>}
+          {opened && <Suspense fallback={utilityMode && <p role="status" className="quiet">{labels.loading}</p>}>
+            <UtilityModes mode={utilityMode} opened={opened} design={design} arabic={arabic} loading={labels.loading} onUseInFill={useTemplateInFill} />
           </Suspense>}
         </div>
 
