@@ -26,6 +26,10 @@ const problems: Record<string, readonly [string, string]> = {
   'imposition-invalid-page-geometry': ['This page size or rotation cannot be used with 2-up. Choose 1-up for this template.', 'لا يدعم وضع السجلين حجم هذه الصفحة أو تدويرها. اختر التخطيط القياسي لهذا القالب.'],
   'imposition-unsupported-print-annotation': ['Use 1-up to retain the printable annotation in this template.', 'اختر التخطيط القياسي للاحتفاظ بالتعليق التوضيحي القابل للطباعة في هذا القالب.'],
   'invalid-imposition': ['Choose a valid merged PDF sheet layout.', 'اختر تخطيطًا صالحًا للأوراق في ملف PDF المدمج.'],
+  'imposition-invalid-4-up-options': ['Check the 4-up print settings and try again.', 'راجع إعدادات طباعة أربعة سجلات لكل ورقة وحاول مجددًا.'],
+  'print-certificate-unavailable': ['No completed merged PDF matches this print job. Check the current export and try again.', 'لا يوجد ملف PDF مدمج مكتمل يطابق مهمة الطباعة الحالية. تحقّق من إعدادات التصدير وحاول مجددًا.'],
+  'print-certificate-output-mismatch': ['The merged PDF does not match the checked print job. Check the batch again.', 'لا يطابق ملف PDF المدمج مهمة الطباعة التي جرى فحصها. أعد فحص الدفعة.'],
+  'print-certificate-layout-overflow': ['The certificate details do not fit on one page. Use shorter source filenames.', 'لا تتسع صفحة واحدة لتفاصيل الشهادة. استخدم أسماء أقصر لملفات المصدر.'],
   'invalid-grouping-column': ['Choose a grouping column from the active roster and try again.', 'اختر عمودًا للتجميع من الجدول الحالي وحاول مجددًا.'],
 };
 

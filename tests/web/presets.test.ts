@@ -155,4 +155,19 @@ describe('local mapping preset boundary', () => {
       missingFields: ['Consent'], missingColumns: ['Badge'],
     });
   });
+
+  it('keeps four-up options and v11 settings in v12 mapping presets and batch drafts', () => {
+    const args = [preset.mapping, preset.filenamePattern, preset.minFontSize, 'arabic', false, true, {}, undefined, {},
+      { placement: 'none' }, 'bilingual'] as const;
+    const rules = [{ field: 'Name', column: 'Role', operator: 'equals' as const, operand: 'VIP', action: { type: 'set-text' as const, value: 'ضيف' } }];
+    const options = { fourUpOrder: 'cut-and-stack', centerCutGuides: true } as const;
+    for (const imposition of ['4-up', '1-up'] as const) {
+      const suffix = [imposition, 'Role', {}, null, rules, options] as const;
+      const settings = makeMappingPreset(...args, ...suffix);
+      expect(settings).toMatchObject({ version: 12, imposition, ...options, groupByColumn: 'Role', conditionalRules: rules });
+      expect(makeDraftSettings(...args, ...suffix)).toEqual(settings);
+      expect(parseMappingPreset(JSON.stringify(settings))).toEqual(settings);
+    }
+    expect(makeMappingPreset(...args, '4-up')).toMatchObject({ version: 12, fourUpOrder: 'sequential', centerCutGuides: false });
+  });
 });

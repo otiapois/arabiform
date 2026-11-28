@@ -3,6 +3,7 @@ import type { BatchDraft } from '../core/draft/batch-draft';
 import type { AlignOverride } from '../core/pdf/alignment';
 import type { ApprovalSealSettings } from '../core/pdf/approval-seal-settings';
 import type { Imposition } from '../core/pdf/exports';
+import type { FourUpOptions } from '../core/pdf/imposition-settings';
 import type { FieldTypography, FieldTypographyMap } from '../core/pdf/field-typography';
 import { DEFAULT_QR_STAMP, type CoverLanguage, type QrStampSettings } from '../core/pdf/qr-settings';
 import { DEFAULT_WATERMARK, type WatermarkSettings } from '../core/pdf/watermark-settings';
@@ -84,6 +85,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const [includeCoverSheet, setIncludeCoverSheet] = useState(false);
   const [coverLanguage, setCoverLanguage] = useState<CoverLanguage>('auto');
   const [imposition, setImposition] = useState<Imposition>('1-up');
+  const [fourUp, setFourUp] = useState<FourUpOptions>();
   const [includeCustody, setIncludeCustody] = useState(false);
   const [watermarkState, setWatermark] = useState({ value: DEFAULT_WATERMARK, valid: true });
   const [qrState, setQrStamp] = useState({ value: DEFAULT_QR_STAMP, valid: true });
@@ -136,7 +138,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const hasMapping = conditionalRules.length > 0 || Object.keys(virtualMappings).length > 0 || fields.some((field) => Boolean(mapping[field.name]));
   const fontBlocked = customFont?.status === 'loading' || customFont?.status === 'invalid';
   const batch = useMemo(() => template && roster && rows.length && hasMapping && !fontBlocked && !virtualTemplateBlocked
-    ? { template: template.bytes, roster: roster.bytes, sheetName: roster.explicitSheet ? roster.sheetName : undefined,
+    ? { template: template.bytes, templateName: template.name, roster: roster.bytes, rosterName: roster.name,
+      sheetName: roster.explicitSheet ? roster.sheetName : undefined,
       rows, mapping, virtualMappings, localDate: roster.localDate,
       resolveVirtualMapping: roster.virtual.resolveVirtualMapping, alignOverrides, fieldTypography, minFontSize, font,
       customFont: customFont?.status === 'ready' ? customFont.bytes : undefined,
@@ -149,8 +152,9 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   const groupingBlocked = groupByColumn !== null && !grouping;
   const templateName = template?.name;
   const activeCoverLanguage = includeCoverSheet ? coverLanguage : 'auto';
-  const impositionUnavailable = Boolean(template && template.info.pages.length > 1);
-  const printLayout = impositionUnavailable ? '1-up' : imposition;
+  const compatibility = template?.impositionCompatibility;
+  const printLayout = (imposition === '2-up' && compatibility?.twoUpUnavailableReason)
+    || (imposition === '4-up' && compatibility?.fourUpUnavailableReason) ? '1-up' : imposition;
   const output = useMemo(() => ({
     filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked,
     cover: includeCoverSheet && templateName ? { locale, templateName, includeCustody, coverLanguage: activeCoverLanguage } : undefined,
@@ -158,7 +162,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     qrStamp: qrStamp.placement !== 'none' ? qrStamp : undefined,
     approvalSeal: validSeal ?? undefined,
     imposition: printLayout,
-  }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, validSeal, activeCoverLanguage, printLayout]);
+    fourUp: printLayout === '4-up' ? fourUp : undefined,
+  }), [filenamePlans, flattenZip, rowSelection, grouping, groupingBlocked, includeCoverSheet, templateName, locale, includeCustody, watermark, qrStamp, validSeal, activeCoverLanguage, printLayout, fourUp]);
   const sealPreviewBlocked = sealSettingsBlocked || Boolean(approvalSeal && qrSettingsBlocked);
   const batchSession = batch || publication ? { batch, selected, output, sealPreviewBlocked, publish: publishBatch } : undefined;
   const { invalidate = noop, clearExportError = noop, download, cancel = noop, exportLocked = noop } = publication?.job ?? {};
@@ -294,6 +299,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
       setIncludeCoverSheet(false);
       setCoverLanguage('auto');
       setImposition('1-up');
+      setFourUp(undefined);
       setIncludeCustody(false);
       setWatermark({ value: DEFAULT_WATERMARK, valid: true });
       setQrStamp({ value: DEFAULT_QR_STAMP, valid: true });
@@ -530,10 +536,17 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
   }
 
   function changeImposition(value: Imposition) {
-    if (exportLocked() || impositionUnavailable) return;
+    if (exportLocked()) return;
     clearExportError();
     request.current.draft++;
     setImposition(value);
+  }
+
+  function changeFourUp(value: FourUpOptions) {
+    if (exportLocked()) return;
+    clearExportError();
+    request.current.draft++;
+    setFourUp(value);
   }
 
   async function importPreset(file: File) {
@@ -560,7 +573,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setMappingSettings({ fromPreset: true, values: preset.mapping, alignment: 'alignOverrides' in preset ? preset.alignOverrides : undefined,
       virtual: 'virtualMappings' in preset ? preset.virtualMappings : undefined,
       typography: 'fieldTypography' in preset ? preset.fieldTypography : undefined });
-    setConditionalRules(preset.version === 11 ? preset.conditionalRules : emptyRules);
+    setConditionalRules('conditionalRules' in preset ? preset.conditionalRules : emptyRules);
     setPattern(preset.filenamePattern);
     setMinFontSize(preset.minFontSize);
     setFont(preset.font);
@@ -575,12 +588,13 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     setApprovalSeal({ value: 'approvalSeal' in preset ? preset.approvalSeal : null, valid: true });
     setCoverLanguage('coverLanguage' in preset ? preset.coverLanguage : 'auto');
     setImposition('imposition' in preset ? preset.imposition : '1-up');
+    setFourUp(preset.version === 12 ? { fourUpOrder: preset.fourUpOrder, centerCutGuides: preset.centerCutGuides } : undefined);
   }
 
   function presetInputs() {
     const included = Object.fromEntries(fields.flatMap(({ name, kind }) =>
       !Object.hasOwn(virtualMappings, name) && (kind === 'text' || kind === 'checkbox' || mapping[name]) ? [[name, mapping[name]!]] : []));
-    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, validSeal ?? null, conditionalRules] as const;
+    return [included, pattern, minFontSize, font, flattenZip, includeCoverSheet, alignOverrides, watermark, virtualMappings, qrStamp, coverLanguage, imposition, groupByColumn, fieldTypography, validSeal ?? null, conditionalRules, fourUp] as const;
   }
 
   async function exportPreset() {
@@ -622,7 +636,8 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     flattenZip, changeFlattenZip, includeCoverSheet, changeIncludeCoverSheet,
     groupByColumn, grouping, groupingBlocked, changeGrouping,
     output,
-    includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage, printLayout, impositionUnavailable, changeImposition,
+    includeCustody, changeIncludeCustody, coverLanguage, changeCoverLanguage, printLayout, changeImposition,
+    fourUp, changeFourUp,
     watermark, watermarkBlocked, changeWatermark,
     qrStamp, qrOpen, setQrOpen, qrSettingsBlocked, printSettingsBlocked, changeQrStamp,
     ...job, batchSession, results, ready, flagged: results ? results.length - ready : 0, warningRows,
@@ -637,7 +652,7 @@ export function useWorkbench(locale: MergeCoverSheet['locale']) {
     changeSize, changeFont, loadCustomFont, clearCustomFont, changePattern, presetError, presetWarnings, exportPreset, importPreset,
     cancel: () => { retainPreviewPage(); cancel(); },
     download: (kind: Parameters<NonNullable<typeof download>>[0]) => {
-      const print = kind === 'merged' || kind === 'split' || (kind === 'zip' && flattenZip);
+      const print = kind === 'merged' || kind === 'split' || kind === 'certificate' || (kind === 'zip' && flattenZip);
       if (print && printSettingsBlocked) return;
       return download?.(kind);
     },
